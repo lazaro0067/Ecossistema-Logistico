@@ -8,7 +8,7 @@ import zipfile
 import pandas as pd
 import streamlit as st  # Correção: streamlit em minúsculo
 
-# Importação opcional do docx para não quebrar no servidor online caso a biblioteca não esteja instalada
+# Importação opcional do docx para não travar o servidor online caso a biblioteca não esteja instalada
 try:
     import docx
     HAS_DOCX = True
@@ -168,6 +168,7 @@ def init_db():
         dt_atualizacao TEXT
     )""")
 
+    # Tabela para registro diário de volumes por cesta (Gestão Ressuprimento)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS gestao_ressuprimento_diario (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -181,6 +182,7 @@ def init_db():
         UNIQUE(operacao, data_registro, cesta)
     )""")
 
+    # Tabela para metas mensais por cesta (Gestão Ressuprimento)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS metas_ressuprimento_mensal (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -223,7 +225,7 @@ init_db()
 def read_word_file(file_obj):
     """Lê documentos em formato Word (.docx) se a biblioteca estiver instalada."""
     if not HAS_DOCX:
-        return "A biblioteca 'python-docx' não está instalada no servidor. Por favor, adicione 'python-docx' ao arquivo requirements.txt."
+        return "A biblioteca 'python-docx' não está instalada no servidor. Adicione 'python-docx' ao requirements.txt."
     try:
         file_obj.seek(0)
         doc = docx.Document(file_obj)
@@ -244,7 +246,7 @@ def read_word_file(file_obj):
 
 
 def robust_read_file(file_obj):
-    """Função genérica de leitura para Excel (.xlsx, .xls), Word (.docx) e CSV."""
+    """Leitura ultra-robusta de relatórios Excel (.xlsx, .xls), CSV ou Word."""
     filename = str(file_obj.name).lower()
 
     if filename.endswith(".xlsx") or filename.endswith(".xls"):
@@ -253,14 +255,20 @@ def robust_read_file(file_obj):
             return pd.read_excel(file_obj)
         except Exception:
             file_obj.seek(0)
-            return pd.read_excel(file_obj, header=1)
+            try:
+                return pd.read_excel(file_obj, engine="openpyxl")
+            except Exception:
+                file_obj.seek(0)
+                try:
+                    return pd.read_excel(file_obj, engine="xlrd")
+                except Exception:
+                    file_obj.seek(0)
+                    return pd.read_excel(file_obj, header=1)
 
     elif filename.endswith(".docx") or filename.endswith(".doc"):
         text = read_word_file(file_obj)
         lines = [line.split("|") for line in text.split("\n") if line.strip()]
-        if lines:
-            return pd.DataFrame(lines)
-        return pd.DataFrame()
+        return pd.DataFrame(lines) if lines else pd.DataFrame()
 
     else:
         try:
@@ -928,7 +936,7 @@ def render_gestao_layouts_armazem(operacao):
 
 
 # -----------------------------------------------------------------------------
-# GESTÃO DE RESSUPRIMENTO (CESTAS & METAS MENSAIS)
+# GESTÃO DE RESSUPRIMENTO (CESTAS & METAS MENSAIS COM POSIÇÃO DE COLUNAS A, C, E, F)
 # -----------------------------------------------------------------------------
 def render_gestao_ressuprimento(operacao):
     st.subheader("📈 Gestão de Ressuprimento & Acompanhamento de Cestas")
@@ -1001,8 +1009,8 @@ def render_gestao_ressuprimento(operacao):
             ).fillna(0)
 
             # Cálculo de CERVEJA + NAB = VOLUME TOTAL
-            vol_cerveja_real = df_comp_mes[df_comp_mes["cesta"] == "CATEGORIA_AGRUPADO - CERVEJA"]["volume_real_hl"].sum()
-            vol_nab_real = df_comp_mes[df_comp_mes["cesta"] == "CATEGORIA_AGRUPADO - NAB"]["volume_real_hl"].sum()
+            vol_cerveja_real = df_comp_mes[df_comp_mes["cesta"] == "CATEGORIA_AGRUPADO - CERVEJA"]["volume_sellin_hl"].sum()
+            vol_nab_real = df_comp_mes[df_comp_mes["cesta"] == "CATEGORIA_AGRUPADO - NAB"]["volume_sellin_hl"].sum()
             vol_total_real = vol_cerveja_real + vol_nab_real
 
             vol_cerveja_meta = df_comp_mes[df_comp_mes["cesta"] == "CATEGORIA_AGRUPADO - CERVEJA"]["meta_volume_hl"].sum()
@@ -1021,13 +1029,13 @@ def render_gestao_ressuprimento(operacao):
             st.markdown(f"##### 📋 Indicadores por Cesta ({mes_ano_str})")
 
             df_comp_mes["% Atingimento"] = df_comp_mes.apply(
-                lambda r: (r["volume_real_hl"] / r["meta_volume_hl"] * 100) if r["meta_volume_hl"] > 0 else 0.0,
+                lambda r: (r["volume_sellin_hl"] / r["meta_volume_hl"] * 100) if r["meta_volume_hl"] > 0 else 0.0,
                 axis=1
             )
 
             row_total = pd.DataFrame([{
                 "cesta": "<b>TOTAL (CERVEJA + NAB)</b>",
-                "volume_sellin_hl": df_comp_mes["volume_sellin_hl"].sum(),
+                "volume_sellin_hl": vol_total_real,
                 "volume_real_hl": vol_total_real,
                 "meta_volume_hl": vol_total_meta,
                 "% Atingimento": pct_ating
@@ -1051,9 +1059,9 @@ def render_gestao_ressuprimento(operacao):
             st.markdown(f"#### 📅 Gestão Anual ({ano_sel})")
 
             df_diario["mes_num"] = df_diario["data_dt"].dt.month
-            df_anual = df_diario.groupby(["mes_num", "cesta"])["volume_real_hl"].sum().reset_index()
+            df_anual = df_diario.groupby(["mes_num", "cesta"])["volume_sellin_hl"].sum().reset_index()
 
-            df_piv_anual = df_anual.pivot(index="cesta", columns="mes_num", values="volume_real_hl").fillna(0)
+            df_piv_anual = df_anual.pivot(index="cesta", columns="mes_num", values="volume_sellin_hl").fillna(0)
             df_piv_anual.columns = [
                 ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"][c-1]
                 for c in df_piv_anual.columns
@@ -1113,7 +1121,7 @@ def render_gestao_ressuprimento(operacao):
                 st.success(f"Metas de {mes_ano_meta_str} salvas com sucesso!")
                 st.rerun()
 
-    # TAB 3: UPLOAD E ATUALIZAÇÃO DA BASE DIÁRIA
+    # TAB 3: UPLOAD E ATUALIZAÇÃO DA BASE DIÁRIA (MAPEAMENTO POR LETRAS A, C, E, F)
     with tab_m3:
         st.markdown("### 📁 Upload do Relatório Diário de Ressuprimento")
         st.caption("Suba o arquivo consolidado contendo os volumes diários (Excel/CSV). O sistema atualizará todo o histórico acumulado.")
@@ -1128,13 +1136,15 @@ def render_gestao_ressuprimento(operacao):
             try:
                 df_up = robust_read_file(f_ress_daily)
 
-                col_cesta = [c for c in df_up.columns if "Cesta" in str(c)][0]
-                col_data = [c for c in df_up.columns if "Data" in str(c)][0]
-                col_sellin = [c for c in df_up.columns if "Sellin" in str(c)]
-                col_vol = [c for c in df_up.columns if "Volume (hl) Real" in str(c) or "Volume" in str(c)]
-
-                col_s_name = col_sellin[0] if col_sellin else None
-                col_v_name = col_vol[0] if col_vol else None
+                # Mapeamento estrito por posição de coluna:
+                # Coluna A (índice 0): Operação
+                # Coluna C (índice 2): Volume Sellin (hl)
+                # Coluna E (índice 4): Cesta
+                # Coluna F (índice 5): Data
+                col_op = df_up.columns[0]
+                col_sellin = df_up.columns[2]
+                col_cesta = df_up.columns[4]
+                col_data = df_up.columns[5]
 
                 conn = sqlite3.connect("puxada_ambev.db")
                 cursor = conn.cursor()
@@ -1142,21 +1152,21 @@ def render_gestao_ressuprimento(operacao):
 
                 registros_salvos = 0
                 for _, r in df_up.dropna(subset=[col_cesta, col_data]).iterrows():
+                    op_val = str(r[col_op]).strip() if pd.notna(r[col_op]) else operacao
                     cst_val = str(r[col_cesta]).strip()
                     dt_val = str(pd.to_datetime(r[col_data]).strftime("%Y-%m-%d"))
                     mes_ano_val = str(pd.to_datetime(r[col_data]).strftime("%b/%Y"))
 
-                    s_hl = parse_br_float(r[col_s_name]) if col_s_name else 0.0
-                    v_hl = parse_br_float(r[col_v_name]) if col_v_name else 0.0
+                    s_hl = parse_br_float(r[col_sellin])
 
                     cursor.execute("""
                     INSERT INTO gestao_ressuprimento_diario (operacao, data_registro, mes_ano, cesta, volume_sellin_hl, volume_real_hl, dt_atualizacao)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(operacao, data_registro, cesta) DO UPDATE SET
                         volume_sellin_hl=excluded.volume_sellin_hl,
-                        volume_real_hl=excluded.volume_real_hl,
+                        volume_real_hl=excluded.volume_sellin_hl,
                         dt_atualizacao=excluded.dt_atualizacao
-                    """, (operacao, dt_val, mes_ano_val, cst_val, s_hl, v_hl, dt_now))
+                    """, (operacao, dt_val, mes_ano_val, cst_val, s_hl, s_hl, dt_now))
                     registros_salvos += 1
 
                 conn.commit()
@@ -1223,9 +1233,7 @@ def render_estoque_dia(unidade):
         if "rn_filtro_status" not in st.session_state:
             st.session_state["rn_filtro_status"] = "TODOS"
 
-        # ---------------------------------------------------------------------
         # VISÃO DE LINHA SUPERIOR (CARDS MOBILE / KPIS NO TOPO)
-        # ---------------------------------------------------------------------
         k1, k2, k3, k4 = st.columns(4)
 
         if k1.button(f"🔴 Stock Out\n### {stock_out_cnt} SKUs", use_container_width=True):
