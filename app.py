@@ -230,6 +230,124 @@ def highlight_curva_abc(val):
     return ""
 
 
+def salvar_base_01_11(f_01):
+    df_01 = robust_read_csv(f_01)
+    df_01["cod_clean"] = pd.to_numeric(df_01["Código"], errors="coerce")
+    col_q = df_01.columns[16]
+    df_01["fator_hl"] = df_01[col_q].astype(str).str.replace(",", ".").astype(float)
+    df_01["cx_pallet"] = pd.to_numeric(df_01["Caixas Pallet"], errors="coerce").fillna(1)
+    df_01["cx_pallet"] = df_01["cx_pallet"].apply(lambda x: x if x > 0 else 1)
+
+    df_sub = df_01[["cod_clean", "Descrição", "fator_hl", "cx_pallet"]].dropna(subset=["cod_clean"])
+
+    conn = sqlite3.connect("puxada_ambev.db")
+    cursor = conn.cursor()
+    for _, r in df_sub.iterrows():
+        cursor.execute("""
+        INSERT INTO base_01_11 (cod_clean, descricao, fator_hl, cx_pallet)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(cod_clean) DO UPDATE SET
+            descricao=excluded.descricao, fator_hl=excluded.fator_hl, cx_pallet=excluded.cx_pallet
+        """, (int(r["cod_clean"]), str(r["Descrição"]), float(r["fator_hl"]), float(r["cx_pallet"])))
+    conn.commit()
+    conn.close()
+
+
+def salvar_base_linear(f_lin):
+    try:
+        df_lin = pd.read_excel(f_lin, sheet_name=0)
+    except Exception:
+        df_lin = pd.read_excel(f_lin, header=1)
+
+    col_cod = [c for c in df_lin.columns if "Cód" in str(c) or "COD" in str(c)][0]
+    col_vendas = [c for c in df_lin.columns if "Linear" in str(c)][0]
+
+    df_lin["cod_clean"] = pd.to_numeric(df_lin[col_cod], errors="coerce")
+    df_lin["linear_vendas"] = pd.to_numeric(df_lin[col_vendas], errors="coerce").fillna(0)
+    df_lin["Tipo"] = df_lin.get("Tipo", pd.Series()).fillna("OUTROS")
+    df_lin["Categoria"] = df_lin.get("Categoria", pd.Series()).fillna("OUTROS")
+
+    dt_now = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+
+    conn = sqlite3.connect("puxada_ambev.db")
+    cursor = conn.cursor()
+    for _, r in df_lin.dropna(subset=["cod_clean"]).iterrows():
+        cursor.execute("""
+        INSERT INTO base_linear (cod_clean, tipo, categoria, linear_vendas, dt_atualizacao)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(cod_clean) DO UPDATE SET
+            tipo=excluded.tipo, categoria=excluded.categoria,
+            linear_vendas=excluded.linear_vendas, dt_atualizacao=excluded.dt_atualizacao
+        """, (int(r["cod_clean"]), str(r.get("Tipo", "OUTROS")), str(r.get("Categoria", "OUTROS")), float(r["linear_vendas"]), dt_now))
+    conn.commit()
+    conn.close()
+
+
+def salvar_base_estoque_02(f_02, operacao):
+    df_02 = robust_read_csv(f_02)
+
+    col_cod = [c for c in df_02.columns if "Cod" in str(c) or "COD" in str(c)][0]
+    col_desc = [c for c in df_02.columns if "Desc" in str(c)][0]
+    col_init = [c for c in df_02.columns if "Inic" in str(c)][0]
+    col_ent = [c for c in df_02.columns if "Ent" in str(c)][0]
+    col_sai = [c for c in df_02.columns if "Saida" in str(c) or "Sai" in str(c)][0]
+    col_disp = [c for c in df_02.columns if "Disp" in str(c)][0]
+
+    df_02["cod_clean"] = pd.to_numeric(df_02[col_cod], errors="coerce")
+    df_02["Inicial"] = pd.to_numeric(df_02[col_init], errors="coerce").fillna(0)
+    df_02["Ent."] = pd.to_numeric(df_02[col_ent], errors="coerce").fillna(0)
+    df_02["Saidas"] = pd.to_numeric(df_02[col_sai], errors="coerce").fillna(0)
+    df_02["Disp."] = pd.to_numeric(df_02[col_disp], errors="coerce").fillna(0)
+
+    dt_now = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+
+    conn = sqlite3.connect("puxada_ambev.db")
+    cursor = conn.cursor()
+    for _, r in df_02.dropna(subset=["cod_clean"]).iterrows():
+        cursor.execute("""
+        INSERT INTO base_estoque_02 (operacao, cod_clean, descricao, inicial, entrada, saida, disponivel, dt_atualizacao)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(operacao, cod_clean) DO UPDATE SET
+            descricao=excluded.descricao, inicial=excluded.inicial, entrada=excluded.entrada,
+            saida=excluded.saida, disponivel=excluded.disponivel, dt_atualizacao=excluded.dt_atualizacao
+        """, (operacao, int(r["cod_clean"]), str(r[col_desc]), float(r["Inicial"]), float(r["Ent."]), float(r["Saidas"]), float(r["Disp."]), dt_now))
+    conn.commit()
+    conn.close()
+
+
+def salvar_pedidos_marcados(f_pedidos, operacao):
+    df_pedidos = robust_read_csv(f_pedidos)
+
+    col_cod_r = df_pedidos.columns[17] if len(df_pedidos.columns) > 17 else [c for c in df_pedidos.columns if "Código" in str(c)][0]
+    col_marc_w = df_pedidos.columns[22] if len(df_pedidos.columns) > 22 else [c for c in df_pedidos.columns if "Marcado" in str(c)][0]
+    col_desc = [c for c in df_pedidos.columns if "Produto" in str(c) or "Desc" in str(c)][0]
+    col_dt = [c for c in df_pedidos.columns if "Data Puxada" in str(c) or "Data" in str(c)][0]
+    col_solic = [c for c in df_pedidos.columns if "QtdeSKUs - Item" in str(c)][0]
+    col_hl = [c for c in df_pedidos.columns if "Qtde Hecto - Item - Marcado" in str(c)][0]
+
+    conn = sqlite3.connect("puxada_ambev.db")
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM pedidos_marcados WHERE operacao=?", (operacao,))
+
+    dt_now = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+    for _, r in df_pedidos.iterrows():
+        cod_raw = str(r.get(col_cod_r, "")).strip()
+        cod_clean_str = cod_raw[:-1] if len(cod_raw) > 1 else cod_raw
+        cod_clean = pd.to_numeric(cod_clean_str, errors="coerce")
+        if pd.isna(cod_clean):
+            continue
+
+        cx_marcadas_w = parse_br_float(r.get(col_marc_w))
+
+        cursor.execute("""
+        INSERT INTO pedidos_marcados (operacao, data_puxada, cod_clean, descricao, cx_solicitadas, cx_marcadas, hl_marcado, status_item, numero_pedido, dt_atualizacao)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (operacao, str(r.get(col_dt)).strip(), int(cod_clean), str(r.get(col_desc)).strip(), parse_br_float(r.get(col_solic)), cx_marcadas_w, parse_br_float(r.get(col_hl)), str(r.get("Status - Item", "")).strip(), str(r.get("Nº - Pedido", "")).strip(), dt_now))
+
+    conn.commit()
+    conn.close()
+
+
 def carregar_pedidos_pivoted(operacao):
     conn = sqlite3.connect("puxada_ambev.db")
     df_pm = pd.read_sql_query(f"SELECT data_puxada, cod_clean, cx_marcadas FROM pedidos_marcados WHERE operacao='{operacao}'", conn)
@@ -305,7 +423,7 @@ def carregar_estoque_consolidado(operacao):
         df["Puxada_D2"] = 0.0
         df["Total_Puxada"] = 0.0
 
-    # Conversão para Paletes utilizando o parâmetro cx_pallet da 01.11
+    # Conversão Exata para Paletes utilizando o parâmetro cx_pallet extraído da 01.11
     df["Paletes_Disp"] = (df["Disp"] / df["cx_pallet"]).round(1)
     df["Paletes_D0"] = (df["Puxada_D0"] / df["cx_pallet"]).round(1)
     df["Paletes_D1"] = (df["Puxada_D1"] / df["cx_pallet"]).round(1)
@@ -330,11 +448,9 @@ def calcular_saude_estoque_dpo(df):
     if df is None or df.empty:
         return 0.0, 0, 0, 0
     total_skus = len(df)
-    # Alterado para faixa saudável entre 3 e 30 dias de estoque
-    saudaveis = len(df[(df["DOI_Atual"] >= 3.0) & (df["DOI_Atual"] <= 30.0)])
+    saudaveis = len(df[(df["DOI_Atual"] >= 3.0) & (df["DOI_Atual"] <= 15.0)])
     ruptura = len(df[df["DOI_Atual"] < 3.0])
-    # Alterado para Estoque Elevado acima de 30 dias de cobertura
-    excesso = len(df[df["DOI_Atual"] > 30.0])
+    excesso = len(df[df["DOI_Atual"] > 15.0])
     pct_saude = (saudaveis / total_skus) * 100.0 if total_skus > 0 else 0.0
     return round(pct_saude, 1), saudaveis, ruptura, excesso
 
@@ -349,7 +465,7 @@ def gerar_excel(df):
     return output.getvalue()
 
 
-# 4. Portal Comercial e Interface Mobile Otimizada
+# 4. Portal Comercial e Interface Mobile Otimizada por Cards
 modo_comercial = False
 unidade_param = "Lima Rio Verde"
 
@@ -363,21 +479,58 @@ if "unidade" in st.query_params:
 
 
 def render_estoque_dia(unidade):
-    st.subheader(f"Estoque Dia — Consulta Comercial ({unidade})")
+    st.subheader(f"📲 Estoque Dia — Consulta Comercial ({unidade})")
+
+    detected_host = "localhost:8501"
+    try:
+        if hasattr(st, "context") and hasattr(st.context, "headers"):
+            detected_host = st.context.headers.get("Host", "localhost:8501")
+    except Exception:
+        pass
+
+    unidade_encoded = urllib.parse.quote(unidade)
+    link_web_op = f"http://{detected_host}/?modo=comercial&unidade={unidade_encoded}"
+
+    exp_link = st.expander("📲 Link Direto & QR Code desta Unidade (Para Compartilhar)", expanded=False)
+    with exp_link:
+        qr_code_url = f"https://api.qrserver.com/v1/create-qr-code/?size=150x150&data={urllib.parse.quote(link_web_op)}"
+        c_qr1, c_qr2 = st.columns([1, 3])
+        c_qr1.image(qr_code_url, caption=f"QR Code - {unidade}", width=130)
+        c_qr2.markdown(f"""
+        🔗 **Link Exclusivo:** <a href="{link_web_op}" target="_blank" style="font-size: 15px; font-weight: bold; color: #0288d1;">{link_web_op}</a>  
+        📱 Compartilhe este link com a equipe de vendas para abrir direto nos estoques de **{unidade}**.
+        """, unsafe_allow_html=True)
+
+    msg_wa = urllib.parse.quote(f"📲 *Estoque Dia ({unidade})*\nConsulte a disponibilidade em tempo real: {link_web_op}")
+    link_whatsapp = f"https://api.whatsapp.com/send?text={msg_wa}"
+
+    c_l1, c_l2 = st.columns([3, 1])
+    c_l1.markdown(f"""
+    <div style="background-color: #e8f4f8; padding: 10px; border-radius: 8px; border-left: 5px solid #0288d1;">
+        🔗 <b>Link Direto da Unidade:</b> <a href="{link_web_op}" target="_blank" style="font-weight: bold; color: #0288d1;">{link_web_op}</a>
+    </div>
+    """, unsafe_allow_html=True)
+
+    c_l2.markdown(f"""
+    <div style="padding-top: 5px;">
+        <a href="{link_whatsapp}" target="_blank" style="background-color: #25D366; color: white; padding: 8px 12px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">
+            📲 Enviar WhatsApp
+        </a>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.divider()
 
     df = carregar_estoque_consolidado(unidade)
 
     if df is not None and not df.empty:
         st.caption(f"🕒 **Sincronizado em:** {df['dt_atualizacao'].iloc[0]}")
 
-        # Atualizado o critério de Estoque Elevado para DOI > 30.0
         def get_status(doi, disp):
             if disp == 0 or doi < 1.0:
                 return "🔴 Indisponível"
             elif doi < 3.0:
                 return "🟡 Estoque Baixo"
-            elif doi > 30.0:
-                return "🟠 Estoque Elevado (>30d)"
             else:
                 return "🟢 Disponível"
 
@@ -398,16 +551,14 @@ def render_estoque_dia(unidade):
         if "filtro_status_dia" not in st.session_state:
             st.session_state["filtro_status_dia"] = "TODOS"
 
-        k1, k2, k3, k4, k5 = st.columns(5)
+        k1, k2, k3, k4 = st.columns(4)
         if k1.button(f"Todos\n\n### {len(df)}"):
             st.session_state["filtro_status_dia"] = "TODOS"
         if k2.button(f"Disponíveis 🟢\n\n### {len(df[df['Status'] == '🟢 Disponível'])}"):
             st.session_state["filtro_status_dia"] = "🟢 Disponível"
         if k3.button(f"Estoque Baixo 🟡\n\n### {len(df[df['Status'] == '🟡 Estoque Baixo'])}"):
             st.session_state["filtro_status_dia"] = "🟡 Estoque Baixo"
-        if k4.button(f"Elevado (>30d) 🟠\n\n### {len(df[df['Status'] == '🟠 Estoque Elevado (>30d)'])}"):
-            st.session_state["filtro_status_dia"] = "🟠 Estoque Elevado (>30d)"
-        if k5.button(f"Indisponíveis 🔴\n\n### {len(df[df['Status'] == '🔴 Indisponível'])}"):
+        if k4.button(f"Indisponíveis 🔴\n\n### {len(df[df['Status'] == '🔴 Indisponível'])}"):
             st.session_state["filtro_status_dia"] = "🔴 Indisponível"
 
         df_exib = df if st.session_state["filtro_status_dia"] == "TODOS" else df[df["Status"] == st.session_state["filtro_status_dia"]]
@@ -423,25 +574,19 @@ def render_estoque_dia(unidade):
             else:
                 df_cards = df_exib
 
-            # Renderização dos Cards com Paletes e Código de Cores
+            # Renderização de Quadradinhos / Cards Responsivos
             grid_cols = st.columns(3)
             for idx, r in df_cards.reset_index().iterrows():
                 col_target = grid_cols[idx % 3]
 
-                if "🟢" in r["Status"]:
-                    border_color, bg_color = "#2e7d32", "#f1f8e9"
-                elif "🟡" in r["Status"]:
-                    border_color, bg_color = "#f57f17", "#fffde7"
-                elif "🟠" in r["Status"]:
-                    border_color, bg_color = "#e65100", "#fff3e0"
-                else:
-                    border_color, bg_color = "#c62828", "#ffebee"
+                border_color = "#2e7d32" if "🟢" in r["Status"] else ("#f57f17" if "🟡" in r["Status"] else "#c62828")
+                bg_color = "#f1f8e9" if "🟢" in r["Status"] else ("#fffde7" if "🟡" in r["Status"] else "#ffebee")
 
                 with col_target:
                     st.markdown(f"""
                     <div style="border: 2px solid {border_color}; background-color: {bg_color}; border-radius: 10px; padding: 12px; margin-bottom: 12px; box-shadow: 2px 2px 5px rgba(0,0,0,0.05);">
                         <div style="font-weight: bold; font-size: 14px; color: #333; height: 38px; overflow: hidden;">{r['Descricao']}</div>
-                        <div style="font-size: 11px; color: #666; margin-bottom: 8px;">Cód: <b>{r['Cod_clean']}</b> | Marca: <b>{r['Marca']}</b> | Cobertura: <b>{r['DOI_Atual']} dias</b></div>
+                        <div style="font-size: 11px; color: #666; margin-bottom: 8px;">Cód: <b>{r['Cod_clean']}</b> | Marca: <b>{r['Marca']}</b></div>
                         <div style="font-size: 18px; font-weight: bold; color: {border_color}; margin-bottom: 6px;">
                             📦 {r['Paletes_Disp']:,.1f} Paletes <span style="font-size:12px; color:#555;">({r['Disp']:,.0f} cx)</span>
                         </div>
@@ -473,7 +618,7 @@ if modo_comercial:
     render_estoque_dia(unidade_sel)
     st.stop()
 
-# 5. Módulo Principal com Login
+# 5. Modulo Principal com Login
 if "logado" not in st.session_state:
     st.session_state["logado"] = False
 
