@@ -150,6 +150,18 @@ def init_db():
         UNIQUE(operacao, mes_ano, cod_clean)
     )""")
 
+    # Tabela para Armazenamento de Layouts do Armazém por Área (Imagens)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS layout_armazem (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        operacao TEXT,
+        nome_area TEXT,
+        nome_arquivo TEXT,
+        tipo_arquivo TEXT,
+        dados_blob BLOB,
+        dt_atualizacao TEXT
+    )""")
+
     empresas = [
         ("Lima Rio Verde", "12.345.678/0001-90", "Rio Verde", "GO"),
         ("Lima Barreiras", "98.765.432/0001-10", "Barreiras", "BA"),
@@ -732,6 +744,115 @@ def render_gerenciador_padroes_dpo(operacao, modulo, subbloco):
             )
 
 
+# -----------------------------------------------------------------------------
+# AUXILIARES PARA GESTÃO E ANEXO DE IMAGENS DO LAYOUT DO ARMAZÉM
+# -----------------------------------------------------------------------------
+def salvar_layout_imagem(operacao, nome_area, file_uploader_obj):
+    if file_uploader_obj is not None:
+        file_bytes = file_uploader_obj.read()
+        nome_arq = file_uploader_obj.name
+        tipo_arq = file_uploader_obj.type
+        dt_now = datetime.now().strftime("%d/%m/%Y %H:%M")
+
+        conn = sqlite3.connect("puxada_ambev.db")
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO layout_armazem (operacao, nome_area, nome_arquivo, tipo_arquivo, dados_blob, dt_atualizacao)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (operacao, nome_area, nome_arq, tipo_arq, file_bytes, dt_now),
+        )
+        conn.commit()
+        conn.close()
+        return True
+    return False
+
+
+def carregar_layouts_armazem(operacao):
+    conn = sqlite3.connect("puxada_ambev.db")
+    df = pd.read_sql_query(
+        f"SELECT id, nome_area, nome_arquivo, tipo_arquivo, dados_blob, dt_atualizacao FROM layout_armazem WHERE operacao='{operacao}' ORDER BY id DESC",
+        conn,
+    )
+    conn.close()
+    return df
+
+
+def deletar_layout_armazem(layout_id):
+    conn = sqlite3.connect("puxada_ambev.db")
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM layout_armazem WHERE id=?", (layout_id,))
+    conn.commit()
+    conn.close()
+
+
+def render_gestao_layouts_armazem(operacao):
+    st.markdown("### 🗺️ Cadastro e Anexo de Layouts por Área do Armazém")
+    st.caption("Cadastre novas áreas do armazém e anexe múltiplos esquemas/plantas em formato de imagem.")
+
+    with st.expander("➕ Cadastrar / Anexar Novo Layout de Área", expanded=True):
+        with st.form("form_novo_layout"):
+            c_a1, c_a2 = st.columns([1, 1])
+            nome_area_input = c_a1.text_input(
+                "Nome / Identificação da Área:",
+                placeholder="Ex: Área de Picking, Pulmão 01, Vasilhame, Pátio",
+            )
+            img_layout = c_a2.file_uploader(
+                "Selecione a Imagem do Layout:",
+                type=["png", "jpg", "jpeg", "webp"],
+            )
+
+            btn_salvar_layout = st.form_submit_button("🖼️ Salvar e Anexar Layout")
+
+            if btn_salvar_layout:
+                if not nome_area_input.strip():
+                    st.error("Por favor, preencha o nome da área antes de salvar.")
+                elif img_layout is None:
+                    st.error("Por favor, selecione um arquivo de imagem.")
+                else:
+                    salvar_layout_imagem(operacao, nome_area_input.strip(), img_layout)
+                    st.success(f"Layout da área **{nome_area_input}** anexado com sucesso!")
+                    st.rerun()
+
+    st.divider()
+    st.markdown("### 🖼️ Visualização dos Layouts Cadastrados")
+
+    df_layouts = carregar_layouts_armazem(operacao)
+
+    if not df_layouts.empty:
+        areas_unicas = sorted(df_layouts["nome_area"].unique().tolist())
+        filtro_area = st.selectbox("Filtrar por Área do Armazém:", ["TODAS AS ÁREAS"] + areas_unicas)
+
+        df_exibir = df_layouts if filtro_area == "TODAS AS ÁREAS" else df_layouts[df_layouts["nome_area"] == filtro_area]
+
+        cols_grid = st.columns(2)
+        for idx, row in df_exibir.reset_index(drop=True).iterrows():
+            col_target = cols_grid[idx % 2]
+            with col_target:
+                with st.container():
+                    st.markdown(f"#### 📍 Área: {row['nome_area']}")
+                    st.caption(f"📁 **Arquivo:** {row['nome_arquivo']} | 🕒 {row['dt_atualizacao']}")
+                    
+                    # RENDERIZA A IMAGEM DIRETAMENTE DO BANCO
+                    try:
+                        st.image(
+                            row["dados_blob"],
+                            caption=f"{row['nome_area']} - {row['nome_arquivo']}",
+                            use_column_width=True,
+                        )
+                    except Exception as e:
+                        st.error(f"Não foi possível renderizar a imagem: {e}")
+
+                    if st.button(f"🗑️ Excluir Layout #{row['id']}", key=f"del_lay_{row['id']}"):
+                        deletar_layout_armazem(row["id"])
+                        st.warning("Layout removido com sucesso!")
+                        st.rerun()
+                st.divider()
+    else:
+        st.info("ℹ️ Nenhum layout cadastrado para esta unidade. Utilize o formulário acima para anexar as plantas do armazém.")
+
+
 # 5. Navegação por Pilhas de Histórico (Botão Voltar)
 if "nav_stack" not in st.session_state:
     st.session_state["nav_stack"] = ["Visão Geral (Dashboard)"]
@@ -871,7 +992,7 @@ def render_estoque_dia(unidade):
                     unsafe_allow_html=True,
                 )
         else:
-            # TABELA COMPLETA COM PUXADA / MARCADOS REINCLUÍDOS
+            # TABELA COM AS COLUNAS EXATAS DA IMAGEM
             cols_rn = [
                 "Cod_clean",
                 "Descricao",
@@ -879,22 +1000,12 @@ def render_estoque_dia(unidade):
                 "Tipo",
                 "Categoria",
                 "Disp",
-                "Puxada_D0",
-                "Puxada_D1",
-                "Puxada_D2",
-                "Total_Puxada",
-                "Estoque_Projetado",
                 "Linear_Vendas",
                 "DOI_Atual",
                 "Status",
             ]
             format_dict = {
                 "Disp": "{:,.0f}",
-                "Puxada_D0": "{:,.0f}",
-                "Puxada_D1": "{:,.0f}",
-                "Puxada_D2": "{:,.0f}",
-                "Total_Puxada": "{:,.0f}",
-                "Estoque_Projetado": "{:,.0f}",
                 "Linear_Vendas": "{:,.0f}",
                 "DOI_Atual": "{:,.1f}",
             }
@@ -1092,7 +1203,7 @@ else:
         sub_ress = st.tabs([
             "📁 Cadastros & Atualização de Bases",
             "📊 Gestão de Estoque",
-            "🛒 Sugestão de Compra (100% Estoque)",
+            "🛒 Sugestão de Compra (100% Estoque em Paletes)",
             "📅 Agendamento de Pedidos (Dia da Marcação)",
         ])
 
@@ -1146,7 +1257,7 @@ else:
             render_estoque_dia(unidade)
 
         with sub_ress[2]:
-            st.subheader("🛒 Sugestão de Compra e Necessidade de Puxada")
+            st.subheader("🛒 Sugestão de Compra e Gestão em Paletes")
             df_sug_compra = carregar_estoque_consolidado(unidade)
 
             if df_sug_compra is not None and not df_sug_compra.empty:
@@ -1173,20 +1284,20 @@ else:
                     nec_caixas.append(max(0, int(lin * meta_doi_desejada - tot_proj)))
 
                 df_sug_compra["Necessidade_Compra_CX"] = nec_caixas
+                
+                # CONVERSÃO PARA PALETES
                 df_sug_compra["Paletes_Necessarios"] = (
                     df_sug_compra["Necessidade_Compra_CX"] / df_sug_compra["cx_pallet"]
                 ).round(1)
 
+                total_paletes_comprar = df_sug_compra["Paletes_Necessarios"].sum()
                 total_cx_comprar = sum(nec_caixas)
                 skus_comprar = len([n for n in nec_caixas if n > 0])
 
                 m_c1, m_c2, m_c3 = st.columns(3)
                 m_c1.metric("SKUs que Precisam de Compra", f"{skus_comprar} SKUs")
-                m_c2.metric("Total de Caixas a Comprar", f"{total_cx_comprar:,.0f} cx")
-                m_c3.metric(
-                    "Estimativa de Paletes",
-                    f"{df_sug_compra['Paletes_Necessarios'].sum():,.1f} paletes",
-                )
+                m_c2.metric("Total de Paletes a Comprar", f"{total_paletes_comprar:,.1f} paletes")
+                m_c3.metric("Equivalente em Caixas", f"{total_cx_comprar:,.0f} cx")
 
                 st.divider()
 
@@ -1201,8 +1312,8 @@ else:
                     "Linear_Vendas",
                     "DOI_Atual",
                     "DOI_Projetado",
-                    "Necessidade_Compra_CX",
                     "Paletes_Necessarios",
+                    "Necessidade_Compra_CX",
                 ]
 
                 format_sug = {
@@ -1212,8 +1323,8 @@ else:
                     "Linear_Vendas": "{:,.0f}",
                     "DOI_Atual": "{:,.1f}",
                     "DOI_Projetado": "{:,.1f}",
-                    "Necessidade_Compra_CX": "{:,.0f}",
                     "Paletes_Necessarios": "{:,.1f}",
+                    "Necessidade_Compra_CX": "{:,.0f}",
                 }
 
                 filtro_sug = st.radio(
@@ -1223,7 +1334,7 @@ else:
                 )
 
                 if "Apenas" in filtro_sug:
-                    df_sug_disp = df_sug_compra[df_sug_compra["Necessidade_Compra_CX"] > 0]
+                    df_sug_disp = df_sug_compra[df_sug_compra["Paletes_Necessarios"] > 0]
                 else:
                     df_sug_disp = df_sug_compra
 
@@ -1235,24 +1346,42 @@ else:
                 )
 
                 st.download_button(
-                    "Exportar Sugestão de Compra (.xlsx)",
+                    "Exportar Sugestão de Compra em Paletes (.xlsx)",
                     data=gerar_excel(df_sug_disp[cols_sug]),
-                    file_name=f"Sugestao_Compra_{unidade}.xlsx",
+                    file_name=f"Sugestao_Compra_Paletes_{unidade}.xlsx",
                 )
             else:
                 st.info("ℹ️ Atualize a base de Estoque 02.03.04 e Linear para visualizar a sugestão de compra.")
 
         with sub_ress[3]:
-            st.subheader("📅 Agendamento e Marcação de Pedidos da Puxada")
+            st.subheader("📅 Agendamento e Marcação de Pedidos em Paletes")
 
             conn = sqlite3.connect("puxada_ambev.db")
-            df_pm_raw = pd.read_sql_query(
-                f"SELECT * FROM pedidos_marcados WHERE operacao='{unidade}'",
-                conn,
-            )
+            query_pm = f"""
+            SELECT 
+                p.data_puxada,
+                p.cod_clean,
+                p.descricao,
+                p.cx_solicitadas,
+                p.cx_marcadas,
+                p.hl_marcado,
+                p.status_item,
+                p.numero_pedido,
+                p.dt_atualizacao,
+                COALESCE(b.cx_pallet, 1.0) AS cx_pallet
+            FROM pedidos_marcados p
+            LEFT JOIN base_01_11 b ON p.cod_clean = b.cod_clean
+            WHERE p.operacao='{unidade}'
+            """
+            df_pm_raw = pd.read_sql_query(query_pm, conn)
             conn.close()
 
             if not df_pm_raw.empty:
+                # CONVERSÃO DE MARCAÇÃO PARA PALETES
+                df_pm_raw["Paletes_Marcados"] = (
+                    df_pm_raw["cx_marcadas"] / df_pm_raw["cx_pallet"]
+                ).round(1)
+
                 datas_pux = sorted(df_pm_raw["data_puxada"].unique())
 
                 g_col1, g_col2 = st.columns([1, 2])
@@ -1261,6 +1390,7 @@ else:
                 resumo_dias = (
                     df_pm_raw.groupby("data_puxada")
                     .agg(
+                        Total_Paletes=("Paletes_Marcados", "sum"),
                         Total_Caixas=("cx_marcadas", "sum"),
                         Total_HL=("hl_marcado", "sum"),
                         Total_Itens=("cod_clean", "nunique"),
@@ -1268,14 +1398,14 @@ else:
                     .reset_index()
                 )
 
-                st.markdown("##### 📦 Resumo Agendado por Data de Puxada")
+                st.markdown("##### 📦 Resumo Marcado por Data de Puxada (em Paletes)")
                 cols_met = st.columns(len(datas_pux))
                 for idx, row_d in resumo_dias.iterrows():
                     if idx < len(cols_met):
                         cols_met[idx].metric(
                             f"📅 {row_d['data_puxada']}",
-                            f"{row_d['Total_Caixas']:,.0f} cx",
-                            f"{row_d['Total_HL']:,.2f} HL ({row_d['Total_Itens']} SKUs)",
+                            f"{row_d['Total_Paletes']:,.1f} Paletes",
+                            f"{row_d['Total_Caixas']:,.0f} cx | {row_d['Total_HL']:,.2f} HL ({row_d['Total_Itens']} SKUs)",
                         )
 
                 st.divider()
@@ -1285,7 +1415,7 @@ else:
                     "data_puxada",
                     "cod_clean",
                     "descricao",
-                    "cx_solicitadas",
+                    "Paletes_Marcados",
                     "cx_marcadas",
                     "hl_marcado",
                     "status_item",
@@ -1294,7 +1424,7 @@ else:
                 ]
 
                 format_pm = {
-                    "cx_solicitadas": "{:,.0f}",
+                    "Paletes_Marcados": "{:,.1f}",
                     "cx_marcadas": "{:,.0f}",
                     "hl_marcado": "{:,.2f}",
                 }
@@ -1305,9 +1435,9 @@ else:
                 )
 
                 st.download_button(
-                    "Exportar Agendamento de Pedidos (.xlsx)",
+                    "Exportar Agendamento em Paletes (.xlsx)",
                     data=gerar_excel(df_pm_raw[cols_pm]),
-                    file_name=f"Agendamento_Pedidos_{unidade}.xlsx",
+                    file_name=f"Agendamento_Pedidos_Paletes_{unidade}.xlsx",
                 )
             else:
                 st.info(
@@ -1357,12 +1487,15 @@ else:
 
             if "1 - LAYOUT" in sec_fund:
                 sub_lay = st.tabs([
-                    "1.1 - Otimização do Layout",
+                    "1.1 - Otimização do Layout (Plantas & Imagens)",
                     "1.2 - O Layout Reflete a Curva ABC",
                     "1.3 - Gestão de Capacidade do Armazém",
                 ])
 
                 with sub_lay[0]:
+                    # AQUI ESTÁ A NOVA FUNCIONALIDADE DE LAYOUT DO ARMAZÉM COM IMAGENS
+                    render_gestao_layouts_armazem(unidade)
+                    st.divider()
                     render_gerenciador_padroes_dpo(
                         unidade, "Armazém", "1.1 - Otimização do Layout"
                     )
@@ -1727,6 +1860,7 @@ else:
                 "cotacoes_frete",
                 "historico_curva_abc",
                 "padroes_dpo",
+                "layout_armazem",
             ],
         )
         conn = sqlite3.connect("puxada_ambev.db")
