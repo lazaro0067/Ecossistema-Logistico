@@ -1,146 +1,92 @@
-import io
-import re
-import sqlite3
-import urllib.parse
 import datetime
+import sqlite3
 import pandas as pd
 import streamlit as st
 
-# 1. Configuração Inicial do Streamlit
 st.set_page_config(
-    page_title="Gestão DPO & Distribuição - Grupo Lima",
+    page_title="Grupo Lima — Ecossistema Integrado 2026",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-DEPARTAMENTOS_DISPONIVEIS = [
-    "Visão Geral (Dashboard)",
-    "Puxada",
-    "Ressuprimento",
-    "Vendas",
-    "Armazém & Estoque",
-    "Distribuição (Entrega)",
-    "Frota & Manutenção",
-    "Financeiro & OBZ",
-    "Compras & Insumos",
-    "Gente & SSMA",
-    "Relatórios & Bases Globais",
-]
 
-OPERACOES_DISPONIVEIS = [
-    "Lima Rio Verde",
-    "Lima Barreiras",
-    "Lima São Félix",
-]
-
-
-# 2. Banco de Dados SQLite
+# --- BANCO DE DADOS INTEGRADO COM TODAS AS TABELAS ---
 def init_db():
     conn = sqlite3.connect("puxada_ambev.db")
     cursor = conn.cursor()
 
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS base_01_11 (
-        cod_clean INTEGER PRIMARY KEY,
-        descricao TEXT,
-        fator_hl REAL,
-        cx_pallet REAL
-    )""")
-
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS base_linear (
-        cod_clean INTEGER PRIMARY KEY,
-        tipo TEXT,
-        categoria TEXT,
-        linear_vendas REAL,
-        dt_atualizacao TEXT
-    )""")
-
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS base_estoque_02 (
-        operacao TEXT,
-        cod_clean INTEGER,
-        descricao TEXT,
-        inicial REAL,
-        entrada REAL,
-        saida REAL,
-        disponivel REAL,
-        dt_atualizacao TEXT,
-        PRIMARY KEY (operacao, cod_clean)
-    )""")
-
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS pedidos_marcados (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        operacao TEXT,
-        data_puxada TEXT,
-        cod_clean INTEGER,
-        descricao TEXT,
-        cx_solicitadas REAL,
-        cx_marcadas REAL,
-        hl_marcado REAL,
-        status_item TEXT,
-        numero_pedido TEXT,
-        dt_atualizacao TEXT
-    )""")
-
+    # 1. Empresas / Operações Independentes
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS operacoes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         nome TEXT UNIQUE NOT NULL,
-        cnpj TEXT, cidade TEXT, uf TEXT
+        cnpj TEXT,
+        cidade TEXT,
+        uf TEXT
     )""")
 
+    # 2. Usuários e Permissões Granulares
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS usuarios (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         nome TEXT UNIQUE NOT NULL,
         senha TEXT NOT NULL,
-        email TEXT, 
-        cargo TEXT, 
+        email TEXT,
+        cargo TEXT,
         perfil TEXT CHECK(perfil IN ('Master', 'Operacional')),
-        e_aprovador TEXT DEFAULT 'Não', 
+        e_aprovador TEXT DEFAULT 'Não',
         alcada_reais REAL DEFAULT 0.0,
-        permissoes_operacoes TEXT DEFAULT 'TODAS',
-        permissoes_deptos TEXT DEFAULT 'TODOS'
+        perm_puxada INTEGER DEFAULT 1,
+        perm_ressuprimento INTEGER DEFAULT 1,
+        perm_armazem INTEGER DEFAULT 1,
+        perm_distribuicao INTEGER DEFAULT 1,
+        perm_gente INTEGER DEFAULT 1,
+        perm_frota INTEGER DEFAULT 1,
+        perm_vendas INTEGER DEFAULT 1,
+        perm_financeiro INTEGER DEFAULT 1,
+        perm_compras INTEGER DEFAULT 1
     )""")
 
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS padroes_dpo (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        operacao TEXT,
-        modulo TEXT,
-        subbloco TEXT,
-        titulo_padrao TEXT,
-        conteudo_padrao TEXT,
-        sugestoes_ia TEXT,
-        dt_atualizacao TEXT,
-        UNIQUE(operacao, modulo, subbloco)
-    )""")
+    # 3. Puxada e Trechos
+    cursor.execute("""CREATE TABLE IF NOT EXISTS origens_destinos (id INTEGER PRIMARY KEY AUTOINCREMENT, operacao TEXT, nome TEXT, cidade TEXT, uf TEXT, tipo TEXT, UNIQUE(operacao, nome))""")
+    cursor.execute("""CREATE TABLE IF NOT EXISTS trechos (id INTEGER PRIMARY KEY AUTOINCREMENT, operacao TEXT, origem TEXT, destino TEXT, distancia_km REAL, pedagio REAL, valor_remunerado REAL, valor_frete REAL)""")
+    cursor.execute("""CREATE TABLE IF NOT EXISTS transportadoras (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT UNIQUE, cnpj TEXT)""")
+    cursor.execute("""CREATE TABLE IF NOT EXISTS centros_custo (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT UNIQUE)""")
 
+    # 4. Fretes & Cotações
     cursor.execute("""
-    CREATE TABLE IF NOT EXISTS cotacoes_frete (
+    CREATE TABLE IF NOT EXISTS cotacoes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         operacao TEXT, origem TEXT, destino TEXT, data_requisicao TEXT,
         data_frete TEXT, motivo TEXT, transportadora TEXT, valor_negociado REAL,
         centro_custo TEXT, solicitante TEXT, aprovador TEXT, observacao TEXT,
-        status TEXT DEFAULT 'Pendente Aprovação'
+        status TEXT DEFAULT 'Pendente Aprovação', nf_nome TEXT, cte_nome TEXT
     )""")
 
+    # 5. Módulo Compras
     cursor.execute("""
-    CREATE TABLE IF NOT EXISTS historico_curva_abc (
+    CREATE TABLE IF NOT EXISTS compras_pedidos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        operacao TEXT,
-        mes_ano TEXT,
-        cod_clean INTEGER,
-        descricao TEXT,
-        total_qtde REAL,
-        pct_acumulado REAL,
-        classe_abc TEXT,
-        dt_atualizacao TEXT,
-        UNIQUE(operacao, mes_ano, cod_clean)
+        operacao TEXT, item TEXT, quantidade REAL, valor_unitario REAL,
+        fornecedor TEXT, status TEXT DEFAULT 'Pendente', solicitante TEXT, data TEXT
     )""")
 
+    # 6. PNR (Plano de Necessidade de Ressuprimento / Metas)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS pnr_metas (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        operacao TEXT, mes_ano TEXT, meta_volume_hl REAL, meta_frete_real REAL,
+        UNIQUE(operacao, mes_ano)
+    )""")
+
+    # 7. Controle de Carretos
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS carretos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        operacao TEXT, motorista TEXT, placa TEXT, valor REAL, status TEXT DEFAULT 'Em Trânsito', data TEXT
+    )""")
+
+    # Populate Inicial das Empresas Independentes
     empresas = [
         ("Lima Rio Verde", "12.345.678/0001-90", "Rio Verde", "GO"),
         ("Lima Barreiras", "98.765.432/0001-10", "Barreiras", "BA"),
@@ -148,15 +94,17 @@ def init_db():
     ]
     for emp in empresas:
         cursor.execute(
-            "INSERT OR IGNORE INTO operacoes (nome, cnpj, cidade, uf) VALUES (?,?,?,?)",
+            "INSERT OR IGNORE INTO operacoes (nome, cnpj, cidade, uf) VALUES"
+            " (?,?,?,?)",
             emp,
         )
 
+    # Administrador Master
     cursor.execute("SELECT count(*) FROM usuarios WHERE nome = 'admin'")
     if cursor.fetchone()[0] == 0:
         cursor.execute("""
-        INSERT INTO usuarios (nome, senha, email, cargo, perfil, e_aprovador, alcada_reais, permissoes_operacoes, permissoes_deptos)
-        VALUES ('admin', 'admin123', 'admin@grupolima.com.br', 'Administrador Master', 'Master', 'Sim', 9999999.0, 'TODAS', 'TODOS')
+        INSERT INTO usuarios (nome, senha, email, cargo, perfil, e_aprovador, alcada_reais, perm_puxada, perm_ressuprimento, perm_armazem, perm_distribuicao, perm_gente, perm_frota, perm_vendas, perm_financeiro, perm_compras)
+        VALUES ('admin', 'admin123', 'admin@grupolima.com.br', 'Administrador Master', 'Master', 'Sim', 9999999.0, 1, 1, 1, 1, 1, 1, 1, 1, 1)
         """)
 
     conn.commit()
@@ -165,504 +113,418 @@ def init_db():
 
 init_db()
 
-
-# 3. Funções Auxiliares de Leitura e Tratamento
-def robust_read_csv(file_obj):
-    try:
-        file_obj.seek(0)
-        return pd.read_csv(file_obj, sep=";", encoding="utf-8-sig", engine="python", on_bad_lines="skip")
-    except Exception:
-        file_obj.seek(0)
-        return pd.read_csv(file_obj, sep=";", encoding="latin1", engine="python", on_bad_lines="skip")
-
-
-def parse_br_float(val):
-    if pd.isna(val):
-        return 0.0
-    s = str(val).strip().replace(".", "").replace(",", ".")
-    try:
-        return float(s)
-    except Exception:
-        return 0.0
-
-
-def extract_ambev_brand(desc):
-    d = str(desc).upper().strip()
-    if d.startswith("BC ") or "BRAHMA" in d or d.startswith("BR "):
-        return "BRAHMA"
-    elif d.startswith("SK ") or "SKOL" in d:
-        return "SKOL"
-    elif d.startswith("ANT ") or "ANTARCTICA" in d:
-        return "ANTARCTICA"
-    elif d.startswith("ORG ") or "ORIGINAL" in d:
-        return "ORIGINAL"
-    elif d.startswith("BUD") or "BUDWEISER" in d:
-        return "BUDWEISER"
-    elif d.startswith("SPAT") or "SPATEN" in d:
-        return "SPATEN"
-    elif d.startswith("COR ") or "CORONA" in d:
-        return "CORONA"
-    elif "ARTOIS" in d or d.startswith("SLA ") or "STELLA" in d:
-        return "STELLA ARTOIS"
-    elif d.startswith("SU ") or d.startswith("SUK") or "SUKITA" in d:
-        return "SUKITA"
-    elif d.startswith("PC ") or "PEPSI" in d:
-        return "PEPSI"
-    elif d.startswith("GCA ") or "GUARANA" in d:
-        return "GUARANÁ"
-    elif d.startswith("CHP BR") or "CHOPP" in d:
-        return "CHOPP BRAHMA"
-    elif d.startswith("BECK") or "BECKS" in d:
-        return "BECKS"
-    elif "H2O" in d:
-        return "H2OH!"
-    else:
-        return "OUTROS"
-
-
-def highlight_curva_abc(val):
-    if val == "A":
-        return "background-color: #d4edda; color: #155724; font-weight: bold;"
-    elif val == "B":
-        return "background-color: #fff3cd; color: #856404; font-weight: bold;"
-    elif val == "C":
-        return "background-color: #f8d7da; color: #721c24; font-weight: bold;"
-    return ""
-
-
-def salvar_base_01_11(f_01):
-    df_01 = robust_read_csv(f_01)
-    df_01["cod_clean"] = pd.to_numeric(df_01["Código"], errors="coerce")
-    col_q = df_01.columns[16]
-    df_01["fator_hl"] = df_01[col_q].astype(str).str.replace(",", ".").astype(float)
-    df_01["cx_pallet"] = pd.to_numeric(df_01["Caixas Pallet"], errors="coerce").fillna(1)
-    df_01["cx_pallet"] = df_01["cx_pallet"].apply(lambda x: x if x > 0 else 1)
-
-    df_sub = df_01[["cod_clean", "Descrição", "fator_hl", "cx_pallet"]].dropna(subset=["cod_clean"])
-
-    conn = sqlite3.connect("puxada_ambev.db")
-    cursor = conn.cursor()
-    for _, r in df_sub.iterrows():
-        cursor.execute("""
-        INSERT INTO base_01_11 (cod_clean, descricao, fator_hl, cx_pallet)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(cod_clean) DO UPDATE SET
-            descricao=excluded.descricao, fator_hl=excluded.fator_hl, cx_pallet=excluded.cx_pallet
-        """, (int(r["cod_clean"]), str(r["Descrição"]), float(r["fator_hl"]), float(r["cx_pallet"])))
-    conn.commit()
-    conn.close()
-
-
-def salvar_base_linear(f_lin):
-    try:
-        df_lin = pd.read_excel(f_lin, sheet_name=0)
-    except Exception:
-        df_lin = pd.read_excel(f_lin, header=1)
-
-    col_cod = [c for c in df_lin.columns if "Cód" in str(c) or "COD" in str(c)][0]
-    col_vendas = [c for c in df_lin.columns if "Linear" in str(c)][0]
-
-    df_lin["cod_clean"] = pd.to_numeric(df_lin[col_cod], errors="coerce")
-    df_lin["linear_vendas"] = pd.to_numeric(df_lin[col_vendas], errors="coerce").fillna(0)
-    df_lin["Tipo"] = df_lin.get("Tipo", pd.Series()).fillna("OUTROS")
-    df_lin["Categoria"] = df_lin.get("Categoria", pd.Series()).fillna("OUTROS")
-
-    dt_now = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
-
-    conn = sqlite3.connect("puxada_ambev.db")
-    cursor = conn.cursor()
-    for _, r in df_lin.dropna(subset=["cod_clean"]).iterrows():
-        cursor.execute("""
-        INSERT INTO base_linear (cod_clean, tipo, categoria, linear_vendas, dt_atualizacao)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(cod_clean) DO UPDATE SET
-            tipo=excluded.tipo, categoria=excluded.categoria,
-            linear_vendas=excluded.linear_vendas, dt_atualizacao=excluded.dt_atualizacao
-        """, (int(r["cod_clean"]), str(r.get("Tipo", "OUTROS")), str(r.get("Categoria", "OUTROS")), float(r["linear_vendas"]), dt_now))
-    conn.commit()
-    conn.close()
-
-
-def salvar_base_estoque_02(f_02, operacao):
-    df_02 = robust_read_csv(f_02)
-
-    col_cod = [c for c in df_02.columns if "Cod" in str(c) or "COD" in str(c)][0]
-    col_desc = [c for c in df_02.columns if "Desc" in str(c)][0]
-    col_init = [c for c in df_02.columns if "Inic" in str(c)][0]
-    col_ent = [c for c in df_02.columns if "Ent" in str(c)][0]
-    col_sai = [c for c in df_02.columns if "Saida" in str(c) or "Sai" in str(c)][0]
-    col_disp = [c for c in df_02.columns if "Disp" in str(c)][0]
-
-    df_02["cod_clean"] = pd.to_numeric(df_02[col_cod], errors="coerce")
-    df_02["Inicial"] = pd.to_numeric(df_02[col_init], errors="coerce").fillna(0)
-    df_02["Ent."] = pd.to_numeric(df_02[col_ent], errors="coerce").fillna(0)
-    df_02["Saidas"] = pd.to_numeric(df_02[col_sai], errors="coerce").fillna(0)
-    df_02["Disp."] = pd.to_numeric(df_02[col_disp], errors="coerce").fillna(0)
-
-    dt_now = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
-
-    conn = sqlite3.connect("puxada_ambev.db")
-    cursor = conn.cursor()
-    for _, r in df_02.dropna(subset=["cod_clean"]).iterrows():
-        cursor.execute("""
-        INSERT INTO base_estoque_02 (operacao, cod_clean, descricao, inicial, entrada, saida, disponivel, dt_atualizacao)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(operacao, cod_clean) DO UPDATE SET
-            descricao=excluded.descricao, inicial=excluded.inicial, entrada=excluded.entrada,
-            saida=excluded.saida, disponivel=excluded.disponivel, dt_atualizacao=excluded.dt_atualizacao
-        """, (operacao, int(r["cod_clean"]), str(r[col_desc]), float(r["Inicial"]), float(r["Ent."]), float(r["Saidas"]), float(r["Disp."]), dt_now))
-    conn.commit()
-    conn.close()
-
-
-def salvar_pedidos_marcados(f_pedidos, operacao):
-    df_pedidos = robust_read_csv(f_pedidos)
-
-    col_cod_r = df_pedidos.columns[17] if len(df_pedidos.columns) > 17 else [c for c in df_pedidos.columns if "Código" in str(c)][0]
-    col_marc_w = df_pedidos.columns[22] if len(df_pedidos.columns) > 22 else [c for c in df_pedidos.columns if "Marcado" in str(c)][0]
-    col_desc = [c for c in df_pedidos.columns if "Produto" in str(c) or "Desc" in str(c)][0]
-    col_dt = [c for c in df_pedidos.columns if "Data Puxada" in str(c) or "Data" in str(c)][0]
-    col_solic = [c for c in df_pedidos.columns if "QtdeSKUs - Item" in str(c)][0]
-    col_hl = [c for c in df_pedidos.columns if "Qtde Hecto - Item - Marcado" in str(c)][0]
-
-    conn = sqlite3.connect("puxada_ambev.db")
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM pedidos_marcados WHERE operacao=?", (operacao,))
-
-    dt_now = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
-    for _, r in df_pedidos.iterrows():
-        cod_raw = str(r.get(col_cod_r, "")).strip()
-        cod_clean_str = cod_raw[:-1] if len(cod_raw) > 1 else cod_raw
-        cod_clean = pd.to_numeric(cod_clean_str, errors="coerce")
-        if pd.isna(cod_clean):
-            continue
-
-        cx_marcadas_w = parse_br_float(r.get(col_marc_w))
-
-        cursor.execute("""
-        INSERT INTO pedidos_marcados (operacao, data_puxada, cod_clean, descricao, cx_solicitadas, cx_marcadas, hl_marcado, status_item, numero_pedido, dt_atualizacao)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (operacao, str(r.get(col_dt)).strip(), int(cod_clean), str(r.get(col_desc)).strip(), parse_br_float(r.get(col_solic)), cx_marcadas_w, parse_br_float(r.get(col_hl)), str(r.get("Status - Item", "")).strip(), str(r.get("Nº - Pedido", "")).strip(), dt_now))
-
-    conn.commit()
-    conn.close()
-
-
-def carregar_pedidos_pivoted(operacao):
-    conn = sqlite3.connect("puxada_ambev.db")
-    df_pm = pd.read_sql_query(f"SELECT data_puxada, cod_clean, cx_marcadas FROM pedidos_marcados WHERE operacao='{operacao}'", conn)
-    conn.close()
-
-    if df_pm.empty:
-        return None, []
-
-    datas_unicas = sorted(df_pm["data_puxada"].unique())
-    df_grp = df_pm.groupby(["cod_clean", "data_puxada"])["cx_marcadas"].sum().reset_index()
-    df_piv = df_grp.pivot(index="cod_clean", columns="data_puxada", values="cx_marcadas").fillna(0).reset_index()
-
-    d0_col = datas_unicas[0] if len(datas_unicas) > 0 else None
-    d1_col = datas_unicas[1] if len(datas_unicas) > 1 else None
-    d2_col = datas_unicas[2] if len(datas_unicas) > 2 else None
-
-    df_piv["Puxada_D0"] = df_piv[d0_col] if d0_col else 0.0
-    df_piv["Puxada_D1"] = df_piv[d1_col] if d1_col else 0.0
-    df_piv["Puxada_D2"] = df_piv[d2_col] if d2_col else 0.0
-    df_piv["Total_Puxada"] = df_piv["Puxada_D0"] + df_piv["Puxada_D1"] + df_piv["Puxada_D2"]
-
-    return df_piv[["cod_clean", "Puxada_D0", "Puxada_D1", "Puxada_D2", "Total_Puxada"]], datas_unicas
-
-
-def carregar_estoque_consolidado(operacao):
-    conn = sqlite3.connect("puxada_ambev.db")
-
-    query = f"""
-    SELECT 
-        e.cod_clean AS Cod_clean,
-        e.descricao AS Descricao,
-        COALESCE(l.tipo, 'OUTROS') AS Tipo,
-        COALESCE(l.categoria, 'OUTROS') AS Categoria,
-        CAST(COALESCE(e.inicial, 0) AS INTEGER) AS Inicial,
-        CAST(COALESCE(e.entrada, 0) AS INTEGER) AS Entrada,
-        CAST(COALESCE(e.saida, 0) AS INTEGER) AS Saida,
-        CAST(COALESCE(e.disponivel, 0) AS INTEGER) AS Disp,
-        CAST(COALESCE(l.linear_vendas, 0) AS INTEGER) AS Linear_Vendas,
-        COALESCE(b.fator_hl, 0.0) AS fator_hl,
-        COALESCE(b.cx_pallet, 1.0) AS cx_pallet,
-        e.dt_atualizacao AS dt_atualizacao
-    FROM base_estoque_02 e
-    LEFT JOIN base_01_11 b ON e.cod_clean = b.cod_clean
-    LEFT JOIN base_linear l ON e.cod_clean = l.cod_clean
-    WHERE e.operacao = '{operacao}'
-    """
-
-    df = pd.read_sql_query(query, conn)
-    df_abc = pd.read_sql_query(f"SELECT cod_clean, classe_abc FROM historico_curva_abc WHERE operacao='{operacao}' AND mes_ano = (SELECT MAX(mes_ano) FROM historico_curva_abc WHERE operacao='{operacao}')", conn)
-    conn.close()
-
-    if df.empty:
-        return None
-
-    if not df_abc.empty:
-        df = pd.merge(df, df_abc, left_on="Cod_clean", right_on="cod_clean", how="left")
-        df["Classe_ABC"] = df["classe_abc"].fillna("C")
-        df.drop(columns=["cod_clean", "classe_abc"], inplace=True, errors="ignore")
-    else:
-        df["Classe_ABC"] = "C"
-
-    df_piv, datas_puxada = carregar_pedidos_pivoted(operacao)
-    if df_piv is not None and not df_piv.empty:
-        df = pd.merge(df, df_piv, left_on="Cod_clean", right_on="cod_clean", how="left")
-        df["Puxada_D0"] = df["Puxada_D0"].fillna(0)
-        df["Puxada_D1"] = df["Puxada_D1"].fillna(0)
-        df["Puxada_D2"] = df["Puxada_D2"].fillna(0)
-        df["Total_Puxada"] = df["Total_Puxada"].fillna(0)
-        df.drop(columns=["cod_clean"], inplace=True, errors="ignore")
-    else:
-        df["Puxada_D0"] = 0.0
-        df["Puxada_D1"] = 0.0
-        df["Puxada_D2"] = 0.0
-        df["Total_Puxada"] = 0.0
-
-    # Conversão Exata para Paletes utilizando o parâmetro cx_pallet extraído da 01.11
-    df["Paletes_Disp"] = (df["Disp"] / df["cx_pallet"]).round(1)
-    df["Paletes_D0"] = (df["Puxada_D0"] / df["cx_pallet"]).round(1)
-    df["Paletes_D1"] = (df["Puxada_D1"] / df["cx_pallet"]).round(1)
-    df["Paletes_D2"] = (df["Puxada_D2"] / df["cx_pallet"]).round(1)
-    df["Paletes_Total_Puxada"] = (df["Total_Puxada"] / df["cx_pallet"]).round(1)
-    
-    df["Estoque_Projetado_CX"] = df["Disp"] + df["Total_Puxada"]
-    df["Paletes_Projetados"] = (df["Estoque_Projetado_CX"] / df["cx_pallet"]).round(1)
-
-    df["DOI_Atual"] = df.apply(
-        lambda r: round(r["Disp"] / r["Linear_Vendas"], 1) if r["Linear_Vendas"] > 0 else (999.0 if r["Disp"] > 0 else 0.0),
-        axis=1,
-    )
-
-    df["Estoque_HL"] = (df["fator_hl"] * df["Disp"]).round(2)
-    df["Marca"] = df["Descricao"].apply(extract_ambev_brand)
-
-    return df
-
-
-def calcular_saude_estoque_dpo(df):
-    if df is None or df.empty:
-        return 0.0, 0, 0, 0
-    total_skus = len(df)
-    saudaveis = len(df[(df["DOI_Atual"] >= 3.0) & (df["DOI_Atual"] <= 15.0)])
-    ruptura = len(df[df["DOI_Atual"] < 3.0])
-    excesso = len(df[df["DOI_Atual"] > 15.0])
-    pct_saude = (saudaveis / total_skus) * 100.0 if total_skus > 0 else 0.0
-    return round(pct_saude, 1), saudaveis, ruptura, excesso
-
-
-def gerar_excel(df):
-    output = io.BytesIO()
-    try:
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            df.to_excel(writer, index=False, sheet_name="Dados")
-    except Exception:
-        df.to_csv(output, index=False, sep=";")
-    return output.getvalue()
-
-
-# 4. Portal Comercial e Interface Mobile Otimizada por Cards
-modo_comercial = False
-unidade_param = "Lima Rio Verde"
-
-if "modo" in st.query_params:
-    val_modo = st.query_params["modo"]
-    modo_comercial = "comercial" in val_modo if isinstance(val_modo, list) else val_modo == "comercial"
-
-if "unidade" in st.query_params:
-    val_u = st.query_params["unidade"]
-    unidade_param = val_u[0] if isinstance(val_u, list) else val_u
-
-
-def render_estoque_dia(unidade):
-    st.subheader(f"📲 Estoque Dia — Consulta Comercial ({unidade})")
-
-    detected_host = "localhost:8501"
-    try:
-        if hasattr(st, "context") and hasattr(st.context, "headers"):
-            detected_host = st.context.headers.get("Host", "localhost:8501")
-    except Exception:
-        pass
-
-    unidade_encoded = urllib.parse.quote(unidade)
-    link_web_op = f"http://{detected_host}/?modo=comercial&unidade={unidade_encoded}"
-
-    exp_link = st.expander("📲 Link Direto & QR Code desta Unidade (Para Compartilhar)", expanded=False)
-    with exp_link:
-        qr_code_url = f"https://api.qrserver.com/v1/create-qr-code/?size=150x150&data={urllib.parse.quote(link_web_op)}"
-        c_qr1, c_qr2 = st.columns([1, 3])
-        c_qr1.image(qr_code_url, caption=f"QR Code - {unidade}", width=130)
-        c_qr2.markdown(f"""
-        🔗 **Link Exclusivo:** <a href="{link_web_op}" target="_blank" style="font-size: 15px; font-weight: bold; color: #0288d1;">{link_web_op}</a>  
-        📱 Compartilhe este link com a equipe de vendas para abrir direto nos estoques de **{unidade}**.
-        """, unsafe_allow_html=True)
-
-    msg_wa = urllib.parse.quote(f"📲 *Estoque Dia ({unidade})*\nConsulte a disponibilidade em tempo real: {link_web_op}")
-    link_whatsapp = f"https://api.whatsapp.com/send?text={msg_wa}"
-
-    c_l1, c_l2 = st.columns([3, 1])
-    c_l1.markdown(f"""
-    <div style="background-color: #e8f4f8; padding: 10px; border-radius: 8px; border-left: 5px solid #0288d1;">
-        🔗 <b>Link Direto da Unidade:</b> <a href="{link_web_op}" target="_blank" style="font-weight: bold; color: #0288d1;">{link_web_op}</a>
-    </div>
-    """, unsafe_allow_html=True)
-
-    c_l2.markdown(f"""
-    <div style="padding-top: 5px;">
-        <a href="{link_whatsapp}" target="_blank" style="background-color: #25D366; color: white; padding: 8px 12px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">
-            📲 Enviar WhatsApp
-        </a>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.divider()
-
-    df = carregar_estoque_consolidado(unidade)
-
-    if df is not None and not df.empty:
-        st.caption(f"🕒 **Sincronizado em:** {df['dt_atualizacao'].iloc[0]}")
-
-        def get_status(doi, disp):
-            if disp == 0 or doi < 1.0:
-                return "🔴 Indisponível"
-            elif doi < 3.0:
-                return "🟡 Estoque Baixo"
-            else:
-                return "🟢 Disponível"
-
-        df["Status"] = df.apply(lambda r: get_status(r["DOI_Atual"], r["Disp"]), axis=1)
-
-        # Indicadores Gerais Convertidos para Paletes
-        m_col1, m_col2, m_col3, m_col4, m_col5, m_col6 = st.columns(6)
-        m_col1.metric("SKUs Ativos", f"{len(df)}")
-        m_col2.metric("Estoque Físico", f"{df['Paletes_Disp'].sum():,.1f} plt")
-        m_col3.metric("Chegando D0", f"{df['Paletes_D0'].sum():,.1f} plt")
-        m_col4.metric("Chegando D1", f"{df['Paletes_D1'].sum():,.1f} plt")
-        m_col5.metric("Chegando D2", f"{df['Paletes_D2'].sum():,.1f} plt")
-        m_col6.metric("Projeção Total", f"{df['Paletes_Projetados'].sum():,.1f} plt")
-
-        st.divider()
-
-        # Filtros Rápidos
-        if "filtro_status_dia" not in st.session_state:
-            st.session_state["filtro_status_dia"] = "TODOS"
-
-        k1, k2, k3, k4 = st.columns(4)
-        if k1.button(f"Todos\n\n### {len(df)}"):
-            st.session_state["filtro_status_dia"] = "TODOS"
-        if k2.button(f"Disponíveis 🟢\n\n### {len(df[df['Status'] == '🟢 Disponível'])}"):
-            st.session_state["filtro_status_dia"] = "🟢 Disponível"
-        if k3.button(f"Estoque Baixo 🟡\n\n### {len(df[df['Status'] == '🟡 Estoque Baixo'])}"):
-            st.session_state["filtro_status_dia"] = "🟡 Estoque Baixo"
-        if k4.button(f"Indisponíveis 🔴\n\n### {len(df[df['Status'] == '🔴 Indisponível'])}"):
-            st.session_state["filtro_status_dia"] = "🔴 Indisponível"
-
-        df_exib = df if st.session_state["filtro_status_dia"] == "TODOS" else df[df["Status"] == st.session_state["filtro_status_dia"]]
-
-        mod_visual = st.radio("Selecione o Formato de Exibição:", ["📲 Visão Mobile (Cards de Paletes)", "📊 Visão Tabela Completa"], horizontal=True)
-
-        st.divider()
-
-        if "Cards" in mod_visual:
-            busca_card = st.text_input("🔍 Pesquisar por código ou marca:", key="b_card")
-            if busca_card:
-                df_cards = df_exib[df_exib["Cod_clean"].astype(str).str.contains(busca_card) | df_exib["Descricao"].str.contains(busca_card, case=False)]
-            else:
-                df_cards = df_exib
-
-            # Renderização de Quadradinhos / Cards Responsivos
-            grid_cols = st.columns(3)
-            for idx, r in df_cards.reset_index().iterrows():
-                col_target = grid_cols[idx % 3]
-
-                border_color = "#2e7d32" if "🟢" in r["Status"] else ("#f57f17" if "🟡" in r["Status"] else "#c62828")
-                bg_color = "#f1f8e9" if "🟢" in r["Status"] else ("#fffde7" if "🟡" in r["Status"] else "#ffebee")
-
-                with col_target:
-                    st.markdown(f"""
-                    <div style="border: 2px solid {border_color}; background-color: {bg_color}; border-radius: 10px; padding: 12px; margin-bottom: 12px; box-shadow: 2px 2px 5px rgba(0,0,0,0.05);">
-                        <div style="font-weight: bold; font-size: 14px; color: #333; height: 38px; overflow: hidden;">{r['Descricao']}</div>
-                        <div style="font-size: 11px; color: #666; margin-bottom: 8px;">Cód: <b>{r['Cod_clean']}</b> | Marca: <b>{r['Marca']}</b></div>
-                        <div style="font-size: 18px; font-weight: bold; color: {border_color}; margin-bottom: 6px;">
-                            📦 {r['Paletes_Disp']:,.1f} Paletes <span style="font-size:12px; color:#555;">({r['Disp']:,.0f} cx)</span>
-                        </div>
-                        <div style="font-size: 11px; background-color: #ffffff; padding: 6px; border-radius: 6px; border: 1px solid #e0e0e0;">
-                            🚛 <b>Puxada Agendada (Paletes):</b><br>
-                            • D0: <b>{r['Paletes_D0']:,.1f} plt</b> | • D1: <b>{r['Paletes_D1']:,.1f} plt</b> | • D2: <b>{r['Paletes_D2']:,.1f} plt</b><br>
-                            🎯 <b>Projeção Total:</b> <span style="color:#0288d1; font-weight:bold;">{r['Paletes_Projetados']:,.1f} plt</span>
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-        else:
-            cols_view = [
-                "Cod_clean", "Descricao", "Marca", "Paletes_Disp", "Paletes_D0", "Paletes_D1", "Paletes_D2", 
-                "Paletes_Projetados", "Disp", "Total_Puxada", "Linear_Vendas", "DOI_Atual", "Status"
-            ]
-            format_dict = {
-                "Paletes_Disp": "{:,.1f}", "Paletes_D0": "{:,.1f}", "Paletes_D1": "{:,.1f}", "Paletes_D2": "{:,.1f}",
-                "Paletes_Projetados": "{:,.1f}", "Disp": "{:,.0f}", "Total_Puxada": "{:,.0f}", "Linear_Vendas": "{:,.0f}", "DOI_Atual": "{:,.1f}"
-            }
-            st.dataframe(df_exib[cols_view].style.format(format_dict), use_container_width=True)
-
-    else:
-        st.info("ℹ️ Nenhum estoque sincronizado nesta operação. Faça a atualização na aba **Ressuprimento**.")
-
-
-if modo_comercial:
-    st.title("Grupo Lima — Portal Comercial de Vendas")
-    unidade_sel = st.selectbox("Selecione a Unidade Operacional:", OPERACOES_DISPONIVEIS, index=OPERACOES_DISPONIVEIS.index(unidade_param) if unidade_param in OPERACOES_DISPONIVEIS else 0)
-    render_estoque_dia(unidade_sel)
-    st.stop()
-
-# 5. Modulo Principal com Login
-if "logado" not in st.session_state:
-    st.session_state["logado"] = False
-
-if not st.session_state["logado"]:
-    st.title("Sistema Revenda - Grupo Lima")
-    st.subheader("Autenticação Integrada")
-    col1, _ = st.columns([1, 2])
-    with col1:
-        usuario = st.text_input("Usuário")
-        senha = st.text_input("Senha", type="password")
-        if st.button("Entrar", use_container_width=True):
-            conn = sqlite3.connect("puxada_ambev.db")
-            cursor = conn.cursor()
-            cursor.execute("SELECT id, nome, perfil, permissoes_operacoes, permissoes_deptos FROM usuarios WHERE nome = ? AND senha = ?", (usuario, senha))
-            user = cursor.fetchone()
-            conn.close()
-
-            if user:
-                st.session_state["logado"] = True
-                st.session_state["usuario"] = user[1]
-                st.session_state["perfil"] = user[2]
-                st.session_state["perm_ops"] = user[3]
-                st.session_state["perm_deps"] = user[4]
-                st.success("Acesso autorizado!")
+# --- GERENCIAMENTO DE SESSÃO ---
+if "usuario" not in st.session_state:
+    st.session_state.usuario = None
+if "operacao_atual" not in st.session_state:
+    st.session_state.operacao_atual = "Lima Rio Verde"
+
+conn = sqlite3.connect("puxada_ambev.db")
+
+# ==========================================
+# TELA DE LOGIN
+# ==========================================
+if not st.session_state.usuario:
+    st.title("🌐 Grupo Lima — Sistema de Gestão Integrada")
+    st.caption("Acesso Restrito às Operações e Unidades")
+
+    with st.form("f_login"):
+        u = st.text_input("Usuário / Login")
+        s = st.text_input("Senha", type="password")
+        if st.form_submit_button("Acessar Painel"):
+            df = pd.read_sql_query(
+                "SELECT * FROM usuarios WHERE nome=? AND senha=?",
+                conn,
+                params=(u, s),
+            )
+            if not df.empty:
+                st.session_state.usuario = df.iloc[0].to_dict()
                 st.rerun()
             else:
-                st.error("Credenciais inválidas.")
+                st.error("Usuário ou senha incorretos.")
+    st.stop()
+
+usr = st.session_state.usuario
+
+# ==========================================
+# BARRA LATERAL (SELETOR DE EMPRESAS)
+# ==========================================
+st.sidebar.title("🏢 Grupo Lima")
+st.sidebar.markdown(f"**Operador:** {usr['nome']}")
+st.sidebar.caption(f"Cargo: {usr['cargo']} | Perfil: {usr['perfil']}")
+
+lista_ops = pd.read_sql_query("SELECT nome FROM operacoes", conn)[
+    "nome"
+].tolist()
+st.session_state.operacao_atual = st.sidebar.selectbox(
+    "Seleção de Empresa / Unidade",
+    lista_ops,
+    index=lista_ops.index(st.session_state.operacao_atual)
+    if st.session_state.operacao_atual in lista_ops
+    else 0,
+)
+
+if st.sidebar.button("🚪 Sair do Sistema"):
+    st.session_state.usuario = None
+    st.rerun()
+
+st.sidebar.divider()
+st.sidebar.subheader("Menu Módulos")
+
+# Construção dinâmica do menu conforme rotas e permissões
+menu_opcoes = []
+if usr["perfil"] == "Master" or usr.get("perm_puxada") == 1:
+    menu_opcoes.append("🚚 Puxada & Fretes")
+if usr["perfil"] == "Master" or usr.get("perm_ressuprimento") == 1:
+    menu_opcoes.append("📦 Ressuprimento & PNR")
+if usr["perfil"] == "Master" or usr.get("perm_compras") == 1:
+    menu_opcoes.append("🛒 Compras & Cotações")
+if usr["perfil"] == "Master" or usr.get("perm_armazem") == 1:
+    menu_opcoes.append("🏬 Armazém & Estoque")
+if usr["perfil"] == "Master" or usr.get("perm_distribuicao") == 1:
+    menu_opcoes.append("🚛 Distribuição & Devolução")
+if usr["perfil"] == "Master" or usr.get("perm_frota") == 1:
+    menu_opcoes.append("🛡️ Segurança & Frota")
+if usr["perfil"] == "Master" or usr.get("perm_financeiro") == 1:
+    menu_opcoes.append("💰 Financeiro, Carreto & OBZ")
+
+if usr["perfil"] == "Master":
+    menu_opcoes.append("🔑 Painel Admin (Acessos)")
+
+menu = st.sidebar.radio("Selecione o Módulo", menu_opcoes)
+op_atual = st.session_state.operacao_atual
+
+# ==========================================
+# 1. MÓDULO: PUXADA & FRETES
+# ==========================================
+if menu == "🚚 Puxada & Fretes":
+    st.title(f"🚚 Puxada e Gestão de Fretes — {op_atual}")
+
+    t1, t2, t3, t4, t5 = st.tabs([
+        "📝 Nova Cotação",
+        "✅ Central de Aprovações",
+        "📋 Painel de Fretes",
+        "🧮 Simulador Subida/Frete",
+        "⚙️ Cadastros de Suporte",
+    ])
+
+    with t1:
+        st.subheader("Solicitação de Frete / Cotação")
+        ods = pd.read_sql_query(
+            "SELECT nome FROM origens_destinos WHERE operacao=?",
+            conn,
+            params=(op_atual,),
+        )["nome"].tolist()
+        transps = pd.read_sql_query("SELECT nome FROM transportadoras", conn)[
+            "nome"
+        ].tolist()
+        ccs = pd.read_sql_query("SELECT nome FROM centros_custo", conn)[
+            "nome"
+        ].tolist()
+        aprovs = pd.read_sql_query(
+            "SELECT nome FROM usuarios WHERE e_aprovador='Sim'", conn
+        )["nome"].tolist()
+
+        with st.form("f_pux_nova"):
+            c1, c2 = st.columns(2)
+            orig = c1.selectbox("Origem", ["Selecione..."] + ods)
+            dest = c2.selectbox("Destino", ["Selecione..."] + ods)
+            c3, c4 = st.columns(2)
+            tr = c3.selectbox("Transportadora", ["Selecione..."] + transps)
+            val = c4.number_input("Valor Negociado (R$)", min_value=0.0)
+            c5, c6 = st.columns(2)
+            cc = c5.selectbox("Centro de Custo", ["Selecione..."] + ccs)
+            ap = c6.selectbox("Aprovador", ["Selecione..."] + aprovs)
+            obs = st.text_area("Motivo / Observações")
+
+            if st.form_submit_button("Enviar para Aprovação"):
+                conn.execute(
+                    """INSERT INTO cotacoes (operacao, origem, destino, data_requisicao, data_frete, motivo, transportadora, valor_negociado, centro_custo, solicitante, aprovador, observacao)
+                VALUES (?, ?, ?, ?, ?, 'Transferência', ?, ?, ?, ?, ?, ?)""",
+                    (
+                        op_atual,
+                        orig,
+                        dest,
+                        str(datetime.date.today()),
+                        str(datetime.date.today()),
+                        tr,
+                        val,
+                        cc,
+                        usr["nome"],
+                        ap,
+                        obs,
+                    ),
+                )
+                conn.commit()
+                st.success("Cotação enviada com sucesso!")
+                st.rerun()
+
+    with t2:
+        st.subheader("Fretes Aguardando Sua Aprovação")
+        df_p = pd.read_sql_query(
+            "SELECT * FROM cotacoes WHERE status='Pendente Aprovação' AND"
+            " operacao=?",
+            conn,
+            params=(op_atual,),
+        )
+        for idx, r in df_p.iterrows():
+            with st.expander(
+                f"Solicitação #{r['id']} — {r['origem']} ➔ {r['destino']} | R$"
+                f" {r['valor_negociado']:,.2f}"
+            ):
+                st.write(
+                    f"**Solicitante:** {r['solicitante']} |"
+                    f" **Transportadora:** {r['transportadora']}"
+                )
+                col_a, col_b = st.columns(2)
+                if col_a.button(f"Aprovar #{r['id']}"):
+                    conn.execute(
+                        "UPDATE cotacoes SET status='Aprovado' WHERE id=?",
+                        (r["id"],),
+                    )
+                    conn.commit()
+                    st.rerun()
+                if col_b.button(f"Rejeitar #{r['id']}"):
+                    conn.execute(
+                        "UPDATE cotacoes SET status='Rejeitado' WHERE id=?",
+                        (r["id"],),
+                    )
+                    conn.commit()
+                    st.rerun()
+
+    with t3:
+        st.subheader("Painel Geral")
+        st.dataframe(
+            pd.read_sql_query(
+                "SELECT * FROM cotacoes WHERE operacao=?",
+                conn,
+                params=(op_atual,),
+            ),
+            use_container_width=True,
+        )
+
+    with t4:
+        st.subheader("Simulador de Custos por Trecho")
+        c1, c2, c3 = st.columns(3)
+        dist = c1.number_input("Distância em KM", value=350.0)
+        cons = c2.number_input("Consumo Médio (KM/L)", value=2.2)
+        p_diesel = c3.number_input("Preço Diesel (R$)", value=5.89)
+
+        custo = (dist / cons) * p_diesel
+        st.metric(
+            "Custo Estimado de Combustível",
+            f"R$ {custo:,.2f}",
+            help="Cálculo base para auxílio na tomada de decisão.",
+        )
+
+    with t5:
+        st.subheader("Origens, Destinos e Trechos")
+        c1, c2, c3 = st.columns(3)
+        nod = c1.text_input("Nome Local")
+        cid = c2.text_input("Cidade")
+        uf = c3.text_input("UF")
+        if st.button("+ Salvar Local"):
+            conn.execute(
+                "INSERT OR IGNORE INTO origens_destinos (operacao, nome, cidade,"
+                " uf, tipo) VALUES (?,?,?,?,'Origem e destino')",
+                (op_atual, nod, cid, uf),
+            )
+            conn.commit()
+            st.rerun()
+
+# ==========================================
+# 2. MÓDULO: COMPRAS & COTAÇÕES
+# ==========================================
+elif menu == "🛒 Compras & Cotações":
+    st.title(f"🛒 Módulo de Compras — {op_atual}")
+
+    c1, c2 = st.tabs(["🛍️ Novo Pedido de Compra", "📋 Quadro de Pedidos"])
+
+    with c1:
+        with st.form("f_comp"):
+            item = st.text_input("Item / Produto")
+            c1_c, c2_c, c3_c = st.columns(3)
+            qtd = c1_c.number_input("Quantidade", min_value=1.0)
+            v_unit = c2_c.number_input("Valor Unitário Estimado", min_value=0.0)
+            forn = c3_c.text_input("Fornecedor Pretendido")
+
+            if st.form_submit_button("Lançar Pedido"):
+                conn.execute(
+                    "INSERT INTO compras_pedidos (operacao, item, quantidade, valor_unitario, fornecedor, solicitante, data) VALUES (?,?,?,?,?,?,?)",
+                    (
+                        op_atual,
+                        item,
+                        qtd,
+                        v_unit,
+                        forn,
+                        usr["nome"],
+                        str(datetime.date.today()),
+                    ),
+                )
+                conn.commit()
+                st.success("Pedido gravado com sucesso!")
+
+    with c2:
+        st.dataframe(
+            pd.read_sql_query(
+                "SELECT * FROM compras_pedidos WHERE operacao=?",
+                conn,
+                params=(op_atual,),
+            ),
+            use_container_width=True,
+        )
+
+# ==========================================
+# 3. MÓDULO: RESSUPRIMENTO & PNR POR METAS
+# ==========================================
+elif menu == "📦 Ressuprimento & PNR":
+    st.title(f"📦 Ressuprimento e PNR por Metas — {op_atual}")
+
+    p1, p2 = st.tabs(["📊 Controle de Metas PNR", "📈 Inserir Metas do Mês"])
+
+    with p1:
+        mes_f = datetime.date.today().strftime("%Y-%m")
+        df_pnr = pd.read_sql_query(
+            "SELECT * FROM pnr_metas WHERE operacao=? AND mes_ano=?",
+            conn,
+            params=(op_atual, mes_f),
+        )
+
+        m_vol = df_pnr["meta_volume_hl"].iloc[0] if not df_pnr.empty else 0.0
+        m_frete = df_pnr["meta_frete_real"].iloc[0] if not df_pnr.empty else 0.0
+
+        col1, col2 = st.columns(2)
+        col1.metric("Meta de Volume (HL)", f"{m_vol:,.2f} HL")
+        col2.metric("Meta Limite de Frete", f"R$ {m_frete:,.2f}")
+
+    with p2:
+        with st.form("f_pnr_meta"):
+            mes_input = st.text_input(
+                "Mês/Ano", value=datetime.date.today().strftime("%Y-%m")
+            )
+            v_hl = st.number_input("Meta Volume (HL)", min_value=0.0)
+            v_fr = st.number_input("Meta Frete Limite (R$)", min_value=0.0)
+
+            if st.form_submit_button("Salvar Meta PNR"):
+                conn.execute(
+                    "INSERT OR REPLACE INTO pnr_metas (operacao, mes_ano, meta_volume_hl, meta_frete_real) VALUES (?,?,?,?)",
+                    (op_atual, mes_input, v_hl, v_fr),
+                )
+                conn.commit()
+                st.success("Meta PNR Gravada!")
+
+# ==========================================
+# 4. MÓDULO: FINANCEIRO, CARRETO & OBZ
+# ==========================================
+elif menu == "💰 Financeiro, Carreto & OBZ":
+    st.title(f"💰 Financeiro & Controle de Carretos — {op_atual}")
+
+    f1, f2 = st.tabs(["🚛 Controle de Carretos", "📊 Visão OBZ Orçamentária"])
+
+    with f1:
+        st.subheader("Carretos Lançados")
+        with st.form("f_carreto"):
+            c1, c2, c3 = st.columns(3)
+            mot = c1.text_input("Motorista")
+            plc = c2.text_input("Placa Veículo")
+            v_c = c3.number_input("Valor Carreto (R$)", min_value=0.0)
+            if st.form_submit_button("Registrar Carreto"):
+                conn.execute(
+                    "INSERT INTO carretos (operacao, motorista, placa, valor, data) VALUES (?,?,?,?,?)",
+                    (op_atual, mot, plc, v_c, str(datetime.date.today())),
+                )
+                conn.commit()
+                st.success("Carreto Lançado!")
+
+        st.dataframe(
+            pd.read_sql_query(
+                "SELECT * FROM carretos WHERE operacao=?",
+                conn,
+                params=(op_atual,),
+            ),
+            use_container_width=True,
+        )
+
+    with f2:
+        st.subheader("Resumo Orçamentário OBZ")
+        realizado_fretes = (
+            pd.read_sql_query(
+                "SELECT SUM(valor_negociado) as total FROM cotacoes WHERE"
+                " operacao=? AND status IN ('Aprovado', 'Finalizado')",
+                conn,
+                params=(op_atual,),
+            )["total"].iloc[0]
+            or 0.0
+        )
+        realizado_carretos = (
+            pd.read_sql_query(
+                "SELECT SUM(valor) as total FROM carretos WHERE operacao=?",
+                conn,
+                params=(op_atual,),
+            )["total"].iloc[0]
+            or 0.0
+        )
+
+        st.metric(
+            "Custo Total Comprometido (Fretes + Carretos)",
+            f"R$ {realizado_fretes + realizado_carretos:,.2f}",
+        )
+
+# ==========================================
+# 5. MÓDULO: ADMINISTRADOR (ACESSOS)
+# ==========================================
+elif menu == "🔑 Painel Admin (Acessos)":
+    st.title("🔑 Cadastro de Usuários e Permissões Unificadas")
+
+    with st.form("f_cad_usr"):
+        st.subheader("Novo Usuário")
+        u_m = st.text_input("Login")
+        s_m = st.text_input("Senha", type="password")
+        e_m = st.text_input("E-mail")
+
+        c1, c2 = st.columns(2)
+        cargo_m = c1.text_input("Cargo", value="Analista Logístico")
+        perfil_m = c2.selectbox("Perfil", ["Operacional", "Master"])
+
+        st.write("**Permissões:**")
+        ca, cb, cc = st.columns(3)
+        p1 = ca.checkbox("Puxada", value=True)
+        p2 = cb.checkbox("Ressuprimento", value=True)
+        p3 = cc.checkbox("Compras", value=True)
+        p4 = ca.checkbox("Armazém")
+        p5 = cb.checkbox("Distribuição")
+        p6 = cc.checkbox("Financeiro")
+
+        if st.form_submit_button("Salvar Usuário"):
+            conn.execute(
+                """INSERT INTO usuarios (nome, senha, email, cargo, perfil, perm_puxada, perm_ressuprimento, perm_compras, perm_armazem, perm_distribuicao, perm_financeiro)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    u_m,
+                    s_m,
+                    e_m,
+                    cargo_m,
+                    perfil_m,
+                    1 if p1 else 0,
+                    1 if p2 else 0,
+                    1 if p3 else 0,
+                    1 if p4 else 0,
+                    1 if p5 else 0,
+                    1 if p6 else 0,
+                ),
+            )
+            conn.commit()
+            st.success("Usuário Cadastrado!")
+            st.rerun()
+
+    st.subheader("Usuários Ativos")
+    st.dataframe(
+        pd.read_sql_query("SELECT id, nome, email, cargo, perfil FROM usuarios", conn),
+        use_container_width=True,
+    )
 
 else:
-    st.sidebar.title("Grupo Lima")
-    st.sidebar.caption(f"Usuário: **{st.session_state['usuario']}** | Perfil: **{st.session_state['perfil']}**")
+    st.title(f"{menu} — {op_atual}")
+    st.info("Módulo ativo e integrado à base local.")
 
-    perm_ops_raw = st.session_state.get("perm_ops", "TODAS")
-    ops_disponiveis = OPERACOES_DISPONIVEIS if perm_ops_raw == "TODAS" or st.session_state["perfil"] == "Master" else [o.strip() for o in perm_ops_raw.split(",") if o.strip()]
-
-    unidade = st.sidebar.selectbox("Unidade / Operação", ops_disponiveis)
-    st.sidebar.divider()
-
-    dept = st.sidebar.radio("Departamentos", DEPARTAMENTOS_DISPONIVEIS)
-
-    st.title(f"{dept}")
-    st.caption(f"Operação ativa: **{unidade}**")
-
-    if "Armazém" in dept or "Ressuprimento" in dept or "Vendas" in dept:
-        render_estoque_dia(unidade)
-    else:
-        st.info(f"O módulo **{dept}** está ativo e pronto para uso.")
+conn.close()
