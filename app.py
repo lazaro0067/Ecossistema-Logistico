@@ -765,7 +765,7 @@ def render_estoque_dia(unidade):
     if df is not None and not df.empty:
         st.caption(f"🕒 **Última Atualização:** {df['dt_atualizacao'].iloc[0]}")
 
-        # Regra de classificação de estoque para o RN
+        # Regra de classificação de estoque
         def get_status(doi, disp):
             if disp == 0:
                 return "🔴 Stock Out (Zerado)"
@@ -778,7 +778,7 @@ def render_estoque_dia(unidade):
 
         df["Status"] = df.apply(lambda r: get_status(r["DOI_Atual"], r["Disp"]), axis=1)
 
-        # Totais por categoria de estoque para exibições dos Cards
+        # Totais para os botões/cards
         stock_out_cnt = len(df[df["Status"] == "🔴 Stock Out (Zerado)"])
         stock_low_cnt = len(df[df["Status"] == "🟡 Stock Low (Baixo)"])
         stock_ideal_cnt = len(df[df["Status"] == "🟢 Stock Ideal"])
@@ -806,7 +806,7 @@ def render_estoque_dia(unidade):
 
         st.divider()
 
-        # Barra de Pesquisa e Filtros adicionais
+        # Barra de Pesquisa e Filtros
         c_f1, c_f2 = st.columns([2, 1])
         busca = c_f1.text_input("🔍 Pesquisar por Código ou Nome do Produto:")
         marca_sel = c_f2.selectbox("Marca:", ["TODAS"] + sorted(df["Marca"].unique().tolist()))
@@ -837,7 +837,6 @@ def render_estoque_dia(unidade):
         if "Cards" in modo_view:
             st.markdown(f"Exibindo **{len(df_filtrado)}** produtos:")
             for _, r in df_filtrado.iterrows():
-                # Definição visual da borda e cor
                 if "Stock Out" in r["Status"]:
                     border_color = "#dc3545"
                     bg_badge = "#f8d7da"
@@ -860,14 +859,19 @@ def render_estoque_dia(unidade):
                         </div>
                         <div style="font-size: 15px; font-weight: bold; color: #111; margin: 6px 0;">{r['Descricao']}</div>
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px; background-color: #f9f9f9; padding: 8px; border-radius: 6px;">
-                            <div><b>Disponível:</b> <span style="color: #0288d1; font-size: 16px; font-weight: bold;">{r['Disp']:,.0f} cx</span></div>
-                            <div><b>Cobertura:</b> <span style="color: #333; font-size: 14px; font-weight: bold;">{r['DOI_Atual']:.1f} dias</span></div>
+                            <div><b>Estoque Físico:</b> <span style="color: #0288d1; font-size: 15px; font-weight: bold;">{r['Disp']:,.0f} cx</span></div>
+                            <div><b>A Caminho (Puxada):</b> <span style="color: #2e7d32; font-size: 15px; font-weight: bold;">{r['Total_Puxada']:,.0f} cx</span></div>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; margin-top: 6px; font-size: 12px; color: #555;">
+                            <span>Estoque Projetado: <b>{r['Estoque_Projetado']:,.0f} cx</b></span>
+                            <span>Cobertura: <b>{r['DOI_Atual']:.1f} dias</b></span>
                         </div>
                     </div>
                     """,
                     unsafe_allow_html=True,
                 )
         else:
+            # TABELA COMPLETA COM PUXADA / MARCADOS REINCLUÍDOS
             cols_rn = [
                 "Cod_clean",
                 "Descricao",
@@ -875,12 +879,22 @@ def render_estoque_dia(unidade):
                 "Tipo",
                 "Categoria",
                 "Disp",
+                "Puxada_D0",
+                "Puxada_D1",
+                "Puxada_D2",
+                "Total_Puxada",
+                "Estoque_Projetado",
                 "Linear_Vendas",
                 "DOI_Atual",
                 "Status",
             ]
             format_dict = {
                 "Disp": "{:,.0f}",
+                "Puxada_D0": "{:,.0f}",
+                "Puxada_D1": "{:,.0f}",
+                "Puxada_D2": "{:,.0f}",
+                "Total_Puxada": "{:,.0f}",
+                "Estoque_Projetado": "{:,.0f}",
                 "Linear_Vendas": "{:,.0f}",
                 "DOI_Atual": "{:,.1f}",
             }
@@ -889,7 +903,7 @@ def render_estoque_dia(unidade):
                 use_container_width=True,
             )
     else:
-        st.info("ℹ️ **Nenhum estoque disponível no momento.** Solcite a atualização da base em Ressuprimento.")
+        st.info("ℹ️ **Nenhum estoque disponível no momento.** Solicite a atualização da base em Ressuprimento.")
 
 
 if modo_comercial:
