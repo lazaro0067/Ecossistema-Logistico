@@ -71,7 +71,6 @@ def init_db():
         PRIMARY KEY (operacao, cod_clean)
     )""")
 
-    # Tabela de Pedidos Marcados Puxada (D0, D1, D2)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS pedidos_marcados (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -542,7 +541,6 @@ def carregar_estoque_consolidado(operacao):
     else:
         df["Classe_ABC"] = "C"
 
-    # Pedidos Marcados Puxada (D0, D1, D2)
     df_piv, datas_puxada = carregar_pedidos_pivoted(operacao)
     if df_piv is not None and not df_piv.empty:
         df = pd.merge(
@@ -749,7 +747,7 @@ def go_back():
         st.session_state["nav_stack"].pop()
 
 
-# 6. Portal Comercial Direto (MOBILE & QR CODE)
+# 6. Portal Comercial Direto (VISÃO MOBILE RN - ESTOQUE DIA)
 modo_comercial = False
 if "modo" in st.query_params:
     val_modo = st.query_params["modo"]
@@ -760,225 +758,142 @@ if "modo" in st.query_params:
 
 
 def render_estoque_dia(unidade):
-    st.subheader("Estoque Dia - Consulta Comercial em Tempo Real")
-
-    detected_host = "localhost:8501"
-    try:
-        if hasattr(st, "context") and hasattr(st.context, "headers"):
-            detected_host = st.context.headers.get("Host", "localhost:8501")
-    except Exception:
-        pass
-
-    exp_link = st.expander("📲 Configurar e Acessar pelo Celular (Atalho / QR Code)", expanded=False)
-    with exp_link:
-        custom_ip = st.text_input("IP do Servidor / Rede Local (ex: 192.168.1.100:8501):", value=detected_host)
-        link_web = f"http://{custom_ip}/?modo=comercial"
-        qr_code_url = f"https://api.qrserver.com/v1/create-qr-code/?size=150x150&data={urllib.parse.quote(link_web)}"
-        
-        c_qr1, c_qr2 = st.columns([1, 3])
-        c_qr1.image(qr_code_url, caption="Aponte a câmera do celular", width=140)
-        c_qr2.markdown(f"""
-        🔗 **Link Direto:** <a href="{link_web}" target="_blank" style="font-size: 16px; font-weight: bold; color: #0288d1;">{link_web}</a>  
-        📱 **Dica Mobile:** Ao abrir no navegador do celular, clique em **"Adicionar à Tela Inicial"** para salvar como aplicativo.
-        """, unsafe_allow_html=True)
-
-    link_web_main = f"http://{detected_host}/?modo=comercial"
-    msg_wa = urllib.parse.quote(f"📲 *Estoque Dia ({unidade})*\nAcesse diretamente: {link_web_main}")
-    link_whatsapp = f"https://api.whatsapp.com/send?text={msg_wa}"
-
-    c_l1, c_l2 = st.columns([3, 1])
-    c_l1.markdown(
-        f"""
-        <div style="background-color: #e8f4f8; padding: 12px; border-radius: 8px; border-left: 5px solid #0288d1;">
-            🔗 <b>Link de Acesso Comercial:</b><br>
-            <a href="{link_web_main}" target="_blank" style="font-size: 16px; font-weight: bold; color: #0288d1; text-decoration: underline;">
-                🚀 Clique aqui para abrir o Estoque Dia em Nova Aba ({link_web_main})
-            </a>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    c_l2.markdown(
-        f"""
-        <div style="padding-top: 10px;">
-            <a href="{link_whatsapp}" target="_blank" style="background-color: #25D366; color: white; padding: 10px 15px; text-decoration: none; border-radius: 5px; font-weight: bold; display: inline-block;">
-                📲 Compartilhar no WhatsApp
-            </a>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.divider()
+    st.subheader("📱 Portal do RN - Consulta Comercial de Vendas")
 
     df = carregar_estoque_consolidado(unidade)
 
     if df is not None and not df.empty:
-        st.caption(
-            f"🕒 **Última Atualização (02.03.04):** {df['dt_atualizacao'].iloc[0]}"
-        )
+        st.caption(f"🕒 **Última Atualização:** {df['dt_atualizacao'].iloc[0]}")
 
+        # Regra de classificação de estoque para o RN
         def get_status(doi, disp):
-            if disp == 0 or doi < 1.0:
-                return "🔴 Indisponível / Ruptura"
+            if disp == 0:
+                return "🔴 Stock Out (Zerado)"
             elif doi < 3.0:
-                return "🟡 Estoque Baixo"
+                return "🟡 Stock Low (Baixo)"
+            elif doi <= 15.0:
+                return "🟢 Stock Ideal"
             else:
-                return "🟢 Disponível"
+                return "🔵 Stock Over (Excesso)"
 
-        df["Status"] = df.apply(
-            lambda r: get_status(r["DOI_Atual"], r["Disp"]), axis=1
-        )
+        df["Status"] = df.apply(lambda r: get_status(r["DOI_Atual"], r["Disp"]), axis=1)
 
-        if "filtro_status_dia" not in st.session_state:
-            st.session_state["filtro_status_dia"] = "TODOS"
+        # Totais por categoria de estoque para exibições dos Cards
+        stock_out_cnt = len(df[df["Status"] == "🔴 Stock Out (Zerado)"])
+        stock_low_cnt = len(df[df["Status"] == "🟡 Stock Low (Baixo)"])
+        stock_ideal_cnt = len(df[df["Status"] == "🟢 Stock Ideal"])
+        stock_over_cnt = len(df[df["Status"] == "🔵 Stock Over (Excesso)"])
 
-        # Painel de Resumo do Estoque & Puxadas Marcadas
-        m_col1, m_col2, m_col3, m_col4, m_col5, m_col6 = st.columns(6)
-        m_col1.metric("SKUs Totais", f"{len(df)}")
-        m_col2.metric("Estoque Físico", f"{df['Disp'].sum():,.0f} cx")
-        m_col3.metric("Chegando D0", f"{df['Puxada_D0'].sum():,.0f} cx")
-        m_col4.metric("Chegando D1", f"{df['Puxada_D1'].sum():,.0f} cx")
-        m_col5.metric("Chegando D2", f"{df['Puxada_D2'].sum():,.0f} cx")
-        m_col6.metric("Estoque Projetado", f"{df['Estoque_Projetado'].sum():,.0f} cx")
+        if "rn_filtro_status" not in st.session_state:
+            st.session_state["rn_filtro_status"] = "TODOS"
 
-        st.divider()
-
+        # ---------------------------------------------------------------------
+        # VISÃO DE LINHA SUPERIOR (CARDS MOBILE / KPIS NO TOPO)
+        # ---------------------------------------------------------------------
         k1, k2, k3, k4 = st.columns(4)
-        if k1.button(f"SKUs Totais\n\n### {len(df)}"):
-            st.session_state["filtro_status_dia"] = "TODOS"
-        if k2.button(
-            f"Disponíveis 🟢\n\n### {len(df[df['Status'] == '🟢 Disponível'])}"
-        ):
-            st.session_state["filtro_status_dia"] = "🟢 Disponível"
-        if k3.button(
-            f"Estoque Baixo 🟡\n\n### {len(df[df['Status'] == '🟡 Estoque Baixo'])}"
-        ):
-            st.session_state["filtro_status_dia"] = "🟡 Estoque Baixo"
-        if k4.button(
-            f"Ruptura / Zerados 🔴\n\n### {len(df[df['Status'] == '🔴 Indisponível / Ruptura'])}"
-        ):
-            st.session_state["filtro_status_dia"] = "🔴 Indisponível / Ruptura"
 
-        if st.session_state["filtro_status_dia"] != "TODOS":
-            df_exib = df[df["Status"] == st.session_state["filtro_status_dia"]]
-            st.caption(
-                f"Filtro aplicado: **{st.session_state['filtro_status_dia']}**"
-            )
-        else:
-            df_exib = df
+        if k1.button(f"🔴 Stock Out\n### {stock_out_cnt} SKUs", use_container_width=True):
+            st.session_state["rn_filtro_status"] = "🔴 Stock Out (Zerado)"
+
+        if k2.button(f"🟡 Stock Low\n### {stock_low_cnt} SKUs", use_container_width=True):
+            st.session_state["rn_filtro_status"] = "🟡 Stock Low (Baixo)"
+
+        if k3.button(f"🟢 Stock Ideal\n### {stock_ideal_cnt} SKUs", use_container_width=True):
+            st.session_state["rn_filtro_status"] = "🟢 Stock Ideal"
+
+        if k4.button(f"🔵 Stock Over\n### {stock_over_cnt} SKUs", use_container_width=True):
+            st.session_state["rn_filtro_status"] = "🔵 Stock Over (Excesso)"
 
         st.divider()
 
-        tab_cod, tab_marca, tab_tipo, tab_cat = st.tabs(
-            [
-                "🔍 Pesquisa por Código / Nome",
-                "🍺 Por Marca",
-                "🏷️ Por Tipo",
-                "📦 Por Categoria",
+        # Barra de Pesquisa e Filtros adicionais
+        c_f1, c_f2 = st.columns([2, 1])
+        busca = c_f1.text_input("🔍 Pesquisar por Código ou Nome do Produto:")
+        marca_sel = c_f2.selectbox("Marca:", ["TODAS"] + sorted(df["Marca"].unique().tolist()))
+
+        if st.session_state["rn_filtro_status"] != "TODOS":
+            c_clear, _ = st.columns([1, 4])
+            if c_clear.button(f"Limpar Filtro ({st.session_state['rn_filtro_status']})"):
+                st.session_state["rn_filtro_status"] = "TODOS"
+                st.rerun()
+
+        # Filtragem dos dados
+        df_filtrado = df.copy()
+        if st.session_state["rn_filtro_status"] != "TODOS":
+            df_filtrado = df_filtrado[df_filtrado["Status"] == st.session_state["rn_filtro_status"]]
+
+        if marca_sel != "TODAS":
+            df_filtrado = df_filtrado[df_filtrado["Marca"] == marca_sel]
+
+        if busca:
+            df_filtrado = df_filtrado[
+                df_filtrado["Cod_clean"].astype(str).str.contains(busca)
+                | df_filtrado["Descricao"].str.contains(busca, case=False)
             ]
-        )
 
-        cols_view = [
-            "Cod_clean",
-            "Descricao",
-            "Marca",
-            "Tipo",
-            "Categoria",
-            "Classe_ABC",
-            "Inicial",
-            "Entrada",
-            "Saida",
-            "Disp",
-            "Puxada_D0",
-            "Puxada_D1",
-            "Puxada_D2",
-            "Total_Puxada",
-            "Estoque_Projetado",
-            "Estoque_HL",
-            "Linear_Vendas",
-            "DOI_Atual",
-            "Status",
-        ]
+        # Alternador de exibição (Cards Mobile ou Tabela Completa)
+        modo_view = st.radio("Formato de Visualização:", ["📱 Cards para Celular", "📊 Tabela Comercial"], horizontal=True)
 
-        format_dict = {
-            "Inicial": "{:,.0f}",
-            "Entrada": "{:,.0f}",
-            "Saida": "{:,.0f}",
-            "Disp": "{:,.0f}",
-            "Puxada_D0": "{:,.0f}",
-            "Puxada_D1": "{:,.0f}",
-            "Puxada_D2": "{:,.0f}",
-            "Total_Puxada": "{:,.0f}",
-            "Estoque_Projetado": "{:,.0f}",
-            "Linear_Vendas": "{:,.0f}",
-            "Estoque_HL": "{:,.2f}",
-            "DOI_Atual": "{:,.1f}",
-        }
+        if "Cards" in modo_view:
+            st.markdown(f"Exibindo **{len(df_filtrado)}** produtos:")
+            for _, r in df_filtrado.iterrows():
+                # Definição visual da borda e cor
+                if "Stock Out" in r["Status"]:
+                    border_color = "#dc3545"
+                    bg_badge = "#f8d7da"
+                elif "Stock Low" in r["Status"]:
+                    border_color = "#ffc107"
+                    bg_badge = "#fff3cd"
+                elif "Stock Ideal" in r["Status"]:
+                    border_color = "#28a745"
+                    bg_badge = "#d4edda"
+                else:
+                    border_color = "#0288d1"
+                    bg_badge = "#e8f4f8"
 
-        with tab_cod:
-            busca = st.text_input("Digite o Código ou Nome:")
-            if busca:
-                df_res = df_exib[
-                    df_exib["Cod_clean"].astype(str).str.contains(busca)
-                    | df_exib["Descricao"].str.contains(busca, case=False)
-                ]
-            else:
-                df_res = df_exib
-
-            df_styled = (
-                df_res[cols_view]
-                .style.map(highlight_curva_abc, subset=["Classe_ABC"])
-                .format(format_dict)
-            )
-            st.dataframe(df_styled, use_container_width=True)
-            st.download_button(
-                "Exportar Tabela (.xlsx)",
-                data=gerar_excel(df_res[cols_view]),
-                file_name=f"Estoque_Dia_{unidade}.xlsx",
-            )
-
-        with tab_marca:
-            m_sel = st.selectbox(
-                "Escolha a Marca:", sorted(df_exib["Marca"].unique())
-            )
+                st.markdown(
+                    f"""
+                    <div style="background-color: #ffffff; border: 1px solid #e0e0e0; border-left: 6px solid {border_color}; border-radius: 8px; padding: 12px; margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <span style="font-size: 11px; color: #666; font-weight: bold;">CÓD: {r['Cod_clean']} | {r['Marca']}</span>
+                            <span style="font-size: 11px; font-weight: bold; background-color: {bg_badge}; padding: 3px 8px; border-radius: 12px;">{r['Status']}</span>
+                        </div>
+                        <div style="font-size: 15px; font-weight: bold; color: #111; margin: 6px 0;">{r['Descricao']}</div>
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px; background-color: #f9f9f9; padding: 8px; border-radius: 6px;">
+                            <div><b>Disponível:</b> <span style="color: #0288d1; font-size: 16px; font-weight: bold;">{r['Disp']:,.0f} cx</span></div>
+                            <div><b>Cobertura:</b> <span style="color: #333; font-size: 14px; font-weight: bold;">{r['DOI_Atual']:.1f} dias</span></div>
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+        else:
+            cols_rn = [
+                "Cod_clean",
+                "Descricao",
+                "Marca",
+                "Tipo",
+                "Categoria",
+                "Disp",
+                "Linear_Vendas",
+                "DOI_Atual",
+                "Status",
+            ]
+            format_dict = {
+                "Disp": "{:,.0f}",
+                "Linear_Vendas": "{:,.0f}",
+                "DOI_Atual": "{:,.1f}",
+            }
             st.dataframe(
-                df_exib[df_exib["Marca"] == m_sel][cols_view]
-                .style.map(highlight_curva_abc, subset=["Classe_ABC"])
-                .format(format_dict),
-                use_container_width=True,
-            )
-
-        with tab_tipo:
-            t_sel = st.selectbox(
-                "Escolha o Tipo:", sorted(df_exib["Tipo"].unique())
-            )
-            st.dataframe(
-                df_exib[df_exib["Tipo"] == t_sel][cols_view]
-                .style.map(highlight_curva_abc, subset=["Classe_ABC"])
-                .format(format_dict),
-                use_container_width=True,
-            )
-
-        with tab_cat:
-            c_sel = st.selectbox(
-                "Escolha a Categoria:", sorted(df_exib["Categoria"].unique())
-            )
-            st.dataframe(
-                df_exib[df_exib["Categoria"] == c_sel][cols_view]
-                .style.map(highlight_curva_abc, subset=["Classe_ABC"])
-                .format(format_dict),
+                df_filtrado[cols_rn].style.format(format_dict),
                 use_container_width=True,
             )
     else:
-        st.info(
-            "ℹ️ **Nenhum estoque sincronizado no momento.** Faça o upload em **Ressuprimento**."
-        )
+        st.info("ℹ️ **Nenhum estoque disponível no momento.** Solcite a atualização da base em Ressuprimento.")
 
 
 if modo_comercial:
-    st.title("Grupo Lima - Portal Comercial de Vendas")
+    st.title("Grupo Lima - Portal Comercial")
     unidade = st.selectbox(
         "Selecione a Unidade Operacional:",
         ["Lima Rio Verde", "Lima Barreiras", "Lima São Félix"],
@@ -1063,7 +978,6 @@ else:
         st.session_state["nav_stack"] = ["Visão Geral (Dashboard)"]
         st.rerun()
 
-    # BOTÃO NAVEGAÇÃO VOLTAR (<)
     c_back, c_title = st.columns([1, 8])
     if len(st.session_state["nav_stack"]) > 1:
         if c_back.button("⬅️ Voltar"):
@@ -1231,7 +1145,6 @@ else:
                     step=0.5,
                 )
 
-                # Cálculo exato da necessidade de compra descontando o que já está marcado na puxada
                 df_sug_compra["DOI_Projetado"] = df_sug_compra.apply(
                     lambda r: round(r["Estoque_Projetado"] / r["Linear_Vendas"], 1)
                     if r["Linear_Vendas"] > 0
@@ -1331,7 +1244,6 @@ else:
                 g_col1, g_col2 = st.columns([1, 2])
                 g_col1.markdown(f"**Datas de Puxada Identificadas no Anexo:** {', '.join(datas_pux)}")
 
-                # Totais Agendados por Dia
                 resumo_dias = (
                     df_pm_raw.groupby("data_puxada")
                     .agg(
