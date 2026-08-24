@@ -8,7 +8,7 @@ import zipfile
 import pandas as pd
 import streamlit as st
 
-# Importação condicional do docx para não quebrar o container caso a lib não esteja instalada
+# Importação condicional para evitar crash no Streamlit Cloud caso falte python-docx
 try:
     import docx
     HAS_DOCX = True
@@ -219,7 +219,7 @@ def init_db():
 init_db()
 
 
-# 3. Funções Auxiliares de Tratamento de Dados
+# 3. Funções Auxiliares de Tratamento e Leitura Resiliente
 def read_word_file(file_obj):
     if not HAS_DOCX:
         return "A biblioteca 'python-docx' não está instalada no servidor."
@@ -243,15 +243,17 @@ def read_word_file(file_obj):
 
 
 def robust_read_file(file_obj):
+    """Leitura ultra-robusta com fallback de engines para Excel e CSV."""
     filename = str(file_obj.name).lower()
+
     if filename.endswith(".xlsx") or filename.endswith(".xls"):
         file_obj.seek(0)
         try:
-            return pd.read_excel(file_obj)
+            return pd.read_excel(file_obj, engine="openpyxl")
         except Exception:
             file_obj.seek(0)
             try:
-                return pd.read_excel(file_obj, engine="openpyxl")
+                return pd.read_excel(file_obj)
             except Exception:
                 file_obj.seek(0)
                 try:
@@ -259,10 +261,12 @@ def robust_read_file(file_obj):
                 except Exception:
                     file_obj.seek(0)
                     return pd.read_excel(file_obj, header=1)
+
     elif filename.endswith(".docx") or filename.endswith(".doc"):
         text = read_word_file(file_obj)
         lines = [line.split("|") for line in text.split("\n") if line.strip()]
         return pd.DataFrame(lines) if lines else pd.DataFrame()
+
     else:
         try:
             file_obj.seek(0)
@@ -391,7 +395,7 @@ def calcular_saude_estoque_dpo(df):
     return round(pct_saude, 1), saudaveis, ruptura, excesso
 
 
-# 4. Gestão de Ressuprimento (Ajustada para Layout de Indicadores por Operação)
+# 4. Módulo de Gestão de Ressuprimento (Ajustado ao Layout do Indicador)
 def render_gestao_ressuprimento(operacao):
     st.subheader("📈 Gestão de Ressuprimento & Acompanhamento de Cestas")
 
@@ -400,7 +404,7 @@ def render_gestao_ressuprimento(operacao):
         "Lima Barreiras": ["Lima Bahia", "Barreiras", "Lima Barreiras"],
         "Lima São Félix": ["Lima Bahia Samavi", "Samavi", "São Félix", "Lima São Félix"],
     }
-    
+
     nombres_filtro = mapa_op_sistema.get(operacao, [operacao])
     nome_exibicao_op = operacao.replace("Lima ", "")
 
@@ -430,9 +434,12 @@ def render_gestao_ressuprimento(operacao):
         "SEGMENTO - HIGH END",
     ]
 
+    # TAB 1: VISUALIZAÇÃO DE INDICADORES (LAYOUT DPO / AMBEV)
     with tab_m1:
         c_f1, c_f2 = st.columns(2)
-        ano_sel = c_f1.number_input("Ano de Análise:", min_value=2024, max_value=2030, value=datetime.now().year)
+        ano_sel = c_f1.number_input(
+            "Ano de Análise:", min_value=2024, max_value=2030, value=datetime.now().year
+        )
         mes_sel = c_f2.selectbox(
             "Mês de Análise:",
             list(range(1, 13)),
@@ -440,7 +447,7 @@ def render_gestao_ressuprimento(operacao):
                 "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
                 "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
             ][x - 1],
-            index=datetime.now().month - 1
+            index=datetime.now().month - 1,
         )
 
         mes_ano_str = f"{['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'][mes_sel-1]}/{ano_sel}"
@@ -449,45 +456,55 @@ def render_gestao_ressuprimento(operacao):
         df_diario = pd.read_sql_query(
             f"SELECT * FROM gestao_ressuprimento_diario WHERE operacao IN ({','.join(['?']*len(nombres_filtro))}) AND strftime('%Y', data_registro)='{ano_sel}'",
             conn,
-            params=nombres_filtro
+            params=nombres_filtro,
         )
         df_metas = pd.read_sql_query(
             f"SELECT * FROM metas_ressuprimento_mensal WHERE operacao IN ({','.join(['?']*len(nombres_filtro))}) AND ano={ano_sel} AND mes={mes_sel}",
             conn,
-            params=nombres_filtro
+            params=nombres_filtro,
         )
         conn.close()
 
         if not df_diario.empty:
-            df_diario["data_dt"] = pd.to_datetime(df_diario["data_registro"], errors="coerce")
+            df_diario["data_dt"] = pd.to_datetime(
+                df_diario["data_registro"], errors="coerce"
+            )
             df_diario_mes = df_diario[df_diario["data_dt"].dt.month == mes_sel]
 
             dias_preenchidos = df_diario_mes["data_dt"].dt.date.nunique()
-            
+
             if mes_sel in [1, 3, 5, 7, 8, 10, 12]:
                 dias_no_mes = 31
             elif mes_sel in [4, 6, 9, 11]:
                 dias_no_mes = 30
             else:
-                dias_no_mes = 29 if (ano_sel % 4 == 0 and (ano_sel % 100 != 0 or ano_sel % 400 == 0)) else 28
+                dias_no_mes = (
+                    29
+                    if (ano_sel % 4 == 0 and (ano_sel % 100 != 0 or ano_sel % 400 == 0))
+                    else 28
+                )
 
-            df_res_mes = df_diario_mes.groupby("cesta")["volume_sellin_hl"].sum().reset_index()
+            df_res_mes = (
+                df_diario_mes.groupby("cesta")["volume_sellin_hl"].sum().reset_index()
+            )
 
             df_comp = pd.merge(
                 pd.DataFrame({"cesta": cestas_ordenadas}),
                 df_res_mes,
                 on="cesta",
-                how="left"
+                how="left",
             ).fillna(0)
 
             df_comp = pd.merge(
                 df_comp,
                 df_metas.groupby("cesta")["meta_volume_hl"].sum().reset_index(),
                 on="cesta",
-                how="left"
+                how="left",
             ).fillna(0)
 
-            fator_tend = (dias_no_mes / dias_preenchidos) if dias_preenchidos > 0 else 1.0
+            fator_tend = (
+                (dias_no_mes / dias_preenchidos) if dias_preenchidos > 0 else 1.0
+            )
 
             df_comp["INDICADOR"] = df_comp["cesta"].map(cestas_map)
             df_comp["META"] = df_comp["meta_volume_hl"]
@@ -495,10 +512,12 @@ def render_gestao_ressuprimento(operacao):
             df_comp["TEND."] = df_comp["REAL"] * fator_tend
 
             df_comp["ATING. REAL"] = df_comp.apply(
-                lambda r: (r["REAL"] / r["META"] * 100) if r["META"] > 0 else 0.0, axis=1
+                lambda r: (r["REAL"] / r["META"] * 100) if r["META"] > 0 else 0.0,
+                axis=1,
             )
             df_comp["ATING. TEND."] = df_comp.apply(
-                lambda r: (r["TEND."] / r["META"] * 100) if r["META"] > 0 else 0.0, axis=1
+                lambda r: (r["TEND."] / r["META"] * 100) if r["META"] > 0 else 0.0,
+                axis=1,
             )
 
             tot_meta = df_comp["META"].sum()
@@ -523,12 +542,19 @@ def render_gestao_ressuprimento(operacao):
                     <span style="font-size: 13px; color: #b0c4de;">Detalhamento por indicador · {dias_preenchidos} dia(s) preenchido(s)</span>
                 </div>
                 """,
-                unsafe_allow_html=True
+                unsafe_allow_html=True,
             )
 
             df_final = pd.concat([
-                df_comp[["INDICADOR", "META", "REAL", "TEND.", "ATING. REAL", "ATING. TEND."]],
-                df_total
+                df_comp[[
+                    "INDICADOR",
+                    "META",
+                    "REAL",
+                    "TEND.",
+                    "ATING. REAL",
+                    "ATING. TEND.",
+                ]],
+                df_total,
             ], ignore_index=True)
 
             def style_ating_real(val):
@@ -562,23 +588,31 @@ def render_gestao_ressuprimento(operacao):
             }
 
             st.dataframe(
-                df_final.style
-                .format(format_dict)
+                df_final.style.format(format_dict)
                 .map(style_real_val, subset=["REAL"])
                 .map(style_tend_val, subset=["TEND."])
                 .map(style_ating_real, subset=["ATING. REAL"])
                 .map(style_ating_tend, subset=["ATING. TEND."]),
                 use_container_width=True,
-                height=(len(df_final) + 1) * 38 + 5
+                height=(len(df_final) + 1) * 38 + 5,
             )
 
         else:
-            st.info(f"ℹ️ Nenhum dado diário encontrado para **{nome_exibicao_op}** neste mês ({mes_ano_str}). Faça o upload do relatório na aba 'Upload & Atualização'.")
+            st.info(
+                f"ℹ️ Nenhum dado diário encontrado para **{nome_exibicao_op}** neste mês ({mes_ano_str}). Faça o upload do relatório na aba 'Upload & Atualização'."
+            )
 
+    # TAB 2: CONFIGURAÇÃO DE METAS
     with tab_m2:
         st.markdown(f"### 🎯 Cadastrar / Ajustar Metas Mensais ({nome_exibicao_op})")
         c_m1, c_m2 = st.columns(2)
-        ano_meta = c_m1.number_input("Ano da Meta:", min_value=2024, max_value=2030, value=datetime.now().year, key="ano_meta_key")
+        ano_meta = c_m1.number_input(
+            "Ano da Meta:",
+            min_value=2024,
+            max_value=2030,
+            value=datetime.now().year,
+            key="ano_meta_key",
+        )
         mes_meta = c_m2.selectbox(
             "Mês da Meta:",
             list(range(1, 13)),
@@ -587,7 +621,7 @@ def render_gestao_ressuprimento(operacao):
                 "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
             ][x - 1],
             index=datetime.now().month - 1,
-            key="mes_meta_key"
+            key="mes_meta_key",
         )
 
         mes_ano_meta_str = f"{['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'][mes_meta-1]}/{ano_meta}"
@@ -596,47 +630,76 @@ def render_gestao_ressuprimento(operacao):
         df_exist_metas = pd.read_sql_query(
             f"SELECT cesta, meta_volume_hl FROM metas_ressuprimento_mensal WHERE operacao IN ({','.join(['?']*len(nombres_filtro))}) AND ano={ano_meta} AND mes={mes_meta}",
             conn,
-            params=nombres_filtro
+            params=nombres_filtro,
         )
         conn.close()
 
-        dict_metas_exist = dict(zip(df_exist_metas["cesta"], df_exist_metas["meta_volume_hl"])) if not df_exist_metas.empty else {}
+        dict_metas_exist = (
+            dict(zip(df_exist_metas["cesta"], df_exist_metas["meta_volume_hl"]))
+            if not df_exist_metas.empty
+            else {}
+        )
 
         with st.form("form_cad_metas"):
-            st.markdown(f"**Metas em HL para {mes_ano_meta_str} - {nome_exibicao_op}:**")
+            st.markdown(
+                f"**Metas em HL para {mes_ano_meta_str} - {nome_exibicao_op}:**"
+            )
             input_metas = {}
             for cst in cestas_ordenadas:
                 cst_nome_amigavel = cestas_map.get(cst, cst)
                 val_init = float(dict_metas_exist.get(cst, 0.0))
-                input_metas[cst] = st.number_input(f"Meta: {cst_nome_amigavel}", min_value=0.0, value=val_init, step=10.0)
+                input_metas[cst] = st.number_input(
+                    f"Meta: {cst_nome_amigavel}",
+                    min_value=0.0,
+                    value=val_init,
+                    step=10.0,
+                )
 
             if st.form_submit_button("💾 Salvar Metas Mensais"):
                 conn = sqlite3.connect("puxada_ambev.db")
                 cursor = conn.cursor()
                 dt_now = datetime.now().strftime("%d/%m/%Y %H:%M")
                 for cst, m_val in input_metas.items():
-                    cursor.execute("""
+                    cursor.execute(
+                        """
                     INSERT INTO metas_ressuprimento_mensal (operacao, ano, mes, mes_ano, cesta, meta_volume_hl, dt_atualizacao)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(operacao, ano, mes, cesta) DO UPDATE SET
                         meta_volume_hl=excluded.meta_volume_hl, dt_atualizacao=excluded.dt_atualizacao
-                    """, (operacao, ano_meta, mes_meta, mes_ano_meta_str, cst, m_val, dt_now))
+                    """,
+                        (
+                            operacao,
+                            ano_meta,
+                            mes_meta,
+                            mes_ano_meta_str,
+                            cst,
+                            m_val,
+                            dt_now,
+                        ),
+                    )
                 conn.commit()
                 conn.close()
-                st.success(f"Metas de {mes_ano_meta_str} salvas com sucesso para {nome_exibicao_op}!")
+                st.success(
+                    f"Metas de {mes_ano_meta_str} salvas com sucesso para {nome_exibicao_op}!"
+                )
                 st.rerun()
 
+    # TAB 3: UPLOAD DO RELATÓRIO DIÁRIO
     with tab_m3:
         st.markdown("### 📁 Upload do Relatório Diário de Ressuprimento")
-        st.caption("Suba o arquivo consolidado contendo os volumes diários (.xlsx, .xls, .csv). O sistema mapeará automaticamente Samavi (São Félix), Lima Bahia (Barreiras) e Lima - Rio Verde (Rio Verde).")
+        st.caption(
+            "Suba o arquivo consolidado contendo os volumes diários (.xlsx, .xls, .csv). O sistema mapeará automaticamente Samavi (São Félix), Lima Bahia (Barreiras) e Lima - Rio Verde (Rio Verde)."
+        )
 
         f_ress_daily = st.file_uploader(
             "Selecione o arquivo de relatório diário (.xlsx, .xls, .csv):",
             type=["xlsx", "xls", "csv"],
-            key="up_ress_daily"
+            key="up_ress_daily",
         )
 
-        if f_ress_daily is not None and st.button("🚀 Processar e Atualizar Base de Dados"):
+        if f_ress_daily is not None and st.button(
+            "🚀 Processar e Atualizar Base de Dados"
+        ):
             try:
                 df_up = robust_read_file(f_ress_daily)
 
@@ -651,7 +714,9 @@ def render_gestao_ressuprimento(operacao):
 
                 registros_salvos = 0
                 for _, r in df_up.dropna(subset=[col_cesta, col_data]).iterrows():
-                    raw_op = str(r[col_op]).strip() if pd.notna(r[col_op]) else operacao
+                    raw_op = (
+                        str(r[col_op]).strip() if pd.notna(r[col_op]) else operacao
+                    )
 
                     if "Samavi" in raw_op:
                         op_salvar = "Lima Bahia Samavi"
@@ -668,26 +733,39 @@ def render_gestao_ressuprimento(operacao):
 
                     s_hl = parse_br_float(r[col_sellin])
 
-                    cursor.execute("""
+                    cursor.execute(
+                        """
                     INSERT INTO gestao_ressuprimento_diario (operacao, data_registro, mes_ano, cesta, volume_sellin_hl, volume_real_hl, dt_atualizacao)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(operacao, data_registro, cesta) DO UPDATE SET
                         volume_sellin_hl=excluded.volume_sellin_hl,
                         volume_real_hl=excluded.volume_sellin_hl,
                         dt_atualizacao=excluded.dt_atualizacao
-                    """, (op_salvar, dt_val, mes_ano_val, cst_val, s_hl, s_hl, dt_now))
+                    """,
+                        (
+                            op_salvar,
+                            dt_val,
+                            mes_ano_val,
+                            cst_val,
+                            s_hl,
+                            s_hl,
+                            dt_now,
+                        ),
+                    )
                     registros_salvos += 1
 
                 conn.commit()
                 conn.close()
-                st.success(f"Base de dados atualizada! **{registros_salvos}** registros diários sincronizados para todas as unidades.")
+                st.success(
+                    f"Base de dados atualizada! **{registros_salvos}** registros diários sincronizados para todas as unidades."
+                )
                 st.rerun()
 
             except Exception as e:
                 st.error(f"Erro ao processar o arquivo: {e}")
 
 
-# 5. Navegação & Autenticação do Sistema
+# 5. Pilhas de Navegação e Autenticação
 if "nav_stack" not in st.session_state:
     st.session_state["nav_stack"] = ["Visão Geral (Dashboard)"]
 
