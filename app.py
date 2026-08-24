@@ -5,9 +5,15 @@ import sqlite3
 import urllib.parse
 import xml.etree.ElementTree as ET
 import zipfile
-import docx
 import pandas as pd
-import Streamlit as st
+import streamlit as st  # Correção: streamlit em minúsculo
+
+# Importação opcional do docx para não quebrar no servidor online caso a biblioteca não esteja instalada
+try:
+    import docx
+    HAS_DOCX = True
+except ImportError:
+    HAS_DOCX = False
 
 # 1. Configuração Inicial do Streamlit
 st.set_page_config(
@@ -151,7 +157,6 @@ def init_db():
         UNIQUE(operacao, mes_ano, cod_clean)
     )""")
 
-    # Tabela para Armazenamento de Layouts do Armazém por Área (Imagens)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS layout_armazem (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -163,7 +168,6 @@ def init_db():
         dt_atualizacao TEXT
     )""")
 
-    # Tabela para registro diário de volumes por cesta (Gestão Ressuprimento)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS gestao_ressuprimento_diario (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -177,7 +181,6 @@ def init_db():
         UNIQUE(operacao, data_registro, cesta)
     )""")
 
-    # Tabela para metas mensais por cesta (Gestão Ressuprimento)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS metas_ressuprimento_mensal (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -218,7 +221,9 @@ init_db()
 
 # 3. Funções Auxiliares de Leitura e Tratamento (Excel, Word, CSV)
 def read_word_file(file_obj):
-    """Lê documentos em formato Word (.docx) e extrai textos e tabelas."""
+    """Lê documentos em formato Word (.docx) se a biblioteca estiver instalada."""
+    if not HAS_DOCX:
+        return "A biblioteca 'python-docx' não está instalada no servidor. Por favor, adicione 'python-docx' ao arquivo requirements.txt."
     try:
         file_obj.seek(0)
         doc = docx.Document(file_obj)
@@ -923,7 +928,7 @@ def render_gestao_layouts_armazem(operacao):
 
 
 # -----------------------------------------------------------------------------
-# NOVA FUNÇÃO: GESTÃO DE RESSUPRIMENTO (CESTAS & METAS MENSAIS)
+# GESTÃO DE RESSUPRIMENTO (CESTAS & METAS MENSAIS)
 # -----------------------------------------------------------------------------
 def render_gestao_ressuprimento(operacao):
     st.subheader("📈 Gestão de Ressuprimento & Acompanhamento de Cestas")
