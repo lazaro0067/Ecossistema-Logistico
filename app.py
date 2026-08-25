@@ -96,6 +96,18 @@ def init_db():
     )""")
 
     cursor.execute("""
+    CREATE TABLE IF NOT EXISTS agendamentos_descarga (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        operacao TEXT,
+        placa TEXT,
+        slot TEXT,
+        data_descarga TEXT,
+        tipo_carga TEXT,
+        observacao TEXT,
+        dt_atualizacao TEXT
+    )""")
+
+    cursor.execute("""
     CREATE TABLE IF NOT EXISTS operacoes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         nome TEXT UNIQUE NOT NULL,
@@ -475,7 +487,6 @@ def salvar_base_linear(f_lin):
     if col_cod is None:
         col_cod = df_lin.columns[0]
 
-    # REQUISIÇÃO ANTERIOR: Pegar estritamente da Coluna E (índice 4)
     if len(df_lin.columns) > 4:
         col_vendas = df_lin.columns[4]
     else:
@@ -659,15 +670,15 @@ def carregar_estoque_consolidado(operacao):
     placeholders = ",".join(["?"] * len(ops_filtro))
     query = f"""
     SELECT 
-        e.cod_clean AS Cod_clean,
-        COALESCE(e.descricao, b_01.descricao, 'PRODUTO') AS Descricao,
-        COALESCE(l.tipo, 'OUTROS') AS Tipo,
-        COALESCE(l.categoria, 'OUTROS') AS Categoria,
-        CAST(COALESCE(e.inicial, 0) AS INTEGER) AS Inicial,
-        CAST(COALESCE(e.entrada, 0) AS INTEGER) AS Entrada,
-        CAST(COALESCE(e.saida, 0) AS INTEGER) AS Saida,
-        CAST(COALESCE(e.disponivel, 0) AS INTEGER) AS Disp,
-        CAST(COALESCE(l.linear_vendas, 0) AS INTEGER) AS Linear_Vendas,
+        e.cod_clean AS cod_clean,
+        COALESCE(e.descricao, b_01.descricao, 'PRODUTO') AS descricao,
+        COALESCE(l.tipo, 'OUTROS') AS tipo,
+        COALESCE(l.categoria, 'OUTROS') AS categoria,
+        CAST(COALESCE(e.inicial, 0) AS INTEGER) AS inicial,
+        CAST(COALESCE(e.entrada, 0) AS INTEGER) AS entrada,
+        CAST(COALESCE(e.saida, 0) AS INTEGER) AS saida,
+        CAST(COALESCE(e.disponivel, 0) AS INTEGER) AS disp,
+        CAST(COALESCE(l.linear_vendas, 0) AS INTEGER) AS linear_vendas,
         COALESCE(b_01.fator_hl, 0.0) AS fator_hl,
         COALESCE(b_01.cx_pallet, 1.0) AS cx_pallet,
         e.dt_atualizacao AS dt_atualizacao
@@ -683,20 +694,22 @@ def carregar_estoque_consolidado(operacao):
     if df.empty:
         return None
 
-    df["Classe_ABC"] = "C"
-    df["Total_Puxada"] = 0
-    df["Estoque_Projetado"] = df["Disp"] + df["Total_Puxada"]
+    df.columns = [str(c).lower() for c in df.columns]
 
-    df["DOI_Atual"] = df.apply(
-        lambda r: round(r["Disp"] / r["Linear_Vendas"], 1)
-        if r["Linear_Vendas"] > 0
-        else (999.0 if r["Disp"] > 0 else 0.0),
+    df["classe_abc"] = "C"
+    df["total_puxada"] = 0
+    df["estoque_projetado"] = df["disp"] + df["total_puxada"]
+
+    df["doi_atual"] = df.apply(
+        lambda r: round(r["disp"] / r["linear_vendas"], 1)
+        if r["linear_vendas"] > 0
+        else (999.0 if r["disp"] > 0 else 0.0),
         axis=1,
     )
 
-    df["Estoque_HL"] = (df["fator_hl"] * df["Disp"]).round(2)
-    df["Marca"] = df["Descricao"].apply(extract_ambev_brand)
-    df["Paletes_Ocupados"] = (df["Disp"] / df["cx_pallet"]).round(1)
+    df["estoque_hl"] = (df["fator_hl"] * df["disp"]).round(2)
+    df["marca"] = df["descricao"].apply(extract_ambev_brand)
+    df["paletes_ocupados"] = (df["disp"] / df["cx_pallet"]).round(1)
 
     return df
 
@@ -705,9 +718,9 @@ def calcular_saude_estoque_dpo(df):
     if df is None or df.empty:
         return 0.0, 0, 0, 0
     total_skus = len(df)
-    saudaveis = len(df[(df["DOI_Atual"] >= 3.0) & (df["DOI_Atual"] <= 15.0)])
-    ruptura = len(df[df["DOI_Atual"] < 3.0])
-    excesso = len(df[df["DOI_Atual"] > 15.0])
+    saudaveis = len(df[(df["doi_atual"] >= 3.0) & (df["doi_atual"] <= 15.0)])
+    ruptura = len(df[df["doi_atual"] < 3.0])
+    excesso = len(df[df["doi_atual"] > 15.0])
     pct_saude = (saudaveis / total_skus) * 100.0 if total_skus > 0 else 0.0
     return round(pct_saude, 1), saudaveis, ruptura, excesso
 
@@ -1479,14 +1492,14 @@ def render_estoque_dia(unidade):
             else:
                 return "🔵 Stock Over (Excesso)"
 
-        df["Status"] = df.apply(
-            lambda r: get_status(r["DOI_Atual"], r["Disp"]), axis=1
+        df["status"] = df.apply(
+            lambda r: get_status(r["doi_atual"], r["disp"]), axis=1
         )
 
-        stock_out_cnt = len(df[df["Status"] == "🔴 Stock Out (Zerado)"])
-        stock_low_cnt = len(df[df["Status"] == "🟡 Stock Low (Baixo)"])
-        stock_ideal_cnt = len(df[df["Status"] == "🟢 Stock Ideal"])
-        stock_over_cnt = len(df[df["Status"] == "🔵 Stock Over (Excesso)"])
+        stock_out_cnt = len(df[df["status"] == "🔴 Stock Out (Zerado)"])
+        stock_low_cnt = len(df[df["status"] == "🟡 Stock Low (Baixo)"])
+        stock_ideal_cnt = len(df[df["status"] == "🟢 Stock Ideal"])
+        stock_over_cnt = len(df[df["status"] == "🔵 Stock Over (Excesso)"])
 
         if "rn_filtro_status" not in st.session_state:
             st.session_state["rn_filtro_status"] = "TODOS"
@@ -1520,7 +1533,7 @@ def render_estoque_dia(unidade):
         c_f1, c_f2 = st.columns([2, 1])
         busca = c_f1.text_input("🔍 Pesquisar por Código ou Nome do Produto:")
         marca_sel = c_f2.selectbox(
-            "Marca:", ["TODAS"] + sorted(df["Marca"].unique().tolist())
+            "Marca:", ["TODAS"] + sorted(df["marca"].unique().tolist())
         )
 
         if st.session_state["rn_filtro_status"] != "TODOS":
@@ -1534,16 +1547,16 @@ def render_estoque_dia(unidade):
         df_filtrado = df.copy()
         if st.session_state["rn_filtro_status"] != "TODOS":
             df_filtrado = df_filtrado[
-                df_filtrado["Status"] == st.session_state["rn_filtro_status"]
+                df_filtrado["status"] == st.session_state["rn_filtro_status"]
             ]
 
         if marca_sel != "TODAS":
-            df_filtrado = df_filtrado[df_filtrado["Marca"] == marca_sel]
+            df_filtrado = df_filtrado[df_filtrado["marca"] == marca_sel]
 
         if busca:
             df_filtrado = df_filtrado[
-                df_filtrado["Cod_clean"].astype(str).str.contains(busca)
-                | df_filtrado["Descricao"].str.contains(busca, case=False)
+                df_filtrado["cod_clean"].astype(str).str.contains(busca)
+                | df_filtrado["descricao"].str.contains(busca, case=False)
             ]
 
         modo_view = st.radio(
@@ -1555,38 +1568,38 @@ def render_estoque_dia(unidade):
         if "Cards" in modo_view:
             st.markdown(f"Exibindo **{len(df_filtrado)}** produtos:")
             for _, r in df_filtrado.iterrows():
-                if "Stock Out" in r["Status"]:
+                if "Stock Out" in r["status"]:
                     border_color = "#dc3545"
                     bg_badge = "#f8d7da"
-                elif "Stock Low" in r["Status"]:
+                elif "Stock Low" in r["status"]:
                     border_color = "#ffc107"
                     bg_badge = "#fff3cd"
-                elif "Stock Ideal" in r["Status"]:
+                elif "Stock Ideal" in r["status"]:
                     border_color = "#28a745"
                     bg_badge = "#d4edda"
                 else:
                     border_color = "#0288d1"
                     bg_badge = "#e8f4f8"
 
-                disp_fmt = formatar_br(r['Disp'])
-                pux_fmt = formatar_br(r['Total_Puxada'])
-                proj_fmt = formatar_br(r['Estoque_Projetado'])
+                disp_fmt = formatar_br(r['disp'])
+                pux_fmt = formatar_br(r['total_puxada'])
+                proj_fmt = formatar_br(r['estoque_projetado'])
 
                 st.markdown(
                     f"""
                     <div style="background-color: #ffffff; border: 1px solid #e0e0e0; border-left: 6px solid {border_color}; border-radius: 8px; padding: 12px; margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
                         <div style="display: flex; justify-content: space-between; align-items: center;">
-                            <span style="font-size: 11px; color: #666; font-weight: bold;">CÓD: {r['Cod_clean']} | {r['Marca']}</span>
-                            <span style="font-size: 11px; font-weight: bold; background-color: {bg_badge}; padding: 3px 8px; border-radius: 12px;">{r['Status']}</span>
+                            <span style="font-size: 11px; color: #666; font-weight: bold;">CÓD: {r['cod_clean']} | {r['marca']}</span>
+                            <span style="font-size: 11px; font-weight: bold; background-color: {bg_badge}; padding: 3px 8px; border-radius: 12px;">{r['status']}</span>
                         </div>
-                        <div style="font-size: 15px; font-weight: bold; color: #111; margin: 6px 0;">{r['Descricao']}</div>
+                        <div style="font-size: 15px; font-weight: bold; color: #111; margin: 6px 0;">{r['descricao']}</div>
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px; background-color: #f9f9f9; padding: 8px; border-radius: 6px;">
                             <div><b>Estoque Físico:</b> <span style="color: #0288d1; font-size: 15px; font-weight: bold;">{disp_fmt} cx</span></div>
                             <div><b>A Caminho (Puxada):</b> <span style="color: #2e7d32; font-size: 15px; font-weight: bold;">{pux_fmt} cx</span></div>
                         </div>
                         <div style="display: flex; justify-content: space-between; margin-top: 6px; font-size: 12px; color: #555;">
                             <span>Estoque Projetado: <b>{proj_fmt} cx</b></span>
-                            <span>Cobertura: <b>{r['DOI_Atual']:.1f} dias</b></span>
+                            <span>Cobertura: <b>{r['doi_atual']:.1f} dias</b></span>
                         </div>
                     </div>
                     """,
@@ -1594,20 +1607,20 @@ def render_estoque_dia(unidade):
                 )
         else:
             cols_rn = [
-                "Cod_clean",
-                "Descricao",
-                "Marca",
-                "Tipo",
-                "Categoria",
-                "Disp",
-                "Linear_Vendas",
-                "DOI_Atual",
-                "Status",
+                "cod_clean",
+                "descricao",
+                "marca",
+                "tipo",
+                "categoria",
+                "disp",
+                "linear_vendas",
+                "doi_atual",
+                "status",
             ]
             df_view_rn = df_filtrado[cols_rn].copy()
-            df_view_rn["Disp"] = df_view_rn["Disp"].apply(formatar_br)
-            df_view_rn["Linear_Vendas"] = df_view_rn["Linear_Vendas"].apply(formatar_br)
-            df_view_rn["DOI_Atual"] = df_view_rn["DOI_Atual"].apply(lambda x: f"{x:.1f}".replace(".", ","))
+            df_view_rn["disp"] = df_view_rn["disp"].apply(formatar_br)
+            df_view_rn["linear_vendas"] = df_view_rn["linear_vendas"].apply(formatar_br)
+            df_view_rn["doi_atual"] = df_view_rn["doi_atual"].apply(lambda x: f"{x:.1f}".replace(".", ","))
 
             st.dataframe(
                 df_view_rn,
@@ -1804,8 +1817,8 @@ else:
         sub_ress = st.tabs([
             "📁 Cadastros & Atualização de Bases",
             "📊 Gestão de Estoque",
-            "🛒 Sugestão de Compra (100% Estoque em Paletes)",
-            "📅 Agendamento de Pedidos (Dia da Marcação)",
+            "🛒 Sugestão de Compra & Marcação por Dia",
+            "📅 Agendamento de Descarga",
             "📈 Gestão Ressuprimento (Cestas & Metas)",
         ])
 
@@ -1861,120 +1874,9 @@ else:
             render_estoque_dia(unidade)
 
         with sub_ress[2]:
-            st.subheader("🛒 Sugestão de Compra e Gestão em Paletes")
-            df_sug_compra = carregar_estoque_consolidado(unidade)
+            st.subheader("🛒 Sugestão de Compra e Marcação por Dia de Puxada")
+            st.caption("Selecione o dia de puxada desejado. O sistema calcula a necessidade abatendo o estoque atual e o já marcado no relatório.")
 
-            if df_sug_compra is not None and not df_sug_compra.empty:
-                c_s1, c_s2 = st.columns([1, 3])
-                meta_doi_desejada = c_s1.number_input(
-                    "Meta de Cobertura Desejada (Dias de Estoque):",
-                    min_value=1.0,
-                    max_value=30.0,
-                    value=7.0,
-                    step=0.5,
-                )
-
-                df_sug_compra["DOI_Projetado"] = df_sug_compra.apply(
-                    lambda r: round(
-                        r["Estoque_Projetado"] / r["Linear_Vendas"], 1
-                    )
-                    if r["Linear_Vendas"] > 0
-                    else (999.0 if r["Estoque_Projetado"] > 0 else 0.0),
-                    axis=1,
-                )
-
-                nec_caixas = []
-                for _, r in df_sug_compra.iterrows():
-                    lin = float(r["Linear_Vendas"])
-                    tot_proj = float(r["Estoque_Projetado"])
-                    nec_caixas.append(
-                        max(0, int(lin * meta_doi_desejada - tot_proj))
-                    )
-
-                df_sug_compra["Necessidade_Compra_CX"] = nec_caixas
-
-                df_sug_compra["Paletes_Necessarios"] = (
-                    df_sug_compra["Necessidade_Compra_CX"]
-                    / df_sug_compra["cx_pallet"]
-                ).round(1)
-
-                total_paletes_comprar = df_sug_compra[
-                    "Paletes_Necessarios"
-                ].sum()
-                total_cx_comprar = sum(nec_caixas)
-                skus_comprar = len([n for n in nec_caixas if n > 0])
-
-                m_c1, m_c2, m_c3 = st.columns(3)
-                m_c1.metric(
-                    "SKUs que Precisam de Compra", f"{skus_comprar} SKUs"
-                )
-                m_c2.metric(
-                    "Total de Paletes a Comprar",
-                    f"{total_paletes_comprar:,.1f} paletes",
-                )
-                m_c3.metric(
-                    "Equivalente em Caixas", f"{total_cx_comprar:,.0f} cx"
-                )
-
-                st.divider()
-
-                cols_sug = [
-                    "Cod_clean",
-                    "Descricao",
-                    "Marca",
-                    "Classe_ABC",
-                    "Disp",
-                    "Total_Puxada",
-                    "Estoque_Projetado",
-                    "Linear_Vendas",
-                    "DOI_Atual",
-                    "DOI_Projetado",
-                    "Paletes_Necessarios",
-                    "Necessidade_Compra_CX",
-                ]
-
-                filtro_sug = st.radio(
-                    "Exibir SKUs:",
-                    ["Apenas SKUs com Necessidade de Compra", "Todos os SKUs"],
-                    horizontal=True,
-                )
-
-                if "Apenas" in filtro_sug:
-                    df_sug_disp = df_sug_compra[
-                        df_sug_compra["Paletes_Necessarios"] > 0
-                    ]
-                else:
-                    df_sug_disp = df_sug_compra
-
-                df_view_sug = df_sug_disp[cols_sug].copy()
-                df_view_sug["Disp"] = df_view_sug["Disp"].apply(formatar_br)
-                df_view_sug["Total_Puxada"] = df_view_sug["Total_Puxada"].apply(formatar_br)
-                df_view_sug["Estoque_Projetado"] = df_view_sug["Estoque_Projetado"].apply(formatar_br)
-                df_view_sug["Linear_Vendas"] = df_view_sug["Linear_Vendas"].apply(formatar_br)
-                df_view_sug["DOI_Atual"] = df_view_sug["DOI_Atual"].apply(lambda x: f"{x:.1f}".replace(".", ","))
-                df_view_sug["DOI_Projetado"] = df_view_sug["DOI_Projetado"].apply(lambda x: f"{x:.1f}".replace(".", ","))
-                df_view_sug["Paletes_Necessarios"] = df_view_sug["Paletes_Necessarios"].apply(lambda x: f"{x:.1f}".replace(".", ","))
-                df_view_sug["Necessidade_Compra_CX"] = df_view_sug["Necessidade_Compra_CX"].apply(formatar_br)
-
-                st.dataframe(
-                    df_view_sug.style.map(highlight_curva_abc, subset=["Classe_ABC"]),
-                    use_container_width=True,
-                )
-
-                st.download_button(
-                    "Exportar Sugestão de Compra em Paletes (.xlsx)",
-                    data=gerar_excel(df_sug_disp[cols_sug]),
-                    file_name=f"Sugestao_Compra_Paletes_{unidade}.xlsx",
-                )
-            else:
-                st.info(
-                    "ℹ️ Atualize a base de Estoque 02.03.04 e Linear para visualizar a sugestão de compra."
-                )
-
-        with sub_ress[3]:
-            st.subheader("📅 Sugestão de Agendamento e Marcação de Pedidos por Dia")
-            
-            # Buscar datas já marcadas no relatório para validação
             conn = sqlite3.connect("puxada_ambev.db")
             df_marcadas_hist = pd.read_sql_query(
                 f"SELECT DISTINCT data_puxada FROM pedidos_marcados WHERE operacao='{unidade}'",
@@ -1996,8 +1898,6 @@ else:
             ultima_data_marcacao = max(datas_existentes) if datas_existentes else datetime.now().date()
             min_data_permitida = ultima_data_marcacao + timedelta(days=1)
 
-            st.caption(f"⚠️ A última data de marcação encontrada no relatório subido é **{ultima_data_marcacao.strftime('%d/%m/%Y')}**. Você só pode selecionar datas maiores que esta.")
-
             df_sug_agend = carregar_estoque_consolidado(unidade)
 
             if df_sug_agend is not None and not df_sug_agend.empty:
@@ -2017,7 +1917,6 @@ else:
                     key="meta_doi_marcacao_key"
                 )
 
-                # Calcular dias de projeção e somar o que já está marcado/puxado no relatório
                 conn = sqlite3.connect("puxada_ambev.db")
                 df_tot_marc = pd.read_sql_query(
                     f"SELECT cod_clean, SUM(cx_marcadas) as total_marcado_rel FROM pedidos_marcados WHERE operacao='{unidade}' GROUP BY cod_clean",
@@ -2031,20 +1930,16 @@ else:
                 else:
                     df_sug_agend["total_marcado_rel"] = 0.0
 
-                # Estoque disponível + o que já veio marcado no relatório subido
-                df_sug_agend["Estoque_Disponivel_E_Marcado"] = df_sug_agend["Disp"] + df_sug_agend["total_marcado_rel"]
-
-                # Abater a saída diária esperada com base na diferença de dias
+                df_sug_agend["estoque_disponivel_e_marcado"] = df_sug_agend["disp"] + df_sug_agend["total_marcado_rel"]
                 dias_proj = max(1, (data_puxada_alvo - ultima_data_marcacao).days)
 
                 caixas_sugeridas = []
                 hl_sugeridos = []
                 for _, r in df_sug_agend.iterrows():
-                    lin = float(r["Linear_Vendas"])
-                    disp_marc = float(r["Estoque_Disponivel_E_Marcado"])
+                    lin = float(r["linear_vendas"])
+                    disp_marc = float(r["estoque_disponivel_e_marcado"])
                     f_hl = float(r["fator_hl"])
                     
-                    # Projeção de consumo até a data alvo
                     consumo_projetado = lin * dias_proj
                     estoque_projetado_alvo = max(0, disp_marc - consumo_projetado)
                     
@@ -2052,18 +1947,18 @@ else:
                     caixas_sugeridas.append(cx_nec)
                     hl_sugeridos.append(round(cx_nec * f_hl, 2))
 
-                df_sug_agend["Cx_Sugeridas_Marcacao"] = caixas_sugeridas
-                df_sug_agend["HL_Sugerido"] = hl_sugeridos
-                df_sug_agend["Paletes_Sugeridos"] = (
-                    df_sug_agend["Cx_Sugeridas_Marcacao"] / df_sug_agend["cx_pallet"]
+                df_sug_agend["cx_sugeridas_marcacao"] = caixas_sugeridas
+                df_sug_agend["hl_sugerido"] = hl_sugeridos
+                df_sug_agend["paletes_sugeridos"] = (
+                    df_sug_agend["cx_sugeridas_marcacao"] / df_sug_agend["cx_pallet"]
                 ).round(1)
 
-                tot_paletes_marc = df_sug_agend["Paletes_Sugeridos"].sum()
+                tot_paletes_marc = df_sug_agend["paletes_sugeridos"].sum()
                 tot_cx_marc = sum(caixas_sugeridas)
                 tot_hl_marc = sum(hl_sugeridos)
                 skus_marc = len([n for n in caixas_sugeridas if n > 0])
 
-                st.markdown(f"##### 📦 Resumo da Sugestão para o Dia: {data_puxada_alvo.strftime('%d/%m/%Y')} (Considerando base de {ultima_data_marcacao.strftime('%d/%m/%Y')})")
+                st.markdown(f"##### 📦 Resumo da Sugestão para o Dia: {data_puxada_alvo.strftime('%d/%m/%Y')} (Base: {ultima_data_marcacao.strftime('%d/%m/%Y')})")
                 m_ag1, m_ag2, m_ag3, m_ag4 = st.columns(4)
                 m_ag1.metric("Total Paletes Sugeridos", f"{tot_paletes_marc:,.1f} paletes".replace(".", ","))
                 m_ag2.metric("Total Caixas Sugeridas", f"{formatar_br(tot_cx_marc)} cx")
@@ -2072,32 +1967,31 @@ else:
 
                 st.divider()
 
-                st.markdown("##### 📋 Listagem Detalhada de Sugestão de Marcação por SKU")
                 cols_ag_view = [
-                    "Cod_clean",
-                    "Descricao",
-                    "Marca",
-                    "Classe_ABC",
-                    "Disp",
+                    "cod_clean",
+                    "descricao",
+                    "marca",
+                    "classe_abc",
+                    "disp",
                     "total_marcado_rel",
-                    "Linear_Vendas",
-                    "DOI_Atual",
-                    "Paletes_Sugeridos",
-                    "Cx_Sugeridas_Marcacao",
-                    "HL_Sugerido",
+                    "linear_vendas",
+                    "doi_atual",
+                    "paletes_sugeridos",
+                    "cx_sugeridas_marcacao",
+                    "hl_sugerido",
                 ]
 
                 df_view_ag = df_sug_agend[cols_ag_view].copy()
-                df_view_ag["Disp"] = df_view_ag["Disp"].apply(formatar_br)
+                df_view_ag["disp"] = df_view_ag["disp"].apply(formatar_br)
                 df_view_ag["total_marcado_rel"] = df_view_ag["total_marcado_rel"].apply(formatar_br)
-                df_view_ag["Linear_Vendas"] = df_view_ag["Linear_Vendas"].apply(formatar_br)
-                df_view_ag["DOI_Atual"] = df_view_ag["DOI_Atual"].apply(lambda x: f"{x:.1f}".replace(".", ","))
-                df_view_ag["Paletes_Sugeridos"] = df_view_ag["Paletes_Sugeridos"].apply(lambda x: f"{x:.1f}".replace(".", ","))
-                df_view_ag["Cx_Sugeridas_Marcacao"] = df_view_ag["Cx_Sugeridas_Marcacao"].apply(formatar_br)
-                df_view_ag["HL_Sugerido"] = df_view_ag["HL_Sugerido"].apply(lambda x: f"{x:.2f}".replace(".", ","))
+                df_view_ag["linear_vendas"] = df_view_ag["linear_vendas"].apply(formatar_br)
+                df_view_ag["doi_atual"] = df_view_ag["doi_atual"].apply(lambda x: f"{x:.1f}".replace(".", ","))
+                df_view_ag["paletes_sugeridos"] = df_view_ag["paletes_sugeridos"].apply(lambda x: f"{x:.1f}".replace(".", ","))
+                df_view_ag["cx_sugeridas_marcacao"] = df_view_ag["cx_sugeridas_marcacao"].apply(formatar_br)
+                df_view_ag["hl_sugerido"] = df_view_ag["hl_sugerido"].apply(lambda x: f"{x:.2f}".replace(".", ","))
 
                 st.dataframe(
-                    df_view_ag.style.map(highlight_curva_abc, subset=["Classe_ABC"]),
+                    df_view_ag.style.map(highlight_curva_abc, subset=["classe_abc"]),
                     use_container_width=True,
                 )
 
@@ -2110,6 +2004,62 @@ else:
                 st.info(
                     "ℹ️ **Nenhum dado de estoque disponível.** Faça o upload das bases em Cadastros para gerar as sugestões de marcação."
                 )
+
+        with sub_ress[3]:
+            st.subheader("📅 Agendamento de Descarga")
+            st.caption("Cadastre os agendamentos de descarga informando Placa, Slot, Data e Tipo de Carga. Os registros aparecerão automaticamente na aba de Descarga no Armazém.")
+
+            with st.form("form_agendamento_descarga"):
+                c_d1, c_d2 = st.columns(2)
+                placa_input = c_d1.text_input("Placa do Veículo (Ex: ABC-1234):")
+                slot_input = c_d2.text_input("Slot de Descarga (Ex: Slot 03):")
+
+                c_d3, c_d4 = st.columns(2)
+                data_descarga_input = c_d3.date_input("Data da Descarga:")
+                tipo_carga_input = c_d4.selectbox("Tipo de Carga:", ["Descartável", "Retornável"])
+
+                obs_descarga = st.text_area("Observações da Descarga:")
+
+                if st.form_submit_button("🚚 Salvar Agendamento de Descarga"):
+                    if not placa_input.strip() or not slot_input.strip():
+                        st.error("Preencha a Placa e o Slot para prosseguir.")
+                    else:
+                        conn = sqlite3.connect("puxada_ambev.db")
+                        cursor = conn.cursor()
+                        dt_now = datetime.now().strftime("%d/%m/%Y %H:%M")
+                        cursor.execute(
+                            """
+                            INSERT INTO agendamentos_descarga (operacao, placa, slot, data_descarga, tipo_carga, observacao, dt_atualizacao)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                unidade,
+                                placa_input.strip().upper(),
+                                slot_input.strip(),
+                                str(data_descarga_input),
+                                tipo_carga_input,
+                                obs_descarga,
+                                dt_now,
+                            ),
+                        )
+                        conn.commit()
+                        conn.close()
+                        st.success(f"Agendamento de descarga para a placa **{placa_input.upper()}** salvo com sucesso!")
+                        st.rerun()
+
+            st.divider()
+            st.markdown("##### 📋 Agendamentos de Descarga Cadastrados")
+            conn = sqlite3.connect("puxada_ambev.db")
+            df_descargas = pd.read_sql_query(
+                f"SELECT id, placa, slot, data_descarga, tipo_carga, observacao, dt_atualizacao FROM agendamentos_descarga WHERE operacao='{unidade}' ORDER BY data_descarga DESC",
+                conn,
+            )
+            conn.close()
+
+            if not df_descargas.empty:
+                st.dataframe(df_descargas, use_container_width=True)
+            else:
+                st.info("Nenhum agendamento de descarga cadastrado para esta unidade.")
 
         with sub_ress[4]:
             render_gestao_ressuprimento(unidade)
@@ -2139,10 +2089,11 @@ else:
 
         st.divider()
 
-        tab_fund, tab_manter, tab_melhorar = st.tabs([
+        tab_fund, tab_manter, tab_melhorar, tab_descarga_arm = st.tabs([
             "📘 FUNDAMENTOS",
             "🔄 GERENCIAR PARA MANTER",
             "🚀 GERENCIAR PARA MELHORAR",
+            "🚚 ABA DE DESCARGA (PÁTIO)",
         ])
 
         with tab_fund:
@@ -2274,6 +2225,34 @@ else:
                 render_gerenciador_padroes_dpo(
                     unidade, "Armazém", "5.4 - Ciclo das Carretas"
                 )
+
+        with tab_descarga_arm:
+            st.markdown("### 🚚 Controle de Pátio e Agendamentos de Descarga")
+            st.caption("Visualização em tempo real dos caminhões agendados para descarga nesta unidade.")
+
+            conn = sqlite3.connect("puxada_ambev.db")
+            df_arm_desc = pd.read_sql_query(
+                f"SELECT id, placa, slot, data_descarga, tipo_carga, observacao, dt_atualizacao FROM agendamentos_descarga WHERE operacao='{unidade}' ORDER BY data_descarga ASC",
+                conn,
+            )
+            conn.close()
+
+            if not df_arm_desc.empty:
+                st.dataframe(df_arm_desc, use_container_width=True)
+
+                if st.button("🗑️ Excluir Agendamento de Descarga"):
+                    # Permite excluir por ID se necessário
+                    id_exc = st.number_input("Digite o ID do agendamento para remover:", min_value=1, step=1)
+                    if st.button("Confirmar Exclusão"):
+                        conn = sqlite3.connect("puxada_ambev.db")
+                        cursor = conn.cursor()
+                        cursor.execute("DELETE FROM agendamentos_descarga WHERE id=?", (id_exc,))
+                        conn.commit()
+                        conn.close()
+                        st.success(f"Agendamento #{id_exc} removido com sucesso!")
+                        st.rerun()
+            else:
+                st.info("ℹ️ Nenhum agendamento de descarga pendente no momento para esta unidade.")
 
     # MÓDULO 6 - ENTREGA REVENDA (DISTRIBUIÇÃO)
     elif "Distribuição" in dept_atual:
@@ -2537,6 +2516,7 @@ else:
                 "layout_armazem",
                 "gestao_ressuprimento_diario",
                 "metas_ressuprimento_mensal",
+                "agendamentos_descarga",
             ],
         )
         conn = sqlite3.connect("puxada_ambev.db")
