@@ -292,11 +292,57 @@ def robust_read_file(file_obj):
 def parse_br_float(val):
     if pd.isna(val):
         return 0.0
-    s = str(val).strip().replace(".", "").replace(",", ".")
+    if isinstance(val, (int, float)):
+        return float(val)
+
+    s = str(val).strip()
+    if not s:
+        return 0.0
+
+    s = re.sub(r"[R\$\s]", "", s)
+
+    if "." in s and "," in s:
+        s = s.replace(".", "").replace(",", ".")
+    elif "," in s and "." not in s:
+        s = s.replace(",", ".")
+    elif "." in s:
+        if s.count(".") > 1 or re.match(r"^\d{1,3}(\.\d{3})+$", s):
+            s = s.replace(".", "")
+
     try:
         return float(s)
     except Exception:
-        return 0.0
+        s_clean = re.sub(r"[^\d,\.-]", "", s)
+        if "." in s_clean and "," in s_clean:
+            s_clean = s_clean.replace(".", "").replace(",", ".")
+        elif "," in s_clean:
+            s_clean = s_clean.replace(",", ".")
+        else:
+            if s_clean.count(".") > 1 or re.match(
+                r"^\d{1,3}(\.\d{3})+$", s_clean
+            ):
+                s_clean = s_clean.replace(".", "")
+        try:
+            return float(s_clean)
+        except Exception:
+            return 0.0
+
+
+def formatar_br(val):
+    """Formata valores numéricos para o padrão brasileiro (ex: 25.011,25 ou 25.011)"""
+    try:
+        if pd.isna(val):
+            return "0,00"
+        val_float = float(val)
+        # Formata com separador de milhar ponto e decimal vírgula
+        s_base = f"{val_float:,.2f}"
+        s_base = s_base.replace(",", "X").replace(".", ",").replace("X", ".")
+        # Se for inteiro exato, pode remover os centavos se preferir, ou manter limpo
+        if s_base.endswith(",00"):
+            s_base = s_base[:-3]
+        return s_base
+    except Exception:
+        return str(val)
 
 
 def extract_ambev_brand(desc):
@@ -985,7 +1031,6 @@ def render_gestao_ressuprimento(operacao):
         "📈 Gestão de Ressuprimento & Acompanhamento de Cestas (HL do Mês)"
     )
 
-    # Mapeamento estrito para as operações (incluindo "Bahia" que agrupa Barreiras e São Félix)
     mapa_op_sistema = {
         "Lima Rio Verde": ["Lima - Rio Verde", "Rio Verde", "Lima Rio Verde"],
         "Lima Barreiras": ["Lima Bahia", "Barreiras", "Lima Barreiras"],
@@ -1054,20 +1099,14 @@ def render_gestao_ressuprimento(operacao):
             "Novembro",
             "Dezembro",
         ]
-        modo_mes = c_f2.radio(
-            "Filtro de Meses:", ["Mês Específico", "Todos os Meses"], horizontal=True
+        
+        # AJUSTE: Múltipla seleção de meses conforme solicitado
+        meses_selecionados = c_f2.multiselect(
+            "Selecione os Meses de Análise:",
+            options=list(range(1, 13)),
+            format_func=lambda x: meses_nomes[x - 1],
+            default=[datetime.now().month],
         )
-
-        if modo_mes == "Mês Específico":
-            mes_sel_idx = st.selectbox(
-                "Mês de Análise:",
-                list(range(1, 13)),
-                format_func=lambda x: meses_nomes[x - 1],
-                index=datetime.now().month - 1,
-            )
-            meses_selecionados = [mes_sel_idx]
-        else:
-            meses_selecionados = list(range(1, 13))
 
         conn = sqlite3.connect("puxada_ambev.db")
         placeholders_op = ",".join(["?"] * len(nombres_filtro))
@@ -1083,7 +1122,7 @@ def render_gestao_ressuprimento(operacao):
         )
         conn.close()
 
-        if not df_diario.empty:
+        if not df_diario.empty and meses_selecionados:
             df_diario["data_dt"] = pd.to_datetime(
                 df_diario["data_registro"], errors="coerce"
             )
@@ -1093,7 +1132,6 @@ def render_gestao_ressuprimento(operacao):
 
             dias_preenchidos = df_diario_filtrado["data_dt"].dt.date.nunique()
 
-            # Cálculo correto do total de dias do(s) mês(es) selecionado(s)
             dias_no_ano_total = 0
             for m_s in meses_selecionados:
                 if m_s in [1, 3, 5, 7, 8, 10, 12]:
@@ -1110,7 +1148,6 @@ def render_gestao_ressuprimento(operacao):
                         else 28
                     )
 
-            # Somando rigorosamente a Coluna C (volume_sellin_hl) agrupada por cesta/indicador
             df_res_mes = (
                 df_diario_filtrado.groupby("cesta")["volume_sellin_hl"]
                 .sum()
@@ -1124,7 +1161,6 @@ def render_gestao_ressuprimento(operacao):
                 how="left",
             ).fillna(0)
 
-            # Filtrar e somar metas para os meses selecionados
             df_metas_filtradas = df_metas[
                 df_metas["mes"].isin(meses_selecionados)
             ]
@@ -1146,7 +1182,7 @@ def render_gestao_ressuprimento(operacao):
 
             df_comp["INDICADOR"] = df_comp["cesta"].map(cestas_map)
             df_comp["META"] = df_comp["meta_volume_hl"]
-            df_comp["REAL"] = df_comp["volume_sellin_hl"]  # Soma da Coluna C
+            df_comp["REAL"] = df_comp["volume_sellin_hl"]
             df_comp["TEND."] = df_comp["REAL"] * fator_tend
 
             df_comp["ATING. REAL"] = df_comp.apply(
@@ -1181,11 +1217,12 @@ def render_gestao_ressuprimento(operacao):
                 "ATING. TEND.": tot_ating_tend,
             }])
 
+            meses_str = ", ".join([meses_nomes[m - 1] for m in meses_selecionados])
             st.markdown(
                 f"""
                 <div style="background-color: #0d2149; color: white; padding: 12px 20px; border-radius: 8px 8px 0 0; margin-bottom: 0px;">
                     <h3 style="margin:0; font-size: 20px; color: white;">🔵 {nome_exibicao_op}</h3>
-                    <span style="font-size: 13px; color: #b0c4de;">Somatório de HL do Mês (Coluna C) · Período: {modo_mes} · {dias_preenchidos} dia(s) computado(s)</span>
+                    <span style="font-size: 13px; color: #b0c4de;">Somatório de HL do Mês (Coluna C) · Meses: {meses_str} · {dias_preenchidos} dia(s) computado(s)</span>
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -1203,49 +1240,23 @@ def render_gestao_ressuprimento(operacao):
                 df_total,
             ], ignore_index=True)
 
-            def style_ating_real(val):
-                if isinstance(val, (int, float)):
-                    color = "#28a745" if val >= 100 else "#dc3545"
-                    return f"color: {color}; font-weight: bold;"
-                return ""
-
-            def style_ating_tend(val):
-                if isinstance(val, (int, float)):
-                    color = "#28a745" if val >= 100 else "#d97706"
-                    return f"color: {color}; font-weight: bold;"
-                return ""
-
-            def style_real_val(val):
-                if isinstance(val, (int, float)):
-                    return "color: #28a745; font-weight: bold;"
-                return ""
-
-            def style_tend_val(val):
-                if isinstance(val, (int, float)):
-                    return "color: #8a2be2; font-weight: bold;"
-                return ""
-
-            format_dict = {
-                "META": "{:,.2f}",
-                "REAL": "{:,.2f}",
-                "TEND.": "{:,.2f}",
-                "ATING. REAL": "{:.1f}%",
-                "ATING. TEND.": "{:.1f}%",
-            }
+            # AJUSTE: Formatação visual no padrão brasileiro com ponto de milhar (ex: 25.011)
+            df_view = df_final.copy()
+            df_view["META"] = df_view["META"].apply(formatar_br)
+            df_view["REAL"] = df_view["REAL"].apply(formatar_br)
+            df_view["TEND."] = df_view["TEND."].apply(formatar_br)
+            df_view["ATING. REAL"] = df_view["ATING. REAL"].apply(lambda x: f"{x:.1f}%".replace(".", ","))
+            df_view["ATING. TEND."] = df_view["ATING. TEND."].apply(lambda x: f"{x:.1f}%".replace(".", ","))
 
             st.dataframe(
-                df_final.style.format(format_dict)
-                .map(style_real_val, subset=["REAL"])
-                .map(style_tend_val, subset=["TEND."])
-                .map(style_ating_real, subset=["ATING. REAL"])
-                .map(style_ating_tend, subset=["ATING. TEND."]),
+                df_view,
                 use_container_width=True,
-                height=(len(df_final) + 1) * 38 + 5,
+                height=(len(df_view) + 1) * 38 + 5,
             )
 
         else:
             st.info(
-                f"ℹ️ Nenhum dado diário encontrado para **{nome_exibicao_op}** no ano de {ano_sel}. Faça o upload do relatório na aba 'Upload & Atualização'."
+                f"ℹ️ Selecione ao menos um mês ou verifique se há dados diários cadastrados para **{nome_exibicao_op}** no ano de {ano_sel}."
             )
 
     with tab_m2:
@@ -1555,6 +1566,10 @@ def render_estoque_dia(unidade):
                     border_color = "#0288d1"
                     bg_badge = "#e8f4f8"
 
+                disp_fmt = formatar_br(r['Disp'])
+                pux_fmt = formatar_br(r['Total_Puxada'])
+                proj_fmt = formatar_br(r['Estoque_Projetado'])
+
                 st.markdown(
                     f"""
                     <div style="background-color: #ffffff; border: 1px solid #e0e0e0; border-left: 6px solid {border_color}; border-radius: 8px; padding: 12px; margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
@@ -1564,11 +1579,11 @@ def render_estoque_dia(unidade):
                         </div>
                         <div style="font-size: 15px; font-weight: bold; color: #111; margin: 6px 0;">{r['Descricao']}</div>
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px; background-color: #f9f9f9; padding: 8px; border-radius: 6px;">
-                            <div><b>Estoque Físico:</b> <span style="color: #0288d1; font-size: 15px; font-weight: bold;">{r['Disp']:,.0f} cx</span></div>
-                            <div><b>A Caminho (Puxada):</b> <span style="color: #2e7d32; font-size: 15px; font-weight: bold;">{r['Total_Puxada']:,.0f} cx</span></div>
+                            <div><b>Estoque Físico:</b> <span style="color: #0288d1; font-size: 15px; font-weight: bold;">{disp_fmt} cx</span></div>
+                            <div><b>A Caminho (Puxada):</b> <span style="color: #2e7d32; font-size: 15px; font-weight: bold;">{pux_fmt} cx</span></div>
                         </div>
                         <div style="display: flex; justify-content: space-between; margin-top: 6px; font-size: 12px; color: #555;">
-                            <span>Estoque Projetado: <b>{r['Estoque_Projetado']:,.0f} cx</b></span>
+                            <span>Estoque Projetado: <b>{proj_fmt} cx</b></span>
                             <span>Cobertura: <b>{r['DOI_Atual']:.1f} dias</b></span>
                         </div>
                     </div>
@@ -1587,13 +1602,13 @@ def render_estoque_dia(unidade):
                 "DOI_Atual",
                 "Status",
             ]
-            format_dict = {
-                "Disp": "{:,.0f}",
-                "Linear_Vendas": "{:,.0f}",
-                "DOI_Atual": "{:,.1f}",
-            }
+            df_view_rn = df_filtrado[cols_rn].copy()
+            df_view_rn["Disp"] = df_view_rn["Disp"].apply(formatar_br)
+            df_view_rn["Linear_Vendas"] = df_view_rn["Linear_Vendas"].apply(formatar_br)
+            df_view_rn["DOI_Atual"] = df_view_rn["DOI_Atual"].apply(lambda x: f"{x:.1f}".replace(".", ","))
+
             st.dataframe(
-                df_filtrado[cols_rn].style.format(format_dict),
+                df_view_rn,
                 use_container_width=True,
             )
     else:
@@ -1916,17 +1931,6 @@ else:
                     "Necessidade_Compra_CX",
                 ]
 
-                format_sug = {
-                    "Disp": "{:,.0f}",
-                    "Total_Puxada": "{:,.0f}",
-                    "Estoque_Projetado": "{:,.0f}",
-                    "Linear_Vendas": "{:,.0f}",
-                    "DOI_Atual": "{:,.1f}",
-                    "DOI_Projetado": "{:,.1f}",
-                    "Paletes_Necessarios": "{:,.1f}",
-                    "Necessidade_Compra_CX": "{:,.0f}",
-                }
-
                 filtro_sug = st.radio(
                     "Exibir SKUs:",
                     ["Apenas SKUs com Necessidade de Compra", "Todos os SKUs"],
@@ -1940,10 +1944,19 @@ else:
                 else:
                     df_sug_disp = df_sug_compra
 
+                # Formatação brasileira para exibição
+                df_view_sug = df_sug_disp[cols_sug].copy()
+                df_view_sug["Disp"] = df_view_sug["Disp"].apply(formatar_br)
+                df_view_sug["Total_Puxada"] = df_view_sug["Total_Puxada"].apply(formatar_br)
+                df_view_sug["Estoque_Projetado"] = df_view_sug["Estoque_Projetado"].apply(formatar_br)
+                df_view_sug["Linear_Vendas"] = df_view_sug["Linear_Vendas"].apply(formatar_br)
+                df_view_sug["DOI_Atual"] = df_view_sug["DOI_Atual"].apply(lambda x: f"{x:.1f}".replace(".", ","))
+                df_view_sug["DOI_Projetado"] = df_view_sug["DOI_Projetado"].apply(lambda x: f"{x:.1f}".replace(".", ","))
+                df_view_sug["Paletes_Necessarios"] = df_view_sug["Paletes_Necessarios"].apply(lambda x: f"{x:.1f}".replace(".", ","))
+                df_view_sug["Necessidade_Compra_CX"] = df_view_sug["Necessidade_Compra_CX"].apply(formatar_br)
+
                 st.dataframe(
-                    df_sug_disp[cols_sug]
-                    .style.map(highlight_curva_abc, subset=["Classe_ABC"])
-                    .format(format_sug),
+                    df_view_sug.style.map(highlight_curva_abc, subset=["Classe_ABC"]),
                     use_container_width=True,
                 )
 
@@ -2011,8 +2024,8 @@ else:
                     if idx < len(cols_met):
                         cols_met[idx].metric(
                             f"📅 {row_d['data_puxada']}",
-                            f"{row_d['Total_Paletes']:,.1f} Paletes",
-                            f"{row_d['Total_Caixas']:,.0f} cx | {row_d['Total_HL']:,.2f} HL ({row_d['Total_Itens']} SKUs)",
+                            f"{row_d['Total_Paletes']:,.1f} Paletes".replace(".", ","),
+                            f"{formatar_br(row_d['Total_Caixas'])} cx | {row_d['Total_HL']:,.2f} HL ({row_d['Total_Itens']} SKUs)".replace(".", ","),
                         )
 
                 st.divider()
@@ -2032,14 +2045,13 @@ else:
                     "dt_atualizacao",
                 ]
 
-                format_pm = {
-                    "Paletes_Marcados": "{:,.1f}",
-                    "cx_marcadas": "{:,.0f}",
-                    "hl_marcado": "{:,.2f}",
-                }
+                df_view_pm = df_pm_raw[cols_pm].copy()
+                df_view_pm["Paletes_Marcados"] = df_view_pm["Paletes_Marcados"].apply(lambda x: f"{x:.1f}".replace(".", ","))
+                df_view_pm["cx_marcadas"] = df_view_pm["cx_marcadas"].apply(formatar_br)
+                df_view_pm["hl_marcado"] = df_view_pm["hl_marcado"].apply(lambda x: f"{x:.2f}".replace(".", ","))
 
                 st.dataframe(
-                    df_pm_raw[cols_pm].style.format(format_pm),
+                    df_view_pm,
                     use_container_width=True,
                 )
 
@@ -2074,7 +2086,7 @@ else:
         p_saude, k_ok, k_rup, k_exc = calcular_saude_estoque_dpo(df_est_saude)
 
         s1, s2, s3, s4 = st.columns(4)
-        s1.metric("🏥 Saúde do Estoque DPO", f"{p_saude}%", "Meta DPO ≥ 85%")
+        s1.metric("🏥 Saúde do Estoque DPO", f"{p_saude}%".replace(".", ","), "Meta DPO ≥ 85%")
         s2.metric("🟢 SKUs Saudáveis (DOI 3-15)", f"{k_ok} SKUs")
         s3.metric("🔴 SKUs em Risco / Ruptura (<3)", f"{k_rup} SKUs")
         s4.metric("🟡 SKUs em Excesso (>15)", f"{k_exc} SKUs")
@@ -2280,7 +2292,7 @@ else:
                     )
                 with sub_p2[2]:
                     st.markdown("#### 2.3 - Delivery Quality Index (DQI)")
-                    st.metric("Índice DQI Corrente", "96.5%", "Meta DPO ≥ 95%")
+                    st.metric("Índice DQI Corrente", "96,5%", "Meta DPO ≥ 95%")
                     render_gerenciador_padroes_dpo(
                         unidade, "Entrega", "2.3 - Delivery Quality Index"
                     )
@@ -2304,19 +2316,19 @@ else:
                     ["4.1 - In Full", "4.2 - On Time", "4.3 - Devolução"]
                 )
                 with sub_p4[0]:
-                    st.metric("OTIF / In Full", "98.2%", "Meta ≥ 98.0%")
+                    st.metric("OTIF / In Full", "98,2%", "Meta ≥ 98,0%")
                     render_gerenciador_padroes_dpo(
                         unidade, "Entrega", "4.1 - In Full"
                     )
                 with sub_p4[1]:
                     st.metric(
-                        "On Time (Janela do Cliente)", "95.1%", "Meta ≥ 95.0%"
+                        "On Time (Janela do Cliente)", "95,1%", "Meta ≥ 95,0%"
                     )
                     render_gerenciador_padroes_dpo(
                         unidade, "Entrega", "4.2 - On Time"
                     )
                 with sub_p4[2]:
-                    st.metric("Taxa de Devolução Rota", "1.1%", "Meta ≤ 1.5%")
+                    st.metric("Taxa de Devolução Rota", "1,1%", "Meta ≤ 1,5%")
                     render_gerenciador_padroes_dpo(
                         unidade, "Entrega", "4.3 - Devolução"
                     )
@@ -2363,7 +2375,7 @@ else:
                     unidade, "Entrega", "6.2 - NPS Entrega"
                 )
             with sub_p6[2]:
-                st.metric("Rating Clientes Bees", "4.8 / 5.0")
+                st.metric("Rating Clientes Bees", "4,8 / 5,0")
                 render_gerenciador_padroes_dpo(
                     unidade, "Entrega", "6.3 - Rating"
                 )
