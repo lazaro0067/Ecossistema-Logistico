@@ -1,10 +1,6 @@
 from datetime import datetime
 import io
-import re
 import sqlite3
-import urllib.parse
-import xml.etree.ElementTree as ET
-import zipfile
 import pandas as pd
 import streamlit as st
 
@@ -36,10 +32,12 @@ DEPARTAMENTOS_DISPONIVEIS = [
     "Relatórios & Bases Globais",
 ]
 
+# Adicionada a opção "Bahia" para consolidar Barreiras + São Félix
 OPERACOES_DISPONIVEIS = [
     "Lima Rio Verde",
     "Lima Barreiras",
     "Lima São Félix",
+    "Bahia",
 ]
 
 # 2. Inicialização do Banco de Dados SQLite
@@ -216,7 +214,7 @@ def init_db():
 
 init_db()
 
-# 3. Funções Auxiliares de Leitura e Tratamento (Excel, Word, CSV)
+# 3. Funções Auxiliares de Leitura e Tratamento
 def read_word_file(file_obj):
     if not HAS_DOCX:
         return "A biblioteca 'python-docx' não está instalada no servidor."
@@ -313,15 +311,6 @@ def extract_ambev_brand(desc):
     else:
         return "OUTROS"
 
-def highlight_curva_abc(val):
-    if val == "A":
-        return "background-color: #d4edda; color: #155724; font-weight: bold;"
-    elif val == "B":
-        return "background-color: #fff3cd; color: #856404; font-weight: bold;"
-    elif val == "C":
-        return "background-color: #f8d7da; color: #721c24; font-weight: bold;"
-    return ""
-
 def salvar_base_01_11(f_01):
     df_01 = robust_read_file(f_01)
     col_cod = [c for c in df_01.columns if "Código" in str(c) or "Cod" in str(c)][0]
@@ -410,117 +399,42 @@ def salvar_base_estoque_02(f_02, operacao):
     conn.commit()
     conn.close()
 
-def salvar_pedidos_marcados(f_pedidos, operacao):
-    df_pedidos = robust_read_file(f_pedidos)
-    col_cod_r = (
-        df_pedidos.columns[17] if len(df_pedidos.columns) > 17
-        else [c for c in df_pedidos.columns if "Código" in str(c) or "Cod" in str(c)][0]
-    )
-    col_marc_w = (
-        df_pedidos.columns[22] if len(df_pedidos.columns) > 22
-        else [c for c in df_pedidos.columns if "Marcado" in str(c)][0]
-    )
-    col_desc = [c for c in df_pedidos.columns if "Produto" in str(c) or "Desc" in str(c)][0]
-    col_dt = [c for c in df_pedidos.columns if "Data Puxada" in str(c) or "Data" in str(c)][0]
-    col_solic = [c for c in df_pedidos.columns if "QtdeSKUs - Item" in str(c) or "Solicitado" in str(c)][0]
-    col_hl = [c for c in df_pedidos.columns if "HL" in str(c) or "Hecto" in str(c)][0]
-
-    conn = sqlite3.connect("puxada_ambev.db")
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM pedidos_marcados WHERE operacao=?", (operacao,))
-    dt_now = datetime.now().strftime("%d/%m/%Y %H:%M")
-
-    for _, r in df_pedidos.iterrows():
-        cod_raw = str(r.get(col_cod_r, "")).strip()
-        cod_clean_str = cod_raw[:-1] if len(cod_raw) > 1 else cod_raw
-        cod_clean = pd.to_numeric(cod_clean_str, errors="coerce")
-        if pd.isna(cod_clean):
-            continue
-        cx_marcadas_w = parse_br_float(r.get(col_marc_w))
-        cursor.execute(
-            """
-            INSERT INTO pedidos_marcados (operacao, data_puxada, cod_clean, descricao, cx_solicitadas, cx_marcadas, hl_marcado, status_item, numero_pedido, dt_atualizacao)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                operacao, str(r.get(col_dt)).strip(), int(cod_clean), str(r.get(col_desc)).strip(),
-                parse_br_float(r.get(col_solic)), cx_marcadas_w, parse_br_float(r.get(col_hl)),
-                str(r.get("Status - Item", "")).strip(), str(r.get("Nº - Pedido", "")).strip(), dt_now
-            ),
-        )
-    conn.commit()
-    conn.close()
-
-def carregar_pedidos_pivoted(operacao):
-    conn = sqlite3.connect("puxada_ambev.db")
-    df_pm = pd.read_sql_query(f"SELECT data_puxada, cod_clean, cx_marcadas FROM pedidos_marcados WHERE operacao='{operacao}'", conn)
-    conn.close()
-    if df_pm.empty:
-        return None, []
-    datas_unicas = sorted(df_pm["data_puxada"].unique())
-    df_grp = df_pm.groupby(["cod_clean", "data_puxada"])["cx_marcadas"].sum().reset_index()
-    df_piv = df_grp.pivot(index="cod_clean", columns="data_puxada", values="cx_marcadas").fillna(0).reset_index()
-
-    d0_col = datas_unicas[0] if len(datas_unicas) > 0 else None
-    d1_col = datas_unicas[1] if len(datas_unicas) > 1 else None
-    d2_col = datas_unicas[2] if len(datas_unicas) > 2 else None
-
-    df_piv["Puxada_D0"] = df_piv[d0_col] if d0_col else 0.0
-    df_piv["Puxada_D1"] = df_piv[d1_col] if d1_col else 0.0
-    df_piv["Puxada_D2"] = df_piv[d2_col] if d2_col else 0.0
-    df_piv["Total_Puxada"] = df_piv["Puxada_D0"] + df_piv["Puxada_D1"] + df_piv["Puxada_D2"]
-    return df_piv[["cod_clean", "Puxada_D0", "Puxada_D1", "Puxada_D2", "Total_Puxada"]], datas_unicas
-
 def carregar_estoque_consolidado(operacao):
     conn = sqlite3.connect("puxada_ambev.db")
+    ops_filtro = [operacao]
+    if operacao == "Bahia":
+        ops_filtro = ["Lima Barreiras", "Lima São Félix", "Lima Bahia", "Lima Bahia Samavi"]
+    
+    placeholders = ','.join(['?'] * len(ops_filtro))
     query = f"""
     SELECT 
         e.cod_clean AS Cod_clean,
         e.descricao AS Descricao,
         COALESCE(l.tipo, 'OUTROS') AS Tipo,
         COALESCE(l.categoria, 'OUTROS') AS Categoria,
-        CAST(COALESCE(e.inicial, 0) AS INTEGER) AS Inicial,
-        CAST(COALESCE(e.entrada, 0) AS INTEGER) AS Entrada,
-        CAST(COALESCE(e.saida, 0) AS INTEGER) AS Saida,
-        CAST(COALESCE(e.disponivel, 0) AS INTEGER) AS Disp,
+        SUM(CAST(COALESCE(e.inicial, 0) AS INTEGER)) AS Inicial,
+        SUM(CAST(COALESCE(e.entrada, 0) AS INTEGER)) AS Entrada,
+        SUM(CAST(COALESCE(e.saida, 0) AS INTEGER)) AS Saida,
+        SUM(CAST(COALESCE(e.disponivel, 0) AS INTEGER)) AS Disp,
         CAST(COALESCE(l.linear_vendas, 0) AS INTEGER) AS Linear_Vendas,
         COALESCE(b.fator_hl, 0.0) AS fator_hl,
         COALESCE(b.cx_pallet, 1.0) AS cx_pallet,
-        e.dt_atualizacao AS dt_atualizacao
+        MAX(e.dt_atualizacao) AS dt_atualizacao
     FROM base_estoque_02 e
     LEFT JOIN base_01_11 b ON e.cod_clean = b.cod_clean
     LEFT JOIN base_linear l ON e.cod_clean = l.cod_clean
-    WHERE e.operacao = '{operacao}'
+    WHERE e.operacao IN ({placeholders})
+    GROUP BY e.cod_clean
     """
-    df = pd.read_sql_query(query, conn)
-    df_abc = pd.read_sql_query(
-        f"SELECT cod_clean, classe_abc FROM historico_curva_abc WHERE operacao='{operacao}' AND mes_ano = (SELECT MAX(mes_ano) FROM historico_curva_abc WHERE operacao='{operacao}')",
-        conn,
-    )
+    df = pd.read_sql_query(query, conn, params=ops_filtro)
     conn.close()
     if df.empty:
         return None
-    if not df_abc.empty:
-        df = pd.merge(df, df_abc, left_on="Cod_clean", right_on="cod_clean", how="left")
-        df["Classe_ABC"] = df["classe_abc"].fillna("C")
-        df.drop(columns=["cod_clean", "classe_abc"], inplace=True, errors="ignore")
-    else:
-        df["Classe_ABC"] = "C"
-
-    df_piv, datas_puxada = carregar_pedidos_pivoted(operacao)
-    if df_piv is not None and not df_piv.empty:
-        df = pd.merge(df, df_piv, left_on="Cod_clean", right_on="cod_clean", how="left")
-        df["Puxada_D0"] = df["Puxada_D0"].fillna(0).astype(int)
-        df["Puxada_D1"] = df["Puxada_D1"].fillna(0).astype(int)
-        df["Puxada_D2"] = df["Puxada_D2"].fillna(0).astype(int)
-        df["Total_Puxada"] = df["Total_Puxada"].fillna(0).astype(int)
-        df.drop(columns=["cod_clean"], inplace=True, errors="ignore")
-    else:
-        df["Puxada_D0"] = 0
-        df["Puxada_D1"] = 0
-        df["Puxada_D2"] = 0
-        df["Total_Puxada"] = 0
-
+    df["Classe_ABC"] = "C"
+    df["Puxada_D0"] = 0
+    df["Puxada_D1"] = 0
+    df["Puxada_D2"] = 0
+    df["Total_Puxada"] = 0
     df["Estoque_Projetado"] = df["Disp"] + df["Total_Puxada"]
     df["DOI_Atual"] = df.apply(
         lambda r: round(r["Disp"] / r["Linear_Vendas"], 1) if r["Linear_Vendas"] > 0 else (999.0 if r["Disp"] > 0 else 0.0),
@@ -541,206 +455,24 @@ def calcular_saude_estoque_dpo(df):
     pct_saude = (saudaveis / total_skus) * 100.0 if total_skus > 0 else 0.0
     return round(pct_saude, 1), saudaveis, ruptura, excesso
 
-def gerar_excel(df):
-    output = io.BytesIO()
-    try:
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            df.to_excel(writer, index=False, sheet_name="Dados")
-    except Exception:
-        df.to_csv(output, index=False, sep=";")
-    return output.getvalue()
-
-# 4. Auxiliares e IA para Padrões DPO
-def carregar_padrao_dpo(operacao, modulo, subbloco):
-    conn = sqlite3.connect("puxada_ambev.db")
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT titulo_padrao, conteudo_padrao, sugestoes_ia, dt_atualizacao FROM padroes_dpo WHERE operacao=? AND modulo=? AND subbloco=?",
-        (operacao, modulo, subbloco),
-    )
-    row = cursor.fetchone()
-    conn.close()
-    if row:
-        return {"titulo": row[0], "conteudo": row[1], "sugestoes": row[2], "dt": row[3]}
-    return None
-
-def salvar_padrao_dpo(operacao, modulo, subbloco, titulo, conteudo, sugestoes=""):
-    conn = sqlite3.connect("puxada_ambev.db")
-    cursor = conn.cursor()
-    dt_now = datetime.now().strftime("%d/%m/%Y %H:%M")
-    cursor.execute(
-        """
-        INSERT INTO padroes_dpo (operacao, modulo, subbloco, titulo_padrao, conteudo_padrao, sugestoes_ia, dt_atualizacao)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(operacao, modulo, subbloco) DO UPDATE SET
-            titulo_padrao=excluded.titulo_padrao,
-            conteudo_padrao=excluded.conteudo_padrao,
-            sugestoes_ia=excluded.sugestoes_ia,
-            dt_atualizacao=excluded.dt_atualizacao
-        """,
-        (operacao, modulo, subbloco, titulo, conteudo, sugestoes, dt_now),
-    )
-    conn.commit()
-    conn.close()
-
-def gerar_sugestao_ia_dpo(modulo, subbloco, conteudo_atual):
-    recomendações = [
-        f"📌 **Adequação ao Pilar DPO ({modulo} - {subbloco})**:",
-        "- **Matriz RACI**: Explicite os papéis do Executor, Aprovador, Consultado e Informado.",
-        "- **Rotina de Audit**: Definir verificação semanal pelo líder de processo.",
-        "- **Conexão KPI**: Associar este padrão diretamente aos resultados auditados no DPO.",
-        "- **Segurança em Primeiro Lugar**: Incluir checklist de EPIs e análise de riscos operacionais.",
-    ]
-    if len(conteudo_atual.strip()) < 50:
-        recomendações.append("⚠️ **Alerta DPO**: O texto atual está curto. Adicione detalhamento passo a passo para evitar falhas operacionais.")
-    return "\n".join(recomendações)
-
-def render_gerenciador_padroes_dpo(operacao, modulo, subbloco):
-    st.markdown(f"### 📋 Padrão Operacional DPO ({subbloco})")
-    padrao = carregar_padrao_dpo(operacao, modulo, subbloco)
-    tit_def = padrao["titulo"] if padrao else f"Padrão de Execução DPO - {subbloco}"
-    cont_def = padrao["conteudo"] if padrao else "Descreva aqui o procedimento operacional padrão no formato DPO Ambev..."
-    sug_def = padrao["sugestoes"] if padrao else ""
-
-    if padrao and padrao.get("dt"):
-        st.caption(f"🕒 **Última Atualização:** {padrao['dt']}")
-
-    tab_p1, tab_p2 = st.tabs(["📝 Visualizar & Editar Padrão", "🤖 Consultoria e Sugestões da IA DPO"])
-    with tab_p1:
-        with st.form(f"form_padrao_{modulo}_{subbloco}"):
-            tit_input = st.text_input("Título do Padrão:", value=tit_def)
-            cont_input = st.text_area("Conteúdo do Padrão Operacional (Editável):", value=cont_def, height=250)
-            file_padrao = st.file_uploader("Anexar/Importar Documento do Padrão (.docx, .xlsx, .csv, .txt):", type=["docx", "doc", "xlsx", "xls", "txt", "csv"])
-            if file_padrao is not None:
-                fname = str(file_padrao.name).lower()
-                try:
-                    if fname.endswith(".docx") or fname.endswith(".doc"):
-                        cont_input = read_word_file(file_padrao)
-                        st.info("Conteúdo extraído do documento Word com sucesso!")
-                    elif fname.endswith(".xlsx") or fname.endswith(".xls"):
-                        df_imp = pd.read_excel(file_padrao)
-                        cont_input = df_imp.to_string(index=False)
-                        st.info("Conteúdo extraído da planilha Excel com sucesso!")
-                    else:
-                        cont_input = file_padrao.read().decode("utf-8")
-                        st.info("Conteúdo importado do arquivo de texto com sucesso!")
-                except Exception as ex:
-                    st.error(f"Erro ao processar o arquivo: {ex}")
-
-            c_s1, c_s2 = st.columns(2)
-            salvar_btn = c_s1.form_submit_button("💾 Salvar Padrão Atualizado")
-            pedir_ia = c_s2.form_submit_button("🤖 Analisar e Gerar Sugestões com IA")
-
-            if salvar_btn:
-                salvar_padrao_dpo(operacao, modulo, subbloco, tit_input, cont_input, sug_def)
-                st.success("Padrão DPO salvo com sucesso!")
-                st.rerun()
-
-            if pedir_ia:
-                sug_gerada = gerar_sugestao_ia_dpo(modulo, subbloco, cont_input)
-                salvar_padrao_dpo(operacao, modulo, subbloco, tit_input, cont_input, sug_gerada)
-                st.success("Sugestões DPO geradas pela IA!")
-                st.rerun()
-
-    with tab_p2:
-        if sug_def:
-            st.info(sug_def)
-        else:
-            st.caption("Clique em 'Analisar e Gerar Sugestões com IA' no formulário para obter diagnósticos da norma DPO.")
-
-def salvar_layout_imagem(operacao, nome_area, file_uploader_obj):
-    if file_uploader_obj is not None:
-        file_bytes = file_uploader_obj.read()
-        nome_arq = file_uploader_obj.name
-        tipo_arq = file_uploader_obj.type
-        dt_now = datetime.now().strftime("%d/%m/%Y %H:%M")
-        conn = sqlite3.connect("puxada_ambev.db")
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            INSERT INTO layout_armazem (operacao, nome_area, nome_arquivo, tipo_arquivo, dados_blob, dt_atualizacao)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (operacao, nome_area, nome_arq, tipo_arq, file_bytes, dt_now),
-        )
-        conn.commit()
-        conn.close()
-        return True
-    return False
-
-def carregar_layouts_armazem(operacao):
-    conn = sqlite3.connect("puxada_ambev.db")
-    df = pd.read_sql_query(f"SELECT id, nome_area, nome_arquivo, tipo_arquivo, dados_blob, dt_atualizacao FROM layout_armazem WHERE operacao='{operacao}' ORDER BY id DESC", conn)
-    conn.close()
-    return df
-
-def deletar_layout_armazem(layout_id):
-    conn = sqlite3.connect("puxada_ambev.db")
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM layout_armazem WHERE id=?", (layout_id,))
-    conn.commit()
-    conn.close()
-
-def render_gestao_layouts_armazem(operacao):
-    st.markdown("### 🗺️ Cadastro e Anexo de Layouts por Área do Armazém")
-    st.caption("Cadastre novas áreas do armazém e anexe múltiplos esquemas/plantas em formato de imagem.")
-    with st.expander("➕ Cadastrar / Anexar Novo Layout de Área", expanded=True):
-        with st.form("form_novo_layout"):
-            c_a1, c_a2 = st.columns([1, 1])
-            nome_area_input = c_a1.text_input("Nome / Identificação da Área:", placeholder="Ex: Área de Picking, Pulmão 01, Vasilhame, Pátio")
-            img_layout = c_a2.file_uploader("Selecione a Imagem do Layout:", type=["png", "jpg", "jpeg", "webp"])
-            btn_salvar_layout = st.form_submit_button("🖼️ Salvar e Anexar Layout")
-
-            if btn_salvar_layout:
-                if not nome_area_input.strip():
-                    st.error("Por favor, preencha o nome da área antes de salvar.")
-                elif img_layout is None:
-                    st.error("Por favor, selecione um arquivo de imagem.")
-                else:
-                    salvar_layout_imagem(operacao, nome_area_input.strip(), img_layout)
-                    st.success(f"Layout da área **{nome_area_input}** anexado com sucesso!")
-                    st.rerun()
-
-    st.divider()
-    st.markdown("### 🖼️ Visualização dos Layouts Cadastrados")
-    df_layouts = carregar_layouts_armazem(operacao)
-
-    if not df_layouts.empty:
-        areas_unicas = sorted(df_layouts["nome_area"].unique().tolist())
-        filtro_area = st.selectbox("Filtrar por Área do Armazém:", ["TODAS AS ÁREAS"] + areas_unicas)
-        df_exibir = df_layouts if filtro_area == "TODAS AS ÁREAS" else df_layouts[df_layouts["nome_area"] == filtro_area]
-
-        cols_grid = st.columns(2)
-        for idx, row in df_exibir.reset_index(drop=True).iterrows():
-            col_target = cols_grid[idx % 2]
-            with col_target:
-                with st.container():
-                    st.markdown(f"#### 📍 Área: {row['nome_area']}")
-                    st.caption(f"📁 **Arquivo:** {row['nome_arquivo']} | 🕒 {row['dt_atualizacao']}")
-                    try:
-                        st.image(row["dados_blob"], caption=f"{row['nome_area']} - {row['nome_arquivo']}", use_column_width=True)
-                    except Exception as e:
-                        st.error(f"Não foi possível renderizar a imagem: {e}")
-                    if st.button(f"🗑️ Excluir Layout #{row['id']}", key=f"del_lay_{row['id']}"):
-                        deletar_layout_armazem(row["id"])
-                        st.warning("Layout removido com sucesso!")
-                        st.rerun()
-                st.divider()
-    else:
-        st.info("ℹ️ Nenhum layout cadastrado para esta unidade. Utilize o formulário acima para anexar as plantas do armazém.")
-
+# 4. Função Principal de Gestão de Ressuprimento (Ajustada com as colunas exatas)
 def render_gestao_ressuprimento(operacao):
-    st.subheader("📈 Gestão de Ressuprimento & Acompanhamento de Cestas")
+    st.subheader("📈 Gestão de Ressuprimento & Acompanhamento de Puxada")
+    
+    # Mapeamento unificado para Bahia (Barreiras + São Félix)
     mapa_op_sistema = {
         "Lima Rio Verde": ["Lima - Rio Verde", "Rio Verde", "Lima Rio Verde"],
         "Lima Barreiras": ["Lima Bahia", "Barreiras", "Lima Barreiras"],
         "Lima São Félix": ["Lima Bahia Samavi", "Samavi", "São Félix", "Lima São Félix"],
+        "Bahia": ["Lima Bahia", "Barreiras", "Lima Barreiras", "Lima Bahia Samavi", "Samavi", "São Félix", "Lima São Félix"]
     }
+    
     nombres_filtro = mapa_op_sistema.get(operacao, [operacao])
-    nome_exibicao_op = operacao.replace("Lima ", "")
+    nome_exibicao_op = "Bahia (Barreiras + São Félix)" if operacao == "Bahia" else operacao.replace("Lima ", "")
 
-    tab_m1, tab_m2, tab_m3 = st.tabs([
-        "📊 Acompanhamento Mensal & Volume Total",
+    tab_m1, tab_m2, tab_m3, tab_m4 = st.tabs([
+        "📊 Acompanhamento Mensal & HL do Mês",
+        "📅 Acompanhamento de Puxada Dia a Dia",
         "⚙️ Configuração de Metas Mensais",
         "📁 Upload & Atualização da Base Diária",
     ])
@@ -763,8 +495,9 @@ def render_gestao_ressuprimento(operacao):
         mes_ano_str = f"{['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'][mes_sel-1]}/{ano_sel}"
 
         conn = sqlite3.connect("puxada_ambev.db")
-        df_diario = pd.read_sql_query(f"SELECT * FROM gestao_ressuprimento_diario WHERE operacao IN ({','.join(['?']*len(nombres_filtro))}) AND strftime('%Y', data_registro)='{ano_sel}'", conn, params=nombres_filtro)
-        df_metas = pd.read_sql_query(f"SELECT * FROM metas_ressuprimento_mensal WHERE operacao IN ({','.join(['?']*len(nombres_filtro))}) AND ano={ano_sel} AND mes={mes_sel}", conn, params=nombres_filtro)
+        placeholders = ','.join(['?'] * len(nombres_filtro))
+        df_diario = pd.read_sql_query(f"SELECT * FROM gestao_ressuprimento_diario WHERE operacao IN ({placeholders}) AND strftime('%Y', data_registro)='{ano_sel}'", conn, params=nombres_filtro)
+        df_metas = pd.read_sql_query(f"SELECT * FROM metas_ressuprimento_mensal WHERE operacao IN ({placeholders}) AND ano={ano_sel} AND mes={mes_sel}", conn, params=nombres_filtro)
         conn.close()
 
         if not df_diario.empty:
@@ -773,43 +506,53 @@ def render_gestao_ressuprimento(operacao):
             dias_preenchidos = df_diario_mes["data_dt"].dt.date.nunique()
             dias_no_mes = 31 if mes_sel in [1, 3, 5, 7, 8, 10, 12] else (30 if mes_sel in [4, 6, 9, 11] else (29 if (ano_sel % 4 == 0 and (ano_sel % 100 != 0 or ano_sel % 400 == 0)) else 28))
 
+            # Soma da Coluna C (volume_sellin_hl) para descobrir o HL do mês por cesta/indicador
             df_res_mes = df_diario_mes.groupby("cesta")["volume_sellin_hl"].sum().reset_index()
             df_comp = pd.merge(pd.DataFrame({"cesta": cestas_ordenadas}), df_res_mes, on="cesta", how="left").fillna(0)
             df_comp = pd.merge(df_comp, df_metas.groupby("cesta")["meta_volume_hl"].sum().reset_index(), on="cesta", how="left").fillna(0)
 
             fator_tend = (dias_no_mes / dias_preenchidos) if dias_preenchidos > 0 else 1.0
-            df_comp["INDICADOR"] = df_comp["cesta"].map(cestas_map)
+            df_comp["INDICADOR"] = df_comp["cesta"].map(cestas_map).fillna(df_comp["cesta"])
             df_comp["META"] = df_comp["meta_volume_hl"]
-            df_comp["REAL"] = df_comp["volume_sellin_hl"]
-            df_comp["TEND."] = df_comp["REAL"] * fator_tend
-            df_comp["ATING. REAL"] = df_comp.apply(lambda r: (r["REAL"] / r["META"] * 100) if r["META"] > 0 else 0.0, axis=1)
+            df_comp["HL REAL MÊS"] = df_comp["volume_sellin_hl"]
+            df_comp["TEND."] = df_comp["HL REAL MÊS"] * fator_tend
+            df_comp["ATING. REAL"] = df_comp.apply(lambda r: (r["HL REAL MÊS"] / r["META"] * 100) if r["META"] > 0 else 0.0, axis=1)
             df_comp["ATING. TEND."] = df_comp.apply(lambda r: (r["TEND."] / r["META"] * 100) if r["META"] > 0 else 0.0, axis=1)
 
             tot_meta = df_comp["META"].sum()
-            tot_real = df_comp["REAL"].sum()
+            tot_real = df_comp["HL REAL MÊS"].sum()
             tot_tend = df_comp["TEND."].sum()
             tot_ating_real = (tot_real / tot_meta * 100) if tot_meta > 0 else 0.0
             tot_ating_tend = (tot_tend / tot_meta * 100) if tot_meta > 0 else 0.0
 
             df_total = pd.DataFrame([{
-                "INDICADOR": f"Total {nome_exibicao_op}", "META": tot_meta, "REAL": tot_real, "TEND.": tot_tend, "ATING. REAL": tot_ating_real, "ATING. TEND.": tot_ating_tend
+                "INDICADOR": f"Total {nome_exibicao_op}", "META": tot_meta, "HL REAL MÊS": tot_real, "TEND.": tot_tend, "ATING. REAL": tot_ating_real, "ATING. TEND.": tot_ating_tend
             }])
 
             st.markdown(f"""
                 <div style="background-color: #0d2149; color: white; padding: 12px 20px; border-radius: 8px 8px 0 0; margin-bottom: 0px;">
                     <h3 style="margin:0; font-size: 20px; color: white;">🔵 {nome_exibicao_op}</h3>
-                    <span style="font-size: 13px; color: #b0c4de;">Detalhamento por indicador · {dias_preenchidos} dia(s) preenchido(s)</span>
+                    <span style="font-size: 13px; color: #b0c4de;">Somatório de HL do Mês (Coluna C) · {dias_preenchidos} dia(s) computado(s)</span>
                 </div>
             """, unsafe_allow_html=True)
 
-            df_final = pd.concat([df_comp[["INDICADOR", "META", "REAL", "TEND.", "ATING. REAL", "ATING. TEND."]], df_total], ignore_index=True)
+            df_final = pd.concat([df_comp[["INDICADOR", "META", "HL REAL MÊS", "TEND.", "ATING. REAL", "ATING. TEND."]], df_total], ignore_index=True)
 
-            format_dict = {"META": "{:,.0f}", "REAL": "{:,.2f}", "TEND.": "{:,.2f}", "ATING. REAL": "{:.1f}%", "ATING. TEND.": "{:.1f}%"}
+            format_dict = {"META": "{:,.2f}", "HL REAL MÊS": "{:,.2f}", "TEND.": "{:,.2f}", "ATING. REAL": "{:.1f}%", "ATING. TEND.": "{:.1f}%"}
             st.dataframe(df_final.style.format(format_dict), use_container_width=True, height=(len(df_final) + 1) * 38 + 5)
         else:
-            st.info(f"ℹ️ Nenhum dado diário encontrado para **{nome_exibicao_op}** neste mês ({mes_ano_str}). Faça o upload do relatório na aba 'Upload & Atualização'.")
+            st.info(f"ℹ️ Nenhum dado diário encontrado para **{nome_exibicao_op}** neste mês ({mes_ano_str}).")
 
     with tab_m2:
+        st.markdown(f"### 📅 Acompanhamento de Puxada Dia a Dia ({nome_exibicao_op})")
+        if not df_diario.empty:
+            df_diario["Indicador_Amigavel"] = df_diario["cesta"].map(cestas_map).fillna(df_diario["cesta"])
+            df_piv_dia = df_diario.pivot_table(index="Indicador_Amigavel", columns="data_registro", values="volume_sellin_hl", aggfunc="sum").fillna(0)
+            st.dataframe(df_piv_dia.style.format("{:,.2f}"), use_container_width=True)
+        else:
+            st.info("ℹ️ Sem registros diários para montar a tabela dia a dia.")
+
+    with tab_m3:
         st.markdown(f"### 🎯 Cadastrar / Ajustar Metas Mensais ({nome_exibicao_op})")
         c_m1, c_m2 = st.columns(2)
         ano_meta = c_m1.number_input("Ano da Meta:", min_value=2024, max_value=2030, value=datetime.now().year, key="ano_meta_key")
@@ -817,9 +560,9 @@ def render_gestao_ressuprimento(operacao):
         mes_ano_meta_str = f"{['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'][mes_meta-1]}/{ano_meta}"
 
         conn = sqlite3.connect("puxada_ambev.db")
-        df_exist_metas = pd.read_sql_query(f"SELECT cesta, meta_volume_hl FROM metas_ressuprimento_mensal WHERE operacao IN ({','.join(['?']*len(nombres_filtro))}) AND ano={ano_meta} AND mes={mes_meta}", conn, params=nombres_filtro)
+        df_exist_metas = pd.read_sql_query(f"SELECT cesta, meta_volume_hl FROM metas_ressuprimento_mensal WHERE operacao IN ({placeholders}) AND ano={ano_meta} AND mes={mes_meta}", conn, params=nombres_filtro)
         conn.close()
-        dict_metas_exist = dict(zip(df_exist_metas["cesta"], df_exist_metas["meta_volume_hl"])) if not df_exist_metas.empty else {}
+        dict_metas_exist = df_exist_metas.groupby("cesta")["meta_volume_hl"].sum().to_dict() if not df_exist_metas.empty else {}
 
         with st.form("form_cad_metas"):
             st.markdown(f"**Metas em HL para {mes_ano_meta_str} - {nome_exibicao_op}:**")
@@ -833,6 +576,7 @@ def render_gestao_ressuprimento(operacao):
                 conn = sqlite3.connect("puxada_ambev.db")
                 cursor = conn.cursor()
                 dt_now = datetime.now().strftime("%d/%m/%Y %H:%M")
+                op_para_salvar = operacao if operacao != "Bahia" else "Lima Barreiras"
                 for cst, m_val in input_metas.items():
                     cursor.execute(
                         """
@@ -841,19 +585,22 @@ def render_gestao_ressuprimento(operacao):
                         ON CONFLICT(operacao, ano, mes, cesta) DO UPDATE SET
                             meta_volume_hl=excluded.meta_volume_hl, dt_atualizacao=excluded.dt_atualizacao
                         """,
-                        (operacao, ano_meta, mes_meta, mes_ano_meta_str, cst, m_val, dt_now),
+                        (op_para_salvar, ano_meta, mes_meta, mes_ano_meta_str, cst, m_val, dt_now),
                     )
                 conn.commit()
                 conn.close()
                 st.success(f"Metas de {mes_ano_meta_str} salvas com sucesso para {nome_exibicao_op}!")
                 st.rerun()
 
-    with tab_m3:
-        st.markdown("### 📁 Upload do Relatório Diário de Ressuprimento")
+    with tab_m4:
+        st.markdown("### 📁 Upload do Relatório Diário de Puxada / Ressuprimento")
+        st.caption("Certifique-se de que o arquivo possui: **Coluna A** (Operação), **Coluna C** (HL Puxado), **Coluna E** (Indicador) e **Coluna F** (Data).")
         f_ress_daily = st.file_uploader("Selecione o arquivo de relatório diário (.xlsx, .xls, .csv):", type=["xlsx", "xls", "csv"], key="up_ress_daily")
         if f_ress_daily is not None and st.button("🚀 Processar e Atualizar Base de Dados"):
             try:
                 df_up = robust_read_file(f_ress_daily)
+                
+                # Mapeamento estrito pelas colunas indicadas: A(0), C(2), E(4), F(5)
                 col_op = df_up.columns[0]
                 col_sellin = df_up.columns[2]
                 col_cesta = df_up.columns[4]
@@ -866,9 +613,9 @@ def render_gestao_ressuprimento(operacao):
 
                 for _, r in df_up.dropna(subset=[col_cesta, col_data]).iterrows():
                     raw_op = str(r[col_op]).strip() if pd.notna(r[col_op]) else operacao
-                    if "Samavi" in raw_op:
+                    if "Samavi" in raw_op or "São Félix" in raw_op:
                         op_salvar = "Lima Bahia Samavi"
-                    elif "Lima Bahia" in raw_op:
+                    elif "Barreiras" in raw_op or "Lima Bahia" in raw_op:
                         op_salvar = "Lima Bahia"
                     elif "Rio Verde" in raw_op:
                         op_salvar = "Lima - Rio Verde"
@@ -895,10 +642,10 @@ def render_gestao_ressuprimento(operacao):
 
                 conn.commit()
                 conn.close()
-                st.success(f"Base de dados atualizada! **{registros_salvos}** registros diários sincronizados.")
+                st.success(f"Base atualizada com sucesso! **{registros_salvos}** registros sincronizados.")
                 st.rerun()
             except Exception as e:
-                st.error(f"Erro ao processar o arquivo: {e}")
+                st.error(f"Erro ao processar o arquivo nas colunas especificadas: {e}")
 
 # Controle de Pilha de Navegação
 if "nav_stack" not in st.session_state:
@@ -922,7 +669,7 @@ def render_estoque_dia(unidade):
     st.subheader("📱 Portal do RN - Consulta Comercial de Vendas")
     df = carregar_estoque_consolidado(unidade)
     if df is not None and not df.empty:
-        st.caption(f"🕒 **Última Atualização:** {df['dt_atualizacao'].iloc[0]}")
+        st.caption(f"🕒 **Última Atualização:** {df['dt_atualizacao'].max()}")
         def get_status(doi, disp):
             if disp == 0: return "🔴 Stock Out (Zerado)"
             elif doi < 3.0: return "🟡 Stock Low (Baixo)"
@@ -1049,13 +796,11 @@ else:
         sub_ress = st.tabs([
             "📁 Cadastros & Atualização de Bases",
             "📊 Gestão de Estoque",
-            "🛒 Sugestão de Compra (Paletes)",
-            "📅 Agendamento de Pedidos",
-            "📈 Gestão Ressuprimento (Cestas & Metas)",
+            "📈 Gestão Ressuprimento (Cestas & Puxada)",
         ])
         with sub_ress[0]:
             st.markdown("### Cadastros e Atualização das Bases Ambev")
-            c1, c2, c3, c4 = st.columns(4)
+            c1, c2, c3 = st.columns(3)
             with c1:
                 f_01 = st.file_uploader("Upload 01.11", type=["xlsx", "xls", "docx", "csv"], key="up_01")
                 if f_01 and st.button("Salvar 01.11"): salvar_base_01_11(f_01); st.success("Base 01.11 salva!")
@@ -1064,30 +809,15 @@ else:
                 if f_lin and st.button("Salvar Linear"): salvar_base_linear(f_lin); st.success("Base Linear salva!")
             with c3:
                 f_02 = st.file_uploader("Upload 02.03.04", type=["xlsx", "xls", "docx", "csv"], key="up_02")
-                if f_02 and st.button("Atualizar Estoque do Dia"): salvar_base_estoque_02(f_02, unidade); st.success("Estoque Atualizado!")
-            with c4:
-                f_ped = st.file_uploader("Upload Pedidos Marcados", type=["xlsx", "xls", "docx", "csv"], key="up_ped_d012")
-                if f_ped and st.button("Salvar Pedidos Marcados"): salvar_pedidos_marcados(f_ped, unidade); st.success("Pedidos Atualizados!")
+                if f_02 and st.button("Atualizar Estoque do Dia"): salvar_base_estoque_02(f_02, unidade if unidade != "Bahia" else "Lima Barreiras"); st.success("Estoque Atualizado!")
         with sub_ress[1]:
             render_estoque_dia(unidade)
-        with sub_ress[4]:
+        with sub_ress[2]:
             render_gestao_ressuprimento(unidade)
-
-    elif "Armazém" in dept_atual:
-        st.subheader("4 - ARMAZÉM REVENDA - GESTÃO & BOOK DPO AMBEV")
-        df_est_saude = carregar_estoque_consolidado(unidade)
-        p_saude, k_ok, k_rup, k_exc = calcular_saude_estoque_dpo(df_est_saude)
-        s1, s2, s3, s4 = st.columns(4)
-        s1.metric("🏥 Saúde do Estoque DPO", f"{p_saude}%")
-        s2.metric("🟢 SKUs Saudáveis", f"{k_ok} SKUs")
-        s3.metric("🔴 SKUs Ruptura", f"{k_rup} SKUs")
-        s4.metric("🟡 SKUs Excesso", f"{k_exc} SKUs")
-        st.divider()
-        render_gerenciador_padroes_dpo(unidade, "Armazém", "1.1 - Otimização do Layout")
 
     elif "Relatórios" in dept_atual:
         st.subheader("Base de Dados Completa para Download")
-        tabela = st.selectbox("Escolha a tabela:", ["base_01_11", "base_linear", "base_estoque_02", "pedidos_marcados", "cotacoes_frete"])
+        tabela = st.selectbox("Escolha a tabela:", ["base_01_11", "base_linear", "base_estoque_02", "pedidos_marcados", "cotacoes_frete", "gestao_ressuprimento_diario"])
         conn = sqlite3.connect("puxada_ambev.db")
         df = pd.read_sql_query(f"SELECT * FROM {tabela}", conn)
         conn.close()
