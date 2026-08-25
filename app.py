@@ -334,10 +334,8 @@ def formatar_br(val):
         if pd.isna(val):
             return "0,00"
         val_float = float(val)
-        # Formata com separador de milhar ponto e decimal vírgula
         s_base = f"{val_float:,.2f}"
         s_base = s_base.replace(",", "X").replace(".", ",").replace("X", ".")
-        # Se for inteiro exato, pode remover os centavos se preferir, ou manter limpo
         if s_base.endswith(",00"):
             s_base = s_base[:-3]
         return s_base
@@ -1100,7 +1098,6 @@ def render_gestao_ressuprimento(operacao):
             "Dezembro",
         ]
         
-        # AJUSTE: Múltipla seleção de meses conforme solicitado
         meses_selecionados = c_f2.multiselect(
             "Selecione os Meses de Análise:",
             options=list(range(1, 13)),
@@ -1198,18 +1195,17 @@ def render_gestao_ressuprimento(operacao):
                 axis=1,
             )
 
-            tot_meta = df_comp["META"].sum()
-            tot_real = df_comp["REAL"].sum()
-            tot_tend = df_comp["TEND."].sum()
-            tot_ating_real = (
-                (tot_real / tot_meta * 100) if tot_meta > 0 else 0.0
-            )
-            tot_ating_tend = (
-                (tot_tend / tot_meta * 100) if tot_meta > 0 else 0.0
-            )
+            # AJUSTE: O total agora soma rigorosamente apenas Cerveja e Nab
+            df_cerveja_nab = df_comp[df_comp["INDICADOR"].isin(["Cerveja", "Nab"])]
+            tot_meta = df_cerveja_nab["META"].sum()
+            tot_real = df_cerveja_nab["REAL"].sum()
+            tot_tend = df_cerveja_nab["TEND."].sum()
+            
+            tot_ating_real = (tot_real / tot_meta * 100) if tot_meta > 0 else 0.0
+            tot_ating_tend = (tot_tend / tot_meta * 100) if tot_meta > 0 else 0.0
 
             df_total = pd.DataFrame([{
-                "INDICADOR": f"Total {nome_exibicao_op}",
+                "INDICADOR": f"Total {nome_exibicao_op} (Cerveja + Nab)",
                 "META": tot_meta,
                 "REAL": tot_real,
                 "TEND.": tot_tend,
@@ -1222,7 +1218,7 @@ def render_gestao_ressuprimento(operacao):
                 f"""
                 <div style="background-color: #0d2149; color: white; padding: 12px 20px; border-radius: 8px 8px 0 0; margin-bottom: 0px;">
                     <h3 style="margin:0; font-size: 20px; color: white;">🔵 {nome_exibicao_op}</h3>
-                    <span style="font-size: 13px; color: #b0c4de;">Somatório de HL do Mês (Coluna C) · Meses: {meses_str} · {dias_preenchidos} dia(s) computado(s)</span>
+                    <span style="font-size: 13px; color: #b0c4de;">Somatório de HL do Mês · Meses: {meses_str} · {dias_preenchidos} dia(s) computado(s)</span>
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -1240,13 +1236,24 @@ def render_gestao_ressuprimento(operacao):
                 df_total,
             ], ignore_index=True)
 
-            # AJUSTE: Formatação visual no padrão brasileiro com ponto de milhar (ex: 25.011)
+            # AJUSTE: Função condicional para aplicar ícones visuais (🟢 Batendo / 🔴 Não batendo)
+            def format_atingimento_com_condicional(val):
+                try:
+                    v = float(val)
+                    s_val = f"{v:.1f}%".replace(".", ",")
+                    if v >= 100.0:
+                        return f"🟢 {s_val} (Batendo)"
+                    else:
+                        return f"🔴 {s_val} (Abaixo)"
+                except Exception:
+                    return val
+
             df_view = df_final.copy()
             df_view["META"] = df_view["META"].apply(formatar_br)
             df_view["REAL"] = df_view["REAL"].apply(formatar_br)
             df_view["TEND."] = df_view["TEND."].apply(formatar_br)
-            df_view["ATING. REAL"] = df_view["ATING. REAL"].apply(lambda x: f"{x:.1f}%".replace(".", ","))
-            df_view["ATING. TEND."] = df_view["ATING. TEND."].apply(lambda x: f"{x:.1f}%".replace(".", ","))
+            df_view["ATING. REAL"] = df_view["ATING. REAL"].apply(format_atingimento_com_condicional)
+            df_view["ATING. TEND."] = df_view["ATING. TEND."].apply(format_atingimento_com_condicional)
 
             st.dataframe(
                 df_view,
@@ -1944,7 +1951,6 @@ else:
                 else:
                     df_sug_disp = df_sug_compra
 
-                # Formatação brasileira para exibição
                 df_view_sug = df_sug_disp[cols_sug].copy()
                 df_view_sug["Disp"] = df_view_sug["Disp"].apply(formatar_br)
                 df_view_sug["Total_Puxada"] = df_view_sug["Total_Puxada"].apply(formatar_br)
