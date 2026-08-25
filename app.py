@@ -1030,7 +1030,6 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
     )
 
     mapa_op_sistema = {
-        "Lima Rio Verde": ["Lima - Rio Verde", "Rio Verde", "Lima Rio Verde"],
         "Lima Barreiras": ["Lima Bahia", "Barreiras", "Lima Barreiras"],
         "Lima São Félix": [
             "Lima Bahia Samavi",
@@ -1041,11 +1040,11 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
         "Bahia": [
             "Lima Barreiras",
             "Lima São Félix",
-            "Lima Bahia",
-            "Lima Bahia Samavi",
             "Barreiras",
             "Samavi",
             "São Félix",
+            "Lima Bahia",
+            "Lima Bahia Samavi",
         ],
     }
 
@@ -1056,30 +1055,29 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
         else operacao.replace("Lima ", "")
     )
 
-    # Se estiver no modo estático/link direto, oculta os botões de link e de configuração/upload para restringir a visualização
     if not modo_estatico:
         st.markdown("##### 🔗 Links de Acesso Direto (Visualização Estática / Sem Atualização)")
         st.caption("Clique nos botões abaixo para abrir a visualização direta e somente leitura de cada operação:")
         
         col_btn1, col_btn2, col_btn3 = st.columns(3)
         
-        # Rio Verde removido dos links de acesso rápido, Bahia configurada estritamente para Barreiras + São Félix
         col_btn1.link_button("🔗 Barreiras", "?visualizacao=ressuprimento&op=Lima+Barreiras", use_container_width=True)
         col_btn2.link_button("🔗 São Félix", "?visualizacao=ressuprimento&op=Lima+S%C3%A3o+F%C3%élix", use_container_width=True)
         col_btn3.link_button("🔗 Bahia (Barreiras + São Félix)", "?visualizacao=ressuprimento&op=Bahia", use_container_width=True)
 
         st.divider()
 
-        tab_m1, tab_m2, tab_m3 = st.tabs([
+        tab_m1, tab_m2, tab_m3, tab_m4 = st.tabs([
             "📊 Acompanhamento Mensal & Volume Total",
+            "📅 Carregamento Dia a Dia",
             "⚙️ Configuração de Metas Mensais",
             "📁 Upload & Atualização da Base Diária",
         ])
     else:
-        # Se for visualização estática via link, mostra apenas as abas de acompanhamento ou exibe direto o painel analítico
         tab_m1 = st.container()
-        tab_m2 = None
+        tab_m2 = st.container()
         tab_m3 = None
+        tab_m4 = None
 
     cestas_map = {
         "CATEGORIA_AGRUPADO - CERVEJA": "Cerveja",
@@ -1101,21 +1099,12 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
             min_value=2024,
             max_value=2030,
             value=datetime.now().year,
+            key="ano_acompanhamento",
         )
 
         meses_nomes = [
-            "Janeiro",
-            "Fevereiro",
-            "Março",
-            "Abril",
-            "Maio",
-            "Junho",
-            "Julho",
-            "Agosto",
-            "Setembro",
-            "Outubro",
-            "Novembro",
-            "Dezembro",
+            "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+            "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
         ]
         
         meses_selecionados = c_f2.multiselect(
@@ -1123,6 +1112,7 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
             options=list(range(1, 13)),
             format_func=lambda x: meses_nomes[x - 1],
             default=[datetime.now().month],
+            key="meses_acompanhamento",
         )
 
         conn = sqlite3.connect("puxada_ambev.db")
@@ -1294,13 +1284,100 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
                 f"ℹ️ Verifique se há dados diários cadastrados para **{nome_exibicao_op}** no ano de {ano_sel}."
             )
 
+    # Bloco Carregamento Dia a Dia
+    def bloco_carregamento_dia_a_dia():
+        st.markdown(f"### 📅 Carregamento Dia a Dia - {nome_exibicao_op}")
+        st.caption("Selecione o ano e o mês para visualizar o volume diário detalhado por indicador (em HL).")
+
+        c_d1, c_d2 = st.columns(2)
+        ano_dia = c_d1.number_input(
+            "Ano de Análise:",
+            min_value=2024,
+            max_value=2030,
+            value=datetime.now().year,
+            key="ano_dia_a_dia",
+        )
+
+        meses_nomes_lista = [
+            "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+            "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
+        ]
+        mes_dia = c_d2.selectbox(
+            "Mês de Análise:",
+            list(range(1, 13)),
+            format_func=lambda x: meses_nomes_lista[x - 1],
+            index=datetime.now().month - 1,
+            key="mes_dia_a_dia",
+        )
+
+        conn = sqlite3.connect("puxada_ambev.db")
+        placeholders_op = ",".join(["?"] * len(nombres_filtro))
+        query_dia = f"""
+            SELECT data_registro, cesta, SUM(volume_sellin_hl) as vol_hl
+            FROM gestao_ressuprimento_diario
+            WHERE operacao IN ({placeholders_op}) 
+              AND CAST(STRFTIME('%Y', data_registro) AS INTEGER) = ?
+              AND CAST(STRFTIME('%m', data_registro) AS INTEGER) = ?
+            GROUP BY data_registro, cesta
+        """
+        df_diario_bruto = pd.read_sql_query(
+            query_dia,
+            conn,
+            params=nombres_filtro + [ano_dia, mes_dia],
+        )
+        conn.close()
+
+        if not df_diario_bruto.empty:
+            df_diario_bruto["data_dt"] = pd.to_datetime(df_diario_bruto["data_registro"], errors="coerce")
+            df_diario_bruto["Dia"] = df_diario_bruto["data_dt"].dt.strftime("%d/%m/%Y")
+            df_diario_bruto["Indicador"] = df_diario_bruto["cesta"].map(cestas_map).fillna("Outros")
+
+            # Pivotar tabela para ter Dias nas linhas e Indicadores nas colunas
+            df_pivot = df_diario_bruto.pivot_table(
+                index=["data_dt", "Dia"],
+                columns="Indicador",
+                values="vol_hl",
+                aggfunc="sum"
+            ).reset_index()
+
+            df_pivot = df_pivot.sort_values("data_dt")
+            df_pivot = df_pivot.drop(columns=["data_dt"])
+            df_pivot = df_pivot.fillna(0.0)
+
+            # Adicionar coluna de Total Diário
+            cols_indicadores = [c for c in df_pivot.columns if c != "Dia"]
+            df_pivot["Total Dia (HL)"] = df_pivot[cols_indicadores].sum(axis=1)
+
+            # Formatar valores numéricos para padrão brasileiro
+            df_view_dia = df_pivot.copy()
+            for col in cols_indicadores + ["Total Dia (HL)"]:
+                df_view_dia[col] = df_view_dia[col].apply(formatar_br)
+
+            st.markdown(f"##### 📊 Detalhamento Diário - {meses_nomes_lista[mes_dia - 1]}/{ano_dia}")
+            st.dataframe(df_view_dia, use_container_width=True)
+
+            st.download_button(
+                "Exportar Carregamento Dia a Dia (.xlsx)",
+                data=gerar_excel(df_pivot),
+                file_name=f"Carregamento_Dia_a_Dia_{mes_dia:02d}_{ano_dia}_{operacao.replace(' ', '_')}.xlsx",
+                key="dl_dia_a_dia"
+            )
+        else:
+            st.info(f"ℹ️ Nenhum registro de carregamento diário encontrado para **{nome_exibicao_op}** em {meses_nomes_lista[mes_dia - 1]}/{ano_dia}.")
+
     if modo_estatico:
+        st.markdown("---")
         bloco_acompanhamento()
+        st.markdown("---")
+        bloco_carregamento_dia_a_dia()
     else:
         with tab_m1:
             bloco_acompanhamento()
 
         with tab_m2:
+            bloco_carregamento_dia_a_dia()
+
+        with tab_m3:
             st.markdown(
                 f"### 🎯 Cadastrar / Ajustar Metas Mensais ({nome_exibicao_op})"
             )
@@ -1391,7 +1468,7 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
                     )
                     st.rerun()
 
-        with tab_m3:
+        with tab_m4:
             st.markdown("### 📁 Upload do Relatório Diário de Ressuprimento")
             st.caption(
                 "Suba o arquivo consolidado contendo os volumes diários (.xlsx, .xls, .csv). O sistema mapeará rigorosamente a **Coluna A** (Operação), **Coluna C** (HL Puxado), **Coluna E** (Indicador) e **Coluna F** (Data)."
