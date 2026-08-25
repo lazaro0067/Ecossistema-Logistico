@@ -1030,6 +1030,7 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
     )
 
     mapa_op_sistema = {
+        "Lima Rio Verde": ["Lima Rio Verde", "Lima - Rio Verde", "Rio Verde"],
         "Lima Barreiras": ["Lima Bahia", "Barreiras", "Lima Barreiras"],
         "Lima São Félix": [
             "Lima Bahia Samavi",
@@ -1332,7 +1333,6 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
             df_diario_bruto["Dia"] = df_diario_bruto["data_dt"].dt.strftime("%d/%m/%Y")
             df_diario_bruto["Indicador"] = df_diario_bruto["cesta"].map(cestas_map).fillna("Outros")
 
-            # Pivotar tabela para ter Dias nas linhas e Indicadores nas colunas
             df_pivot = df_diario_bruto.pivot_table(
                 index=["data_dt", "Dia"],
                 columns="Indicador",
@@ -1344,11 +1344,9 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
             df_pivot = df_pivot.drop(columns=["data_dt"])
             df_pivot = df_pivot.fillna(0.0)
 
-            # Adicionar coluna de Total Diário
             cols_indicadores = [c for c in df_pivot.columns if c != "Dia"]
             df_pivot["Total Dia (HL)"] = df_pivot[cols_indicadores].sum(axis=1)
 
-            # Formatar valores numéricos para padrão brasileiro
             df_view_dia = df_pivot.copy()
             for col in cols_indicadores + ["Total Dia (HL)"]:
                 df_view_dia[col] = df_view_dia[col].apply(formatar_br)
