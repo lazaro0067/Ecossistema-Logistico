@@ -1099,7 +1099,7 @@ def render_gestao_ressuprimento(operacao):
         ]
         
         meses_selecionados = c_f2.multiselect(
-            "Selecione os Meses de Análise:",
+            "Selecione os Meses de Análise (vazio = Ano Inteiro):",
             options=list(range(1, 13)),
             format_func=lambda x: meses_nomes[x - 1],
             default=[datetime.now().month],
@@ -1119,10 +1119,15 @@ def render_gestao_ressuprimento(operacao):
         )
         conn.close()
 
-        if not df_diario.empty and meses_selecionados:
+        if not df_diario.empty:
             df_diario["data_dt"] = pd.to_datetime(
                 df_diario["data_registro"], errors="coerce"
             )
+            
+            # REQUISIÇÃO: Se nenhum mês for selecionado, traz o ano inteiro
+            if not meses_selecionados:
+                meses_selecionados = list(range(1, 13))
+
             df_diario_filtrado = df_diario[
                 df_diario["data_dt"].dt.month.isin(meses_selecionados)
             ]
@@ -1194,12 +1199,16 @@ def render_gestao_ressuprimento(operacao):
                 else 0.0,
                 axis=1,
             )
+            
+            # REQUISIÇÃO: Nova coluna "Pendência Período" (Meta - Real)
+            df_comp["PENDÊNCIA PERÍODO"] = df_comp["META"] - df_comp["REAL"]
 
-            # AJUSTE: O total agora soma rigorosamente apenas Cerveja e Nab
+            # REQUISIÇÃO: O total soma rigorosamente apenas Cerveja e Nab
             df_cerveja_nab = df_comp[df_comp["INDICADOR"].isin(["Cerveja", "Nab"])]
             tot_meta = df_cerveja_nab["META"].sum()
             tot_real = df_cerveja_nab["REAL"].sum()
             tot_tend = df_cerveja_nab["TEND."].sum()
+            tot_pend = tot_meta - tot_real
             
             tot_ating_real = (tot_real / tot_meta * 100) if tot_meta > 0 else 0.0
             tot_ating_tend = (tot_tend / tot_meta * 100) if tot_meta > 0 else 0.0
@@ -1211,6 +1220,7 @@ def render_gestao_ressuprimento(operacao):
                 "TEND.": tot_tend,
                 "ATING. REAL": tot_ating_real,
                 "ATING. TEND.": tot_ating_tend,
+                "PENDÊNCIA PERÍODO": tot_pend,
             }])
 
             meses_str = ", ".join([meses_nomes[m - 1] for m in meses_selecionados])
@@ -1232,11 +1242,11 @@ def render_gestao_ressuprimento(operacao):
                     "TEND.",
                     "ATING. REAL",
                     "ATING. TEND.",
+                    "PENDÊNCIA PERÍODO",
                 ]],
                 df_total,
             ], ignore_index=True)
 
-            # AJUSTE: Função condicional para aplicar ícones visuais (🟢 Batendo / 🔴 Não batendo)
             def format_atingimento_com_condicional(val):
                 try:
                     v = float(val)
@@ -1254,6 +1264,7 @@ def render_gestao_ressuprimento(operacao):
             df_view["TEND."] = df_view["TEND."].apply(formatar_br)
             df_view["ATING. REAL"] = df_view["ATING. REAL"].apply(format_atingimento_com_condicional)
             df_view["ATING. TEND."] = df_view["ATING. TEND."].apply(format_atingimento_com_condicional)
+            df_view["PENDÊNCIA PERÍODO"] = df_view["PENDÊNCIA PERÍODO"].apply(formatar_br)
 
             st.dataframe(
                 df_view,
@@ -1263,7 +1274,7 @@ def render_gestao_ressuprimento(operacao):
 
         else:
             st.info(
-                f"ℹ️ Selecione ao menos um mês ou verifique se há dados diários cadastrados para **{nome_exibicao_op}** no ano de {ano_sel}."
+                f"ℹ️ Verifique se há dados diários cadastrados para **{nome_exibicao_op}** no ano de {ano_sel}."
             )
 
     with tab_m2:
