@@ -1075,6 +1075,20 @@ def render_gestao_ressuprimento(operacao):
     cestas_ordenadas = list(cestas_map.keys())
 
     with tab_m1:
+        # Seção de Links de Acesso Direto Estático por Operação
+        st.markdown("##### 🔗 Links de Acesso Direto (Visualização Estática / Sem Atualização)")
+        st.caption("Copie o link específico abaixo para compartilhar a visualização desta operação sem permissão de edição:")
+        
+        base_url = st.get_option("server.baseUrlPath") or ""
+        # Montar URLs amigáveis para visualização direta por operação
+        col_lnk1, col_lnk2, col_lnk3, col_lnk4 = st.columns(4)
+        col_lnk1.markdown(f"**Barreiras:**\n`?visualizacao=ressuprimento&op=Lima+Barreiras`")
+        col_lnk2.markdown(f"**Rio Verde:**\n`?visualizacao=ressuprimento&op=Lima+Rio+Verde`")
+        col_lnk3.markdown(f"**São Félix:**\n`?visualizacao=ressuprimento&op=Lima+S%C3%A3o+F%C3%élix`")
+        col_lnk4.markdown(f"**Bahia (Consolidado):**\n`?visualizacao=ressuprimento&op=Bahia`")
+
+        st.divider()
+
         c_f1, c_f2 = st.columns(2)
         ano_sel = c_f1.number_input(
             "Ano de Análise:",
@@ -1464,14 +1478,29 @@ def go_back():
         st.session_state["nav_stack"].pop()
 
 
-# 6. Portal Comercial Direto (VISÃO MOBILE RN - ESTOQUE DIA)
+# 6. Portal Comercial Direto ou Visualização Estática por Operação via Parâmetro URL
 modo_comercial = False
+modo_visualizacao_estatica = False
+op_estatica = None
+
 if "modo" in st.query_params:
     val_modo = st.query_params["modo"]
     if isinstance(val_modo, list):
         modo_comercial = "comercial" in val_modo
     else:
         modo_comercial = val_modo == "comercial"
+
+if "visualizacao" in st.query_params:
+    val_vis = st.query_params["visualizacao"]
+    if isinstance(val_vis, list):
+        modo_visualizacao_estatica = "ressuprimento" in val_vis
+    else:
+        modo_visualizacao_estatica = val_vis == "ressuprimento"
+
+    if "op" in st.query_params:
+        op_estatica = st.query_params["op"]
+        if isinstance(op_estatica, list):
+            op_estatica = op_estatica[0]
 
 
 def render_estoque_dia(unidade):
@@ -1638,6 +1667,13 @@ if modo_comercial:
         "Selecione a Unidade Operacional:", OPERACOES_DISPONIVEIS
     )
     render_estoque_dia(unidade)
+    st.stop()
+
+if modo_visualizacao_estatica:
+    st.title("Grupo Lima - Visualização Estática (Acompanhamento de Ressuprimento)")
+    op_alvo = op_estatica if op_estatica else "Lima Barreiras"
+    st.info(f"🔒 **Modo Somente Leitura / Visualização Exclusiva** · Operação: **{op_alvo}**")
+    render_gestao_ressuprimento(op_alvo)
     st.stop()
 
 
@@ -2241,7 +2277,6 @@ else:
                 st.dataframe(df_arm_desc, use_container_width=True)
 
                 if st.button("🗑️ Excluir Agendamento de Descarga"):
-                    # Permite excluir por ID se necessário
                     id_exc = st.number_input("Digite o ID do agendamento para remover:", min_value=1, step=1)
                     if st.button("Confirmar Exclusão"):
                         conn = sqlite3.connect("puxada_ambev.db")
