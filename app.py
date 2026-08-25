@@ -227,6 +227,7 @@ def init_db():
     CREATE TABLE IF NOT EXISTS politica_estoque_base (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         operacao TEXT,
+        data_registro TEXT,
         cod_clean INTEGER,
         sku_original TEXT,
         tipo TEXT,
@@ -242,6 +243,11 @@ def init_db():
         pe_max_hl REAL,
         dt_atualizacao TEXT
     )""")
+
+    try:
+        cursor.execute("ALTER TABLE politica_estoque_base ADD COLUMN data_registro TEXT")
+    except Exception:
+        pass
 
     empresas = [
         ("Lima Rio Verde", "12.345.678/0001-90", "Rio Verde", "GO"),
@@ -412,6 +418,39 @@ def formatar_br(val):
         return str(val)
 
 
+def classificar_tipo_sku(desc_or_sku):
+    d = str(desc_or_sku).upper()
+    if (
+        "CERVEJA" in d
+        or "CHOPP" in d
+        or "BRAHMA" in d
+        or "SKOL" in d
+        or "BUDWEISER" in d
+        or "SPATEN" in d
+        or "CORONA" in d
+        or "BECK" in d
+        or "RET" in d
+        or "KEG" in d
+    ):
+        return "CERVEJA"
+    elif (
+        "REFRIGERANTE" in d
+        or "GUARANA" in d
+        or "PEPSI" in d
+        or "SUKITA" in d
+        or "H2O" in d
+        or "AGUA" in d
+        or "ENERGETICO" in d
+        or "TONICA" in d
+        or "NAB" in d
+    ):
+        return "NAB"
+    elif "MARKETPLACE" in d or "PIRACANJUBA" in d or "RED BULL" in d:
+        return "MARKETPLACE"
+    else:
+        return "OUTROS"
+
+
 def extract_ambev_brand(desc):
     d = str(desc).upper().strip()
     if d.startswith("BC ") or "BRAHMA" in d or d.startswith("BR "):
@@ -454,71 +493,6 @@ def highlight_curva_abc(val):
     elif val == "C":
         return "background-color: #f8d7da; color: #721c24; font-weight: bold;"
     return ""
-
-
-def processar_politica_estoque_upload(f_pol, operacao):
-    df_raw = robust_read_file(f_pol)
-    dt_now = datetime.now().strftime("%d/%m/%Y %H:%M")
-    conn = sqlite3.connect("puxada_ambev.db")
-    cursor = conn.cursor()
-
-    count = 0
-    for _, r in df_raw.iterrows():
-        try:
-            sku_str = str(r.iloc[2]).strip()
-            partes = sku_str.split("/")
-            if len(partes) >= 2:
-                sub_part = partes[1].strip()
-                cod_match = re.search(r"^\d+", sub_part)
-                cod_clean = int(cod_match.group()) if cod_match else 0
-            else:
-                cod_clean = 0
-
-            if cod_clean == 0:
-                continue
-
-            tipo = str(r.iloc[1]).strip()
-            cat = str(r.iloc[3]).strip()
-            est = parse_br_float(r.iloc[5])
-            dem = parse_br_float(r.iloc[6])
-            doi = parse_br_float(r.iloc[7])
-            pe_min_d = parse_br_float(r.iloc[8])
-            pe_obj_d = parse_br_float(r.iloc[9])
-            pe_max_d = parse_br_float(r.iloc[10])
-            pe_min_h = parse_br_float(r.iloc[11])
-            pe_obj_h = parse_br_float(r.iloc[12])
-            pe_max_h = parse_br_float(r.iloc[13])
-
-            cursor.execute(
-                """
-            INSERT INTO politica_estoque_base (operacao, cod_clean, sku_original, tipo, categoria, estoque, demanda, doi_atual, pe_min_dias, pe_obj_dias, pe_max_dias, pe_min_hl, pe_obj_hl, pe_max_hl, dt_atualizacao)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-                (
-                    operacao,
-                    cod_clean,
-                    sku_str,
-                    tipo,
-                    cat,
-                    est,
-                    dem,
-                    doi,
-                    pe_min_d,
-                    pe_obj_d,
-                    pe_max_d,
-                    pe_min_h,
-                    pe_obj_h,
-                    pe_max_h,
-                    dt_now,
-                ),
-            )
-            count += 1
-        except Exception:
-            continue
-
-    conn.commit()
-    conn.close()
-    return count
 
 
 def salvar_base_01_11(f_01):
@@ -753,6 +727,84 @@ def salvar_pedidos_marcados(f_pedidos, operacao):
 
     conn.commit()
     conn.close()
+
+
+def processar_politica_estoque_upload(f_pol, operacao):
+    df_raw = robust_read_file(f_pol)
+    dt_now = datetime.now().strftime("%d/%m/%Y %H:%M")
+    conn = sqlite3.connect("puxada_ambev.db")
+    cursor = conn.cursor()
+
+    count = 0
+    for _, r in df_raw.iterrows():
+        try:
+            raw_date = r.iloc[0]
+            if pd.notna(raw_date):
+                dt_parsed = pd.to_datetime(raw_date, errors="coerce")
+                date_str = (
+                    dt_parsed.strftime("%Y-%m-%d")
+                    if pd.notna(dt_parsed)
+                    else str(raw_date)[:10]
+                )
+            else:
+                date_str = datetime.now().strftime("%Y-%m-%d")
+
+            sku_str = str(r.iloc[2]).strip()
+            partes = sku_str.split("/")
+            if len(partes) >= 2:
+                sub_part = partes[1].strip()
+                cod_match = re.search(r"^\d+", sub_part)
+                cod_clean = int(cod_match.group()) if cod_match else 0
+            else:
+                cod_match = re.search(r"^\d+", sku_str)
+                cod_clean = int(cod_match.group()) if cod_match else 0
+
+            if cod_clean == 0:
+                continue
+
+            tipo_classificado = classificar_tipo_sku(sku_str)
+            cat = str(r.iloc[3]).strip() if pd.notna(r.iloc[3]) else "GERAL"
+            est = parse_br_float(r.iloc[5])
+            dem = parse_br_float(r.iloc[6])
+            doi = parse_br_float(r.iloc[7])
+            pe_min_d = parse_br_float(r.iloc[8])
+            pe_obj_d = parse_br_float(r.iloc[9])
+            pe_max_d = parse_br_float(r.iloc[10])
+            pe_min_h = parse_br_float(r.iloc[11])
+            pe_obj_h = parse_br_float(r.iloc[12])
+            pe_max_h = parse_br_float(r.iloc[13])
+
+            cursor.execute(
+                """
+            INSERT INTO politica_estoque_base (operacao, data_registro, cod_clean, sku_original, tipo, categoria, estoque, demanda, doi_atual, pe_min_dias, pe_obj_dias, pe_max_dias, pe_min_hl, pe_obj_hl, pe_max_hl, dt_atualizacao)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+                (
+                    operacao,
+                    date_str,
+                    cod_clean,
+                    sku_str,
+                    tipo_classificado,
+                    cat,
+                    est,
+                    dem,
+                    doi,
+                    pe_min_d,
+                    pe_obj_d,
+                    pe_max_d,
+                    pe_min_h,
+                    pe_obj_h,
+                    pe_max_h,
+                    dt_now,
+                ),
+            )
+            count += 1
+        except Exception:
+            continue
+
+    conn.commit()
+    conn.close()
+    return count
 
 
 def carregar_estoque_consolidado(operacao):
@@ -1507,13 +1559,13 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
                 f"ℹ️ Nenhum registro de carregamento diário encontrado para **{nome_exibicao_op}** em {meses_nomes_lista[mes_dia - 1]}/{ano_dia}."
             )
 
-    # Bloco Política de Estoque (Upload & Gestão)
+    # Bloco Política de Estoque com Calendário, Cards Interativos e Filtros
     def bloco_politica_estoque():
         st.markdown(
             "### 📦 Gestão de Política de Estoque & Upload de Dados Médios"
         )
         st.caption(
-            "Faça o upload do arquivo de estoque médio / política para atualizar a base de SKUs, extraindo rigorosamente o código limpo após a barra (coluna C)."
+            "Faça o upload da planilha de estoque médio / política para atualizar a base de SKUs com o código completo e datas."
         )
 
         with st.form("form_upload_politica_estoque"):
@@ -1536,36 +1588,46 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
                     st.error("Por favor, selecione um arquivo válido.")
 
         st.divider()
-        st.markdown("##### 🔍 Consulta de Política de Estoque Cadastrada")
 
         conn = sqlite3.connect("puxada_ambev.db")
         placeholders_op = ",".join(["?"] * len(nombres_filtro))
-        df_pol = pd.read_sql_query(
-            f"SELECT * FROM politica_estoque_base WHERE operacao IN ({placeholders_op})",
+        df_dates = pd.read_sql_query(
+            f"SELECT DISTINCT data_registro FROM politica_estoque_base WHERE operacao IN ({placeholders_op}) ORDER BY data_registro DESC",
             conn,
             params=nombres_filtro,
         )
         conn.close()
 
+        if not df_dates.empty and df_dates["data_registro"].dropna().count() > 0:
+            datas_disponiveis = [
+                datetime.strptime(str(d), "%Y-%m-%d").date()
+                for d in df_dates["data_registro"].dropna().tolist()
+                if str(d).strip() != ""
+            ]
+            datas_disponiveis = sorted(list(set(datas_disponiveis)), reverse=True)
+
+            c_cal1, c_cal2 = st.columns([2, 2])
+            data_selecionada = c_cal1.date_input(
+                "📅 Selecione a Data Desejada para Visualizar a Política:",
+                value=datas_disponiveis[0] if datas_disponiveis else datetime.now().date(),
+                min_value=min(datas_disponiveis) if datas_disponiveis else datetime.now().date(),
+                max_value=max(datas_disponiveis) if datas_disponiveis else datetime.now().date(),
+            )
+            data_str_sel = data_selecionada.strftime("%Y-%m-%d")
+        else:
+            data_str_sel = datetime.now().strftime("%Y-%m-%d")
+
+        conn = sqlite3.connect("puxada_ambev.db")
+        query_pol = f"""
+            SELECT * FROM politica_estoque_base 
+            WHERE operacao IN ({placeholders_op}) 
+              AND (data_registro = ? OR data_registro IS NULL)
+        """
+        df_pol = pd.read_sql_query(query_pol, conn, params=nombres_filtro + [data_str_sel])
+        conn.close()
+
         if not df_pol.empty:
-            tipos_disp = ["TODOS"] + sorted(
-                df_pol["tipo"].dropna().unique().tolist()
-            )
-            cats_disp = ["TODAS"] + sorted(
-                df_pol["categoria"].dropna().unique().tolist()
-            )
-
-            c_f1, c_f2 = st.columns(2)
-            filtro_tipo = c_f1.selectbox("Filtrar por Tipo:", tipos_disp)
-            filtro_cat = c_f2.selectbox("Filtrar por Categoria:", cats_disp)
-
-            df_view = df_pol.copy()
-            if filtro_tipo != "TODOS":
-                df_view = df_view[df_view["tipo"] == filtro_tipo]
-            if filtro_cat != "TODAS":
-                df_view = df_view[df_view["categoria"] == filtro_cat]
-
-            def avaliar_politica(row):
+            def classificar_status_pol(row):
                 doi, p_min, p_max = (
                     row["doi_atual"],
                     row["pe_min_dias"],
@@ -1578,7 +1640,86 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
                 else:
                     return "🟢 Dentro da Política"
 
-            df_view["Status Política"] = df_view.apply(avaliar_politica, axis=1)
+            def classificar_status_obj(row):
+                doi, p_obj = row["doi_atual"], row["pe_obj_dias"]
+                if abs(doi - p_obj) <= 2.0:
+                    return "Estoque Objetivo"
+                return "Fora da Política"
+
+            df_pol["Status Política"] = df_pol.apply(classificar_status_pol, axis=1)
+            df_pol["status_obj"] = df_pol.apply(classificar_status_obj, axis=1)
+
+            tot_produtos = len(df_pol)
+            abaixo_cnt = len(df_pol[df_pol["Status Política"] == "🔴 Abaixo da Política"])
+            acima_cnt = len(df_pol[df_pol["Status Política"] == "🔵 Acima da Política"])
+            dentro_cnt = len(df_pol[df_pol["Status Política"] == "🟢 Dentro da Política"])
+            obj_cnt = len(df_pol[df_pol["status_obj"] == "Estoque Objetivo"])
+
+            st.markdown(f"##### 📊 Cards de Indicadores de Política (Data: {data_selecionada.strftime('%d/%m/%Y')})")
+            c_card1, c_card2, c_card3, c_card4 = st.columns(4)
+            c_card1.metric("🎯 Estoque Objetivo", f"{obj_cnt} SKUs")
+            c_card2.metric("🟢 Dentro da Política", f"{dentro_cnt} SKUs")
+            c_card3.metric("🔴 Abaixo da Política", f"{abaixo_cnt} SKUs")
+            c_card4.metric("🔵 Acima da Política", f"{acima_cnt} SKUs")
+
+            st.markdown(
+                "##### 🎛️ Filtros Rápidos por Card (Clique para Filtrar)"
+            )
+            if "filtro_card_ativo" not in st.session_state:
+                st.session_state["filtro_card_ativo"] = "TODOS"
+
+            c_c1, c_c2, c_c3, c_c4, c_c5 = st.columns(5)
+            if c_c1.button(
+                f"📋 Todos\n({tot_produtos})", use_container_width=True
+            ):
+                st.session_state["filtro_card_ativo"] = "TODOS"
+            if c_c2.button(
+                f"🎯 Objetivo\n({obj_cnt})", use_container_width=True
+            ):
+                st.session_state["filtro_card_ativo"] = "Estoque Objetivo"
+            if c_c3.button(
+                f"🟢 Dentro\n({dentro_cnt})", use_container_width=True
+            ):
+                st.session_state["filtro_card_ativo"] = "🟢 Dentro da Política"
+            if c_c4.button(
+                f"🔴 Abaixo\n({abaixo_cnt})", use_container_width=True
+            ):
+                st.session_state["filtro_card_ativo"] = "🔴 Abaixo da Política"
+            if c_c5.button(
+                f"🔵 Acima\n({acima_cnt})", use_container_width=True
+            ):
+                st.session_state["filtro_card_ativo"] = "🔵 Acima da Política"
+
+            st.caption(
+                f"Filtro ativo no momento: **{st.session_state['filtro_card_ativo']}**"
+            )
+            st.divider()
+
+            tipos_disp = ["TODOS"] + sorted(
+                df_pol["tipo"].dropna().unique().tolist()
+            )
+            cats_disp = ["TODAS"] + sorted(
+                df_pol["categoria"].dropna().unique().tolist()
+            )
+
+            c_f1, c_f2 = st.columns(2)
+            filtro_tipo = c_f1.selectbox("Filtrar por Tipo:", tipos_disp)
+            filtro_cat = c_f2.selectbox("Filtrar por Categoria:", cats_disp)
+
+            df_view = df_pol.copy()
+            if st.session_state["filtro_card_ativo"] != "TODOS":
+                if st.session_state["filtro_card_ativo"] == "Estoque Objetivo":
+                    df_view = df_view[df_view["status_obj"] == "Estoque Objetivo"]
+                else:
+                    df_view = df_view[
+                        df_view["Status Política"]
+                        == st.session_state["filtro_card_ativo"]
+                    ]
+
+            if filtro_tipo != "TODOS":
+                df_view = df_view[df_view["tipo"] == filtro_tipo]
+            if filtro_cat != "TODAS":
+                df_view = df_view[df_view["categoria"] == filtro_cat]
 
             cols_show = [
                 "cod_clean",
@@ -1597,7 +1738,7 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
             st.dataframe(df_view[cols_show], use_container_width=True)
         else:
             st.info(
-                "Nenhum dado de política de estoque importado para esta unidade."
+                "Nenhum dado de política de estoque importado para a data selecionada."
             )
 
     if modo_estatico:
