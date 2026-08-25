@@ -254,7 +254,6 @@ def robust_read_file(file_obj):
                 file_obj.seek(0)
                 df = pd.read_excel(file_obj, header=h, engine="xlrd")
                 if df is not None and not df.empty and len(df.columns) > 1:
-                    # Remove colunas inteiramente vazias se houver
                     df = df.dropna(how="all", axis=1)
                     return df
             except Exception:
@@ -469,17 +468,35 @@ def salvar_base_01_11(f_01):
 def salvar_base_linear(f_lin):
     df_lin = robust_read_file(f_lin)
 
-    col_cod = [
-        c for c in df_lin.columns if "Cód" in str(c) or "COD" in str(c)
-    ][0]
-    col_vendas = [c for c in df_lin.columns if "Linear" in str(c)][0]
+    # Identificação flexível das colunas para evitar IndexError
+    cols_str = [str(c).strip().lower() for c in df_lin.columns]
+
+    col_cod = None
+    for i, c in enumerate(cols_str):
+        if "cód" in c or "cod" in c or "item" in c or "produto" in c:
+            col_cod = df_lin.columns[i]
+            break
+    if col_cod is None:
+        col_cod = df_lin.columns[0]
+
+    col_vendas = None
+    for i, c in enumerate(cols_str):
+        if "linear" in c or "venda" in c or "média" in c or "media" in c:
+            col_vendas = df_lin.columns[i]
+            break
+    if col_vendas is None:
+        col_vendas = (
+            df_lin.columns[1] if len(df_lin.columns) > 1 else df_lin.columns[0]
+        )
 
     df_lin["cod_clean"] = pd.to_numeric(df_lin[col_cod], errors="coerce")
-    df_lin["linear_vendas"] = pd.to_numeric(
-        df_lin[col_vendas], errors="coerce"
-    ).fillna(0)
-    df_lin["Tipo"] = df_lin.get("Tipo", pd.Series()).fillna("OUTROS")
-    df_lin["Categoria"] = df_lin.get("Categoria", pd.Series()).fillna("OUTROS")
+    df_lin["linear_vendas"] = df_lin[col_vendas].apply(parse_br_float)
+    df_lin["Tipo"] = df_lin.get("Tipo", df_lin.get("tipo", pd.Series())).fillna(
+        "OUTROS"
+    )
+    df_lin["Categoria"] = df_lin.get(
+        "Categoria", df_lin.get("categoria", pd.Series())
+    ).fillna("OUTROS")
 
     dt_now = datetime.now().strftime("%d/%m/%Y %H:%M")
 
