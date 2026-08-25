@@ -221,7 +221,7 @@ def init_db():
 init_db()
 
 
-# 3. Funções Auxiliares de Leitura e Tratamento (Excel, Word, CSV)
+# 3. Funções Auxiliares de Leitura e Tratamento Robustas
 def read_word_file(file_obj):
     if not HAS_DOCX:
         return "A biblioteca 'python-docx' não está instalada no servidor."
@@ -245,23 +245,22 @@ def read_word_file(file_obj):
 
 
 def robust_read_file(file_obj):
+    """Lê com segurança arquivos Excel (.xlsx, .xls), Word e CSV, testando diferentes cabeçalhos para evitar erros de ValueError."""
     filename = str(file_obj.name).lower()
 
     if filename.endswith(".xlsx") or filename.endswith(".xls"):
-        file_obj.seek(0)
-        try:
-            return pd.read_excel(file_obj, engine="openpyxl")
-        except Exception:
-            file_obj.seek(0)
+        for h in [0, 1, 2, 3]:
             try:
-                return pd.read_excel(file_obj)
-            except Exception:
                 file_obj.seek(0)
-                try:
-                    return pd.read_excel(file_obj, engine="xlrd")
-                except Exception:
-                    file_obj.seek(0)
-                    return pd.read_excel(file_obj, header=1)
+                df = pd.read_excel(file_obj, header=h)
+                # Verifica se encontrou colunas válidas (não vazias ou sem nome genérico excessivo)
+                if df is not None and not df.empty and len(df.columns) > 1:
+                    return df
+            except Exception:
+                continue
+        # Tentativa final sem restrição
+        file_obj.seek(0)
+        return pd.read_excel(file_obj)
 
     elif filename.endswith(".docx") or filename.endswith(".doc"):
         text = read_word_file(file_obj)
@@ -269,24 +268,34 @@ def robust_read_file(file_obj):
         return pd.DataFrame(lines) if lines else pd.DataFrame()
 
     else:
-        try:
-            file_obj.seek(0)
-            return pd.read_csv(
-                file_obj,
-                sep=";",
-                encoding="utf-8-sig",
-                engine="python",
-                on_bad_lines="skip",
-            )
-        except Exception:
-            file_obj.seek(0)
-            return pd.read_csv(
-                file_obj,
-                sep=";",
-                encoding="latin1",
-                engine="python",
-                on_bad_lines="skip",
-            )
+        for sep_char in [";", ",", "\t"]:
+            try:
+                file_obj.seek(0)
+                df = pd.read_csv(
+                    file_obj,
+                    sep=sep_char,
+                    encoding="utf-8-sig",
+                    engine="python",
+                    on_bad_lines="skip",
+                )
+                if df is not None and len(df.columns) > 1:
+                    return df
+            except Exception:
+                try:
+                    file_obj.seek(0)
+                    df = pd.read_csv(
+                        file_obj,
+                        sep=sep_char,
+                        encoding="latin1",
+                        engine="python",
+                        on_bad_lines="skip",
+                    )
+                    if df is not None and len(df.columns) > 1:
+                        return df
+                except Exception:
+                    continue
+        file_obj.seek(0)
+        return pd.read_csv(file_obj, sep=None, engine="python", on_bad_lines="skip")
 
 
 def parse_br_float(val):
@@ -1199,7 +1208,6 @@ def render_gestao_ressuprimento(operacao):
                 axis=1,
             )
             
-            # REQUISIÇÃO: Pendência Período ajustada estritamente para Real - Meta
             df_comp["PENDÊNCIA PERÍODO"] = df_comp["REAL"] - df_comp["META"]
 
             df_cerveja_nab = df_comp[df_comp["INDICADOR"].isin(["Cerveja", "Nab"])]
