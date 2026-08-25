@@ -8,7 +8,7 @@ import zipfile
 import pandas as pd
 import streamlit as st
 
-# Importação condicional do docx para evitar falha no Streamlit Cloud caso falte a biblioteca
+# Importação condicional do docx para evitar falhas no Streamlit Cloud
 try:
     import docx
 
@@ -129,11 +129,19 @@ def init_db():
         status TEXT DEFAULT 'Ativo'
     )""")
 
-    # Migração segura caso a tabela usuarios já exista sem a coluna status
     try:
         cursor.execute("ALTER TABLE usuarios ADD COLUMN status TEXT DEFAULT 'Ativo'")
     except Exception:
         pass
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS cadastro_trechos_frete (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        trecho TEXT UNIQUE NOT NULL,
+        transportadora TEXT NOT NULL,
+        valor_frete REAL NOT NULL,
+        aprovador TEXT NOT NULL
+    )""")
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS padroes_dpo (
@@ -213,6 +221,26 @@ def init_db():
         meta_volume_hl REAL DEFAULT 0.0,
         dt_atualizacao TEXT,
         UNIQUE(operacao, ano, mes, cesta)
+    )""")
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS politica_estoque_base (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        operacao TEXT,
+        cod_clean INTEGER,
+        sku_original TEXT,
+        tipo TEXT,
+        categoria TEXT,
+        estoque REAL,
+        demanda REAL,
+        doi_atual REAL,
+        pe_min_dias REAL,
+        pe_obj_dias REAL,
+        pe_max_dias REAL,
+        pe_min_hl REAL,
+        pe_obj_hl REAL,
+        pe_max_hl REAL,
+        dt_atualizacao TEXT
     )""")
 
     empresas = [
@@ -426,6 +454,71 @@ def highlight_curva_abc(val):
     elif val == "C":
         return "background-color: #f8d7da; color: #721c24; font-weight: bold;"
     return ""
+
+
+def processar_politica_estoque_upload(f_pol, operacao):
+    df_raw = robust_read_file(f_pol)
+    dt_now = datetime.now().strftime("%d/%m/%Y %H:%M")
+    conn = sqlite3.connect("puxada_ambev.db")
+    cursor = conn.cursor()
+
+    count = 0
+    for _, r in df_raw.iterrows():
+        try:
+            sku_str = str(r.iloc[2]).strip()
+            partes = sku_str.split("/")
+            if len(partes) >= 2:
+                sub_part = partes[1].strip()
+                cod_match = re.search(r"^\d+", sub_part)
+                cod_clean = int(cod_match.group()) if cod_match else 0
+            else:
+                cod_clean = 0
+
+            if cod_clean == 0:
+                continue
+
+            tipo = str(r.iloc[1]).strip()
+            cat = str(r.iloc[3]).strip()
+            est = parse_br_float(r.iloc[5])
+            dem = parse_br_float(r.iloc[6])
+            doi = parse_br_float(r.iloc[7])
+            pe_min_d = parse_br_float(r.iloc[8])
+            pe_obj_d = parse_br_float(r.iloc[9])
+            pe_max_d = parse_br_float(r.iloc[10])
+            pe_min_h = parse_br_float(r.iloc[11])
+            pe_obj_h = parse_br_float(r.iloc[12])
+            pe_max_h = parse_br_float(r.iloc[13])
+
+            cursor.execute(
+                """
+            INSERT INTO politica_estoque_base (operacao, cod_clean, sku_original, tipo, categoria, estoque, demanda, doi_atual, pe_min_dias, pe_obj_dias, pe_max_dias, pe_min_hl, pe_obj_hl, pe_max_hl, dt_atualizacao)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+                (
+                    operacao,
+                    cod_clean,
+                    sku_str,
+                    tipo,
+                    cat,
+                    est,
+                    dem,
+                    doi,
+                    pe_min_d,
+                    pe_obj_d,
+                    pe_max_d,
+                    pe_min_h,
+                    pe_obj_h,
+                    pe_max_h,
+                    dt_now,
+                ),
+            )
+            count += 1
+        except Exception:
+            continue
+
+    conn.commit()
+    conn.close()
+    return count
 
 
 def salvar_base_01_11(f_01):
@@ -1029,7 +1122,7 @@ def render_gestao_layouts_armazem(operacao):
 
 
 # -----------------------------------------------------------------------------
-# GESTÃO DE RESSUPRIMENTO (CESTAS, METAS, TENDÊNCIA & LAYOUT POR OPERAÇÃO)
+# GESTÃO DE RESSUPRIMENTO & POLÍTICA DE ESTOQUE
 # -----------------------------------------------------------------------------
 def render_gestao_ressuprimento(operacao, modo_estatico=False):
     st.subheader(
@@ -1064,28 +1157,46 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
     )
 
     if not modo_estatico:
-        st.markdown("##### 🔗 Links de Acesso Direto (Visualização Estática / Sem Atualização)")
-        st.caption("Clique nos botões abaixo para abrir a visualização direta e somente leitura de cada operação:")
-        
+        st.markdown(
+            "##### 🔗 Links de Acesso Direto (Visualização Estática / Sem Atualização)"
+        )
+        st.caption(
+            "Clique nos botões abaixo para abrir a visualização direta e somente leitura de cada operação:"
+        )
+
         col_btn1, col_btn2, col_btn3 = st.columns(3)
-        
-        col_btn1.link_button("🔗 Barreiras", "?visualizacao=ressuprimento&op=Lima+Barreiras", use_container_width=True)
-        col_btn2.link_button("🔗 São Félix", "?visualizacao=ressuprimento&op=Lima+S%C3%A3o+F%C3%élix", use_container_width=True)
-        col_btn3.link_button("🔗 Bahia (Barreiras + São Félix)", "?visualizacao=ressuprimento&op=Bahia", use_container_width=True)
+
+        col_btn1.link_button(
+            "🔗 Barreiras",
+            "?visualizacao=ressuprimento&op=Lima+Barreiras",
+            use_container_width=True,
+        )
+        col_btn2.link_button(
+            "🔗 São Félix",
+            "?visualizacao=ressuprimento&op=Lima+S%C3%A3o+F%C3%élix",
+            use_container_width=True,
+        )
+        col_btn3.link_button(
+            "🔗 Bahia (Barreiras + São Félix)",
+            "?visualizacao=ressuprimento&op=Bahia",
+            use_container_width=True,
+        )
 
         st.divider()
 
-        tab_m1, tab_m2, tab_m3, tab_m4 = st.tabs([
+        tab_m1, tab_m2, tab_m3, tab_m4, tab_m5 = st.tabs([
             "📊 Acompanhamento Mensal & Volume Total",
             "📅 Carregamento Dia a Dia",
+            "📦 Gestão de Política de Estoque",
             "⚙️ Configuração de Metas Mensais",
             "📁 Upload & Atualização da Base Diária",
         ])
     else:
         tab_m1 = st.container()
         tab_m2 = st.container()
-        tab_m3 = None
+        tab_m3 = st.container()
         tab_m4 = None
+        tab_m5 = None
 
     cestas_map = {
         "CATEGORIA_AGRUPADO - CERVEJA": "Cerveja",
@@ -1114,7 +1225,7 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
             "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
             "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
         ]
-        
+
         meses_selecionados = c_f2.multiselect(
             "Selecione os Meses de Análise (vazio = Ano Inteiro):",
             options=list(range(1, 13)),
@@ -1141,7 +1252,7 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
             df_diario["data_dt"] = pd.to_datetime(
                 df_diario["data_registro"], errors="coerce"
             )
-            
+
             if not meses_selecionados:
                 meses_selecionados = list(range(1, 13))
 
@@ -1216,17 +1327,23 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
                 else 0.0,
                 axis=1,
             )
-            
+
             df_comp["PENDÊNCIA PERÍODO"] = df_comp["REAL"] - df_comp["META"]
 
-            df_cerveja_nab = df_comp[df_comp["INDICADOR"].isin(["Cerveja", "Nab"])]
+            df_cerveja_nab = df_comp[
+                df_comp["INDICADOR"].isin(["Cerveja", "Nab"])
+            ]
             tot_meta = df_cerveja_nab["META"].sum()
             tot_real = df_cerveja_nab["REAL"].sum()
             tot_tend = df_cerveja_nab["TEND."].sum()
             tot_pend = tot_real - tot_meta
-            
-            tot_ating_real = (tot_real / tot_meta * 100) if tot_meta > 0 else 0.0
-            tot_ating_tend = (tot_tend / tot_meta * 100) if tot_meta > 0 else 0.0
+
+            tot_ating_real = (
+                (tot_real / tot_meta * 100) if tot_meta > 0 else 0.0
+            )
+            tot_ating_tend = (
+                (tot_tend / tot_meta * 100) if tot_meta > 0 else 0.0
+            )
 
             df_total = pd.DataFrame([{
                 "INDICADOR": f"Total {nome_exibicao_op} (Cerveja + Nab)",
@@ -1238,7 +1355,9 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
                 "PENDÊNCIA PERÍODO": tot_pend,
             }])
 
-            meses_str = ", ".join([meses_nomes[m - 1] for m in meses_selecionados])
+            meses_str = ", ".join([
+                meses_nomes[m - 1] for m in meses_selecionados
+            ])
             st.markdown(
                 f"""
                 <div style="background-color: #0d2149; color: white; padding: 12px 20px; border-radius: 8px 8px 0 0; margin-bottom: 0px;">
@@ -1277,9 +1396,15 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
             df_view["META"] = df_view["META"].apply(formatar_br)
             df_view["REAL"] = df_view["REAL"].apply(formatar_br)
             df_view["TEND."] = df_view["TEND."].apply(formatar_br)
-            df_view["ATING. REAL"] = df_view["ATING. REAL"].apply(format_atingimento_com_condicional)
-            df_view["ATING. TEND."] = df_view["ATING. TEND."].apply(format_atingimento_com_condicional)
-            df_view["PENDÊNCIA PERÍODO"] = df_view["PENDÊNCIA PERÍODO"].apply(formatar_br)
+            df_view["ATING. REAL"] = df_view["ATING. REAL"].apply(
+                format_atingimento_com_condicional
+            )
+            df_view["ATING. TEND."] = df_view["ATING. TEND."].apply(
+                format_atingimento_com_condicional
+            )
+            df_view["PENDÊNCIA PERÍODO"] = df_view["PENDÊNCIA PERÍODO"].apply(
+                formatar_br
+            )
 
             st.dataframe(
                 df_view,
@@ -1295,7 +1420,9 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
     # Bloco Carregamento Dia a Dia
     def bloco_carregamento_dia_a_dia():
         st.markdown(f"### 📅 Carregamento Dia a Dia - {nome_exibicao_op}")
-        st.caption("Selecione o ano e o mês para visualizar o volume diário detalhado por indicador (em HL).")
+        st.caption(
+            "Selecione o ano e o mês para visualizar o volume diário detalhado por indicador (em HL)."
+        )
 
         c_d1, c_d2 = st.columns(2)
         ano_dia = c_d1.number_input(
@@ -1308,7 +1435,7 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
 
         meses_nomes_lista = [
             "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
-            "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
+            "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
         ]
         mes_dia = c_d2.selectbox(
             "Mês de Análise:",
@@ -1336,15 +1463,21 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
         conn.close()
 
         if not df_diario_bruto.empty:
-            df_diario_bruto["data_dt"] = pd.to_datetime(df_diario_bruto["data_registro"], errors="coerce")
-            df_diario_bruto["Dia"] = df_diario_bruto["data_dt"].dt.strftime("%d/%m/%Y")
-            df_diario_bruto["Indicador"] = df_diario_bruto["cesta"].map(cestas_map).fillna("Outros")
+            df_diario_bruto["data_dt"] = pd.to_datetime(
+                df_diario_bruto["data_registro"], errors="coerce"
+            )
+            df_diario_bruto["Dia"] = df_diario_bruto["data_dt"].dt.strftime(
+                "%d/%m/%Y"
+            )
+            df_diario_bruto["Indicador"] = df_diario_bruto["cesta"].map(
+                cestas_map
+            ).fillna("Outros")
 
             df_pivot = df_diario_bruto.pivot_table(
                 index=["data_dt", "Dia"],
                 columns="Indicador",
                 values="vol_hl",
-                aggfunc="sum"
+                aggfunc="sum",
             ).reset_index()
 
             df_pivot = df_pivot.sort_values("data_dt")
@@ -1358,23 +1491,122 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
             for col in cols_indicadores + ["Total Dia (HL)"]:
                 df_view_dia[col] = df_view_dia[col].apply(formatar_br)
 
-            st.markdown(f"##### 📊 Detalhamento Diário - {meses_nomes_lista[mes_dia - 1]}/{ano_dia}")
+            st.markdown(
+                f"##### 📊 Detalhamento Diário - {meses_nomes_lista[mes_dia - 1]}/{ano_dia}"
+            )
             st.dataframe(df_view_dia, use_container_width=True)
 
             st.download_button(
                 "Exportar Carregamento Dia a Dia (.xlsx)",
                 data=gerar_excel(df_pivot),
                 file_name=f"Carregamento_Dia_a_Dia_{mes_dia:02d}_{ano_dia}_{operacao.replace(' ', '_')}.xlsx",
-                key="dl_dia_a_dia"
+                key="dl_dia_a_dia",
             )
         else:
-            st.info(f"ℹ️ Nenhum registro de carregamento diário encontrado para **{nome_exibicao_op}** em {meses_nomes_lista[mes_dia - 1]}/{ano_dia}.")
+            st.info(
+                f"ℹ️ Nenhum registro de carregamento diário encontrado para **{nome_exibicao_op}** em {meses_nomes_lista[mes_dia - 1]}/{ano_dia}."
+            )
+
+    # Bloco Política de Estoque (Upload & Gestão)
+    def bloco_politica_estoque():
+        st.markdown(
+            "### 📦 Gestão de Política de Estoque & Upload de Dados Médios"
+        )
+        st.caption(
+            "Faça o upload do arquivo de estoque médio / política para atualizar a base de SKUs, extraindo rigorosamente o código limpo após a barra (coluna C)."
+        )
+
+        with st.form("form_upload_politica_estoque"):
+            f_pol_up = st.file_uploader(
+                "Upload da Planilha de Estoque Médio / Política (.xls, .xlsx):",
+                type=["xls", "xlsx"],
+                key="up_pol_estoque_file",
+            )
+            btn_proc_pol = st.form_submit_button(
+                "📁 Processar e Salvar Política de Estoque"
+            )
+            if btn_proc_pol:
+                if f_pol_up is not None:
+                    cnt = processar_politica_estoque_upload(f_pol_up, unidade)
+                    st.success(
+                        f"Sucesso! {cnt} registros de política de estoque importados e processados para {unidade}."
+                    )
+                    st.rerun()
+                else:
+                    st.error("Por favor, selecione um arquivo válido.")
+
+        st.divider()
+        st.markdown("##### 🔍 Consulta de Política de Estoque Cadastrada")
+
+        conn = sqlite3.connect("puxada_ambev.db")
+        placeholders_op = ",".join(["?"] * len(nombres_filtro))
+        df_pol = pd.read_sql_query(
+            f"SELECT * FROM politica_estoque_base WHERE operacao IN ({placeholders_op})",
+            conn,
+            params=nombres_filtro,
+        )
+        conn.close()
+
+        if not df_pol.empty:
+            tipos_disp = ["TODOS"] + sorted(
+                df_pol["tipo"].dropna().unique().tolist()
+            )
+            cats_disp = ["TODAS"] + sorted(
+                df_pol["categoria"].dropna().unique().tolist()
+            )
+
+            c_f1, c_f2 = st.columns(2)
+            filtro_tipo = c_f1.selectbox("Filtrar por Tipo:", tipos_disp)
+            filtro_cat = c_f2.selectbox("Filtrar por Categoria:", cats_disp)
+
+            df_view = df_pol.copy()
+            if filtro_tipo != "TODOS":
+                df_view = df_view[df_view["tipo"] == filtro_tipo]
+            if filtro_cat != "TODAS":
+                df_view = df_view[df_view["categoria"] == filtro_cat]
+
+            def avaliar_politica(row):
+                doi, p_min, p_max = (
+                    row["doi_atual"],
+                    row["pe_min_dias"],
+                    row["pe_max_dias"],
+                )
+                if doi < p_min:
+                    return "🔴 Abaixo da Política"
+                elif doi > p_max:
+                    return "🔵 Acima da Política"
+                else:
+                    return "🟢 Dentro da Política"
+
+            df_view["Status Política"] = df_view.apply(avaliar_politica, axis=1)
+
+            cols_show = [
+                "cod_clean",
+                "sku_original",
+                "tipo",
+                "categoria",
+                "estoque",
+                "demanda",
+                "doi_atual",
+                "pe_min_dias",
+                "pe_obj_dias",
+                "pe_max_dias",
+                "pe_obj_hl",
+                "Status Política",
+            ]
+            st.dataframe(df_view[cols_show], use_container_width=True)
+        else:
+            st.info(
+                "Nenhum dado de política de estoque importado para esta unidade."
+            )
 
     if modo_estatico:
         st.markdown("---")
         bloco_acompanhamento()
         st.markdown("---")
         bloco_carregamento_dia_a_dia()
+        st.markdown("---")
+        bloco_politica_estoque()
     else:
         with tab_m1:
             bloco_acompanhamento()
@@ -1383,6 +1615,9 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
             bloco_carregamento_dia_a_dia()
 
         with tab_m3:
+            bloco_politica_estoque()
+
+        with tab_m4:
             st.markdown(
                 f"### 🎯 Cadastrar / Ajustar Metas Mensais ({nome_exibicao_op})"
             )
@@ -1396,7 +1631,7 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
             )
             meses_nomes_lista = [
                 "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
-                "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
+                "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
             ]
             mes_meta = c_m2.selectbox(
                 "Mês da Meta:",
@@ -1473,7 +1708,7 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
                     )
                     st.rerun()
 
-        with tab_m4:
+        with tab_m5:
             st.markdown("### 📁 Upload do Relatório Diário de Ressuprimento")
             st.caption(
                 "Suba o arquivo consolidado contendo os volumes diários (.xlsx, .xls, .csv). O sistema mapeará rigorosamente a **Coluna A** (Operação), **Coluna C** (HL Puxado), **Coluna E** (Indicador) e **Coluna F** (Data)."
@@ -1558,7 +1793,9 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
                     st.rerun()
 
                 except Exception as e:
-                    st.error(f"Erro ao processar o arquivo nas colunas exigidas: {e}")
+                    st.error(
+                        f"Erro ao processar o arquivo nas colunas exigidas: {e}"
+                    )
 
 
 # 5. Navegação por Pilhas de Histórico (Botão Voltar)
@@ -1708,9 +1945,9 @@ def render_estoque_dia(unidade):
                     border_color = "#0288d1"
                     bg_badge = "#e8f4f8"
 
-                disp_fmt = formatar_br(r['disp'])
-                pux_fmt = formatar_br(r['total_puxada'])
-                proj_fmt = formatar_br(r['estoque_projetado'])
+                disp_fmt = formatar_br(r["disp"])
+                pux_fmt = formatar_br(r["total_puxada"])
+                proj_fmt = formatar_br(r["estoque_projetado"])
 
                 st.markdown(
                     f"""
@@ -1746,8 +1983,12 @@ def render_estoque_dia(unidade):
             ]
             df_view_rn = df_filtrado[cols_rn].copy()
             df_view_rn["disp"] = df_view_rn["disp"].apply(formatar_br)
-            df_view_rn["linear_vendas"] = df_view_rn["linear_vendas"].apply(formatar_br)
-            df_view_rn["doi_atual"] = df_view_rn["doi_atual"].apply(lambda x: f"{x:.1f}".replace(".", ","))
+            df_view_rn["linear_vendas"] = df_view_rn["linear_vendas"].apply(
+                formatar_br
+            )
+            df_view_rn["doi_atual"] = df_view_rn["doi_atual"].apply(
+                lambda x: f"{x:.1f}".replace(".", ",")
+            )
 
             st.dataframe(
                 df_view_rn,
@@ -1768,9 +2009,13 @@ if modo_comercial:
     st.stop()
 
 if modo_visualizacao_estatica:
-    st.title("Grupo Lima - Visualização Estática (Acompanhamento de Ressuprimento)")
+    st.title(
+        "Grupo Lima - Visualização Estática (Acompanhamento de Ressuprimento)"
+    )
     op_alvo = op_estatica if op_estatica else "Lima Barreiras"
-    st.info(f"🔒 **Modo Somente Leitura / Visualização Exclusiva** · Operação: **{op_alvo}**")
+    st.info(
+        f"🔒 **Modo Somente Leitura / Visualização Exclusiva** · Operação: **{op_alvo}**"
+    )
     render_gestao_ressuprimento(op_alvo, modo_estatico=True)
     st.stop()
 
@@ -1831,12 +2076,12 @@ if not st.session_state["logado"]:
                 conn.close()
                 if res_email:
                     st.success(
-                        f"📧 Um e-mail de recuperação foi enviado para **{email_rec}** com as instruções para o usuário **{res_email[0]}**."
+                        f"📧 Instruções de recuperação enviadas para o e-mail **{email_rec}** associado ao usuário **{res_email[0]}**."
                     )
                 else:
                     st.error("E-mail não encontrado no sistema.")
             else:
-                st.error("Por favor, preencha o campo de e-mail.")
+                st.error("Por favor, preencha o e-mail.")
 
 else:
     st.sidebar.title("Grupo Lima")
@@ -1906,68 +2151,133 @@ else:
         m3.metric("🔴 SKUs Ruptura", f"{k_rup}")
         m4.metric("🟡 SKUs Overstock", f"{k_exc}")
 
-    # MÓDULO PUXADA
+    # MÓDULO PUXADA (FRETES INTEGRADOS)
     elif "Puxada" in dept_atual:
         sub_pux = st.tabs([
-            "📁 Cadastros & Solicitação",
-            "📊 Gestão Completa de Fretes",
-            "📜 Histórico",
+            "📋 Cadastro de Trechos",
+            "🚀 Solicitação de Frete",
+            "📊 Aprovações de Frete",
+            "📜 Histórico Geral",
         ])
 
         with sub_pux[0]:
-            st.markdown("### Lançamento e Solicitação de Frete")
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                origem = st.text_input("Origem (Ex: Anápolis)")
-                destino = st.text_input("Destino", value=unidade)
-                dt_frete = st.date_input("Data do Frete")
-            with c2:
-                transp = st.text_input("Transportadora")
-                valor = st.number_input(
-                    "Valor Negociado (R$)", min_value=0.0, step=100.0
+            st.markdown("### Cadastro de Trechos, Transportadoras e Aprovadores")
+            with st.form("form_cad_trecho"):
+                c1, c2 = st.columns(2)
+                t_in = c1.text_input("Trecho (Ex: Anápolis -> Rio Verde):")
+                tr_in = c2.text_input("Transportadora:")
+                c3, c4 = st.columns(2)
+                v_in = c3.number_input(
+                    "Valor do Frete (R$):", min_value=0.0, step=100.0
                 )
-                motivo = st.selectbox(
-                    "Motivo da Puxada",
-                    ["Regular", "Aumento de Demanda", "Emergencial"],
-                )
-            with c3:
-                obs = st.text_area("Observações")
+                ap_in = c4.text_input("Aprovador:")
 
-            if st.button("Registrar Frete"):
-                conn = sqlite3.connect("puxada_ambev.db")
-                cursor = conn.cursor()
-                cursor.execute(
-                    """
-                INSERT INTO cotacoes_frete (operacao, origem, destino, data_frete, motivo, transportadora, valor_negociado, solicitante, observacao)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                    (
-                        unidade,
-                        origem,
-                        destino,
-                        str(dt_frete),
-                        motivo,
-                        transp,
-                        valor,
-                        st.session_state["usuario"],
-                        obs,
-                    ),
-                )
-                conn.commit()
-                conn.close()
-                st.success("Frete registrado com sucesso!")
+                if st.form_submit_button("💾 Salvar Trecho Vinculado"):
+                    if t_in and tr_in:
+                        conn = sqlite3.connect("puxada_ambev.db")
+                        cursor = conn.cursor()
+                        try:
+                            cursor.execute(
+                                """
+                            INSERT INTO cadastro_trechos_frete (trecho, transportadora, valor_frete, aprovador) 
+                            VALUES (?, ?, ?, ?)
+                            ON CONFLICT(trecho) DO UPDATE SET 
+                                transportadora=excluded.transportadora, 
+                                valor_frete=excluded.valor_frete, 
+                                aprovador=excluded.aprovador
+                            """,
+                                (
+                                    t_in.strip(),
+                                    tr_in.strip(),
+                                    v_in,
+                                    ap_in.strip(),
+                                ),
+                            )
+                            conn.commit()
+                            st.success(
+                                f"Trecho **{t_in}** cadastrado/atualizado com sucesso!"
+                            )
+                        except Exception as e:
+                            st.error(f"Erro: {e}")
+                        finally:
+                            conn.close()
+
+            st.dataframe(
+                pd.read_sql_query(
+                    "SELECT * FROM cadastro_trechos_frete",
+                    sqlite3.connect("puxada_ambev.db"),
+                ),
+                use_container_width=True,
+            )
 
         with sub_pux[1]:
+            st.markdown("### Solicitação de Frete Integrada")
+            conn = sqlite3.connect("puxada_ambev.db")
+            df_tr = pd.read_sql_query(
+                "SELECT * FROM cadastro_trechos_frete", conn
+            )
+            conn.close()
+
+            if not df_tr.empty:
+                with st.form("form_solic_frete"):
+                    sel_t = st.selectbox(
+                        "Selecione o Trecho Cadastrado:",
+                        df_tr["trecho"].tolist(),
+                    )
+                    row = df_tr[df_tr["trecho"] == sel_t].iloc[0]
+                    st.info(
+                        f"🚚 Transportadora: **{row['transportadora']}** | Valor Vinculado: **R$ {row['valor_frete']:,.2f}** | Aprovador Responsável: **{row['aprovador']}**"
+                    )
+
+                    c1, c2 = st.columns(2)
+                    dt_f = c1.date_input("Data do Frete:")
+                    mot = c2.selectbox(
+                        "Motivo:",
+                        ["Regular", "Aumento de Demanda", "Emergencial"],
+                    )
+                    obs = st.text_area("Observações:")
+
+                    if st.form_submit_button("🚀 Enviar Solicitação de Frete"):
+                        conn = sqlite3.connect("puxada_ambev.db")
+                        cursor = conn.cursor()
+                        cursor.execute(
+                            """
+                            INSERT INTO cotacoes_frete (operacao, origem, destino, data_requisicao, data_frete, motivo, transportadora, valor_negociado, solicitante, aprovador, observacao)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                unidade,
+                                sel_t.split("->")[0].strip(),
+                                sel_t.split("->")[-1].strip(),
+                                datetime.now().strftime("%Y-%m-%d"),
+                                str(dt_f),
+                                mot,
+                                row["transportadora"],
+                                row["valor_frete"],
+                                st.session_state["usuario"],
+                                row["aprovador"],
+                                obs,
+                            ),
+                        )
+                        conn.commit()
+                        conn.close()
+                        st.success("Solicitação de frete enviada com sucesso!")
+            else:
+                st.warning(
+                    "Nenhum trecho cadastrado. Cadastre na aba 'Cadastro de Trechos'."
+                )
+
+        with sub_pux[2]:
             st.markdown("### Gestão de Aprovações e Alçadas de Frete")
             conn = sqlite3.connect("puxada_ambev.db")
             df_p = pd.read_sql_query(
-                f"SELECT id, origem, destino, transportadora, valor_negociado, solicitante FROM cotacoes_frete WHERE operacao = '{unidade}' AND status = 'Pendente Aprovação'",
+                f"SELECT * FROM cotacoes_frete WHERE operacao = '{unidade}'",
                 conn,
             )
             conn.close()
             st.dataframe(df_p, use_container_width=True)
 
-        with sub_pux[2]:
+        with sub_pux[3]:
             st.markdown("### Histórico Geral de Fretes e Puxadas")
             conn = sqlite3.connect("puxada_ambev.db")
             df_h = pd.read_sql_query(
@@ -2040,7 +2350,9 @@ else:
 
         with sub_ress[2]:
             st.subheader("🛒 Sugestão de Compra e Marcação por Dia de Puxada")
-            st.caption("Selecione o dia de puxada desejado. O sistema calcula a necessidade abatendo o estoque atual e o já marcado no relatório.")
+            st.caption(
+                "Selecione o dia de puxada desejado. O sistema calcula a necessidade abatendo o estoque atual e o já marcado no relatório."
+            )
 
             conn = sqlite3.connect("puxada_ambev.db")
             df_marcadas_hist = pd.read_sql_query(
@@ -2053,25 +2365,37 @@ else:
             if not df_marcadas_hist.empty:
                 for dt_str in df_marcadas_hist["data_puxada"].dropna().unique():
                     try:
-                        datas_existentes.append(datetime.strptime(str(dt_str).strip(), "%d/%m/%Y").date())
+                        datas_existentes.append(
+                            datetime.strptime(
+                                str(dt_str).strip(), "%d/%m/%Y"
+                            ).date()
+                        )
                     except Exception:
                         try:
-                            datas_existentes.append(datetime.strptime(str(dt_str).strip(), "%Y-%m-%d").date())
+                            datas_existentes.append(
+                                datetime.strptime(
+                                    str(dt_str).strip(), "%Y-%m-%d"
+                                ).date()
+                            )
                         except Exception:
                             pass
 
-            ultima_data_marcacao = max(datas_existentes) if datas_existentes else datetime.now().date()
+            ultima_data_marcacao = (
+                max(datas_existentes)
+                if datas_existentes
+                else datetime.now().date()
+            )
             min_data_permitida = ultima_data_marcacao + timedelta(days=1)
 
             df_sug_agend = carregar_estoque_consolidado(unidade)
 
             if df_sug_agend is not None and not df_sug_agend.empty:
                 c_ag1, c_ag2 = st.columns(2)
-                
+
                 data_puxada_alvo = c_ag1.date_input(
                     "Data de Puxada Alvo:",
                     value=min_data_permitida,
-                    min_value=min_data_permitida
+                    min_value=min_data_permitida,
                 )
                 meta_doi_marcacao = c_ag2.number_input(
                     "Meta DOI Desejada para Marcação (Dias):",
@@ -2079,7 +2403,7 @@ else:
                     max_value=30.0,
                     value=7.0,
                     step=0.5,
-                    key="meta_doi_marcacao_key"
+                    key="meta_doi_marcacao_key",
                 )
 
                 conn = sqlite3.connect("puxada_ambev.db")
@@ -2090,13 +2414,24 @@ else:
                 conn.close()
 
                 if not df_tot_marc.empty:
-                    df_sug_agend = pd.merge(df_sug_agend, df_tot_marc, on="cod_clean", how="left")
-                    df_sug_agend["total_marcado_rel"] = df_sug_agend["total_marcado_rel"].fillna(0)
+                    df_sug_agend = pd.merge(
+                        df_sug_agend,
+                        df_tot_marc,
+                        on="cod_clean",
+                        how="left",
+                    )
+                    df_sug_agend["total_marcado_rel"] = df_sug_agend[
+                        "total_marcado_rel"
+                    ].fillna(0)
                 else:
                     df_sug_agend["total_marcado_rel"] = 0.0
 
-                df_sug_agend["estoque_disponivel_e_marcado"] = df_sug_agend["disp"] + df_sug_agend["total_marcado_rel"]
-                dias_proj = max(1, (data_puxada_alvo - ultima_data_marcacao).days)
+                df_sug_agend["estoque_disponivel_e_marcado"] = (
+                    df_sug_agend["disp"] + df_sug_agend["total_marcado_rel"]
+                )
+                dias_proj = max(
+                    1, (data_puxada_alvo - ultima_data_marcacao).days
+                )
 
                 caixas_sugeridas = []
                 hl_sugeridos = []
@@ -2104,18 +2439,26 @@ else:
                     lin = float(r["linear_vendas"])
                     disp_marc = float(r["estoque_disponivel_e_marcado"])
                     f_hl = float(r["fator_hl"])
-                    
+
                     consumo_projetado = lin * dias_proj
-                    estoque_projetado_alvo = max(0, disp_marc - consumo_projetado)
-                    
-                    cx_nec = max(0, int(lin * meta_doi_marcacao - estoque_projetado_alvo))
+                    estoque_projetado_alvo = max(
+                        0, disp_marc - consumo_projetado
+                    )
+
+                    cx_nec = max(
+                        0,
+                        int(
+                            lin * meta_doi_marcacao - estoque_projetado_alvo
+                        ),
+                    )
                     caixas_sugeridas.append(cx_nec)
                     hl_sugeridos.append(round(cx_nec * f_hl, 2))
 
                 df_sug_agend["cx_sugeridas_marcacao"] = caixas_sugeridas
                 df_sug_agend["hl_sugerido"] = hl_sugeridos
                 df_sug_agend["paletes_sugeridos"] = (
-                    df_sug_agend["cx_sugeridas_marcacao"] / df_sug_agend["cx_pallet"]
+                    df_sug_agend["cx_sugeridas_marcacao"]
+                    / df_sug_agend["cx_pallet"]
                 ).round(1)
 
                 tot_paletes_marc = df_sug_agend["paletes_sugeridos"].sum()
@@ -2123,11 +2466,21 @@ else:
                 tot_hl_marc = sum(hl_sugeridos)
                 skus_marc = len([n for n in caixas_sugeridas if n > 0])
 
-                st.markdown(f"##### 📦 Resumo da Sugestão para o Dia: {data_puxada_alvo.strftime('%d/%m/%Y')} (Base: {ultima_data_marcacao.strftime('%d/%m/%Y')})")
+                st.markdown(
+                    f"##### 📦 Resumo da Sugestão para o Dia: {data_puxada_alvo.strftime('%d/%m/%Y')} (Base: {ultima_data_marcacao.strftime('%d/%m/%Y')})"
+                )
                 m_ag1, m_ag2, m_ag3, m_ag4 = st.columns(4)
-                m_ag1.metric("Total Paletes Sugeridos", f"{tot_paletes_marc:,.1f} paletes".replace(".", ","))
-                m_ag2.metric("Total Caixas Sugeridas", f"{formatar_br(tot_cx_marc)} cx")
-                m_ag3.metric("Volume Total Sugerido", f"{tot_hl_marc:,.2f} HL".replace(".", ","))
+                m_ag1.metric(
+                    "Total Paletes Sugeridos",
+                    f"{tot_paletes_marc:,.1f} paletes".replace(".", ","),
+                )
+                m_ag2.metric(
+                    "Total Caixas Sugeridas", f"{formatar_br(tot_cx_marc)} cx"
+                )
+                m_ag3.metric(
+                    "Volume Total Sugerido",
+                    f"{tot_hl_marc:,.2f} HL".replace(".", ","),
+                )
                 m_ag4.metric("SKUs para Marcar", f"{skus_marc} SKUs")
 
                 st.divider()
@@ -2148,15 +2501,29 @@ else:
 
                 df_view_ag = df_sug_agend[cols_ag_view].copy()
                 df_view_ag["disp"] = df_view_ag["disp"].apply(formatar_br)
-                df_view_ag["total_marcado_rel"] = df_view_ag["total_marcado_rel"].apply(formatar_br)
-                df_view_ag["linear_vendas"] = df_view_ag["linear_vendas"].apply(formatar_br)
-                df_view_ag["doi_atual"] = df_view_ag["doi_atual"].apply(lambda x: f"{x:.1f}".replace(".", ","))
-                df_view_ag["paletes_sugeridos"] = df_view_ag["paletes_sugeridos"].apply(lambda x: f"{x:.1f}".replace(".", ","))
-                df_view_ag["cx_sugeridas_marcacao"] = df_view_ag["cx_sugeridas_marcacao"].apply(formatar_br)
-                df_view_ag["hl_sugerido"] = df_view_ag["hl_sugerido"].apply(lambda x: f"{x:.2f}".replace(".", ","))
+                df_view_ag["total_marcado_rel"] = df_view_ag[
+                    "total_marcado_rel"
+                ].apply(formatar_br)
+                df_view_ag["linear_vendas"] = df_view_ag[
+                    "linear_vendas"
+                ].apply(formatar_br)
+                df_view_ag["doi_atual"] = df_view_ag["doi_atual"].apply(
+                    lambda x: f"{x:.1f}".replace(".", ",")
+                )
+                df_view_ag["paletes_sugeridos"] = df_view_ag[
+                    "paletes_sugeridos"
+                ].apply(lambda x: f"{x:.1f}".replace(".", ","))
+                df_view_ag["cx_sugeridas_marcacao"] = df_view_ag[
+                    "cx_sugeridas_marcacao"
+                ].apply(formatar_br)
+                df_view_ag["hl_sugerido"] = df_view_ag["hl_sugerido"].apply(
+                    lambda x: f"{x:.2f}".replace(".", ",")
+                )
 
                 st.dataframe(
-                    df_view_ag.style.map(highlight_curva_abc, subset=["classe_abc"]),
+                    df_view_ag.style.map(
+                        highlight_curva_abc, subset=["classe_abc"]
+                    ),
                     use_container_width=True,
                 )
 
@@ -2172,7 +2539,9 @@ else:
 
         with sub_ress[3]:
             st.subheader("📅 Agendamento de Descarga")
-            st.caption("Cadastre os agendamentos de descarga informando Placa, Slot, Data e Tipo de Carga. Os registros aparecerão automaticamente na aba de Descarga no Armazém.")
+            st.caption(
+                "Cadastre os agendamentos de descarga informando Placa, Slot, Data e Tipo de Carga. Os registros aparecerão automaticamente na aba de Descarga no Armazém."
+            )
 
             with st.form("form_agendamento_descarga"):
                 c_d1, c_d2 = st.columns(2)
@@ -2181,7 +2550,9 @@ else:
 
                 c_d3, c_d4 = st.columns(2)
                 data_descarga_input = c_d3.date_input("Data da Descarga:")
-                tipo_carga_input = c_d4.selectbox("Tipo de Carga:", ["Descartável", "Retornável"])
+                tipo_carga_input = c_d4.selectbox(
+                    "Tipo de Carga:", ["Descartável", "Retornável"]
+                )
 
                 obs_descarga = st.text_area("Observações da Descarga:")
 
@@ -2209,7 +2580,9 @@ else:
                         )
                         conn.commit()
                         conn.close()
-                        st.success(f"Agendamento de descarga para a placa **{placa_input.upper()}** salvo com sucesso!")
+                        st.success(
+                            f"Agendamento de descarga para a placa **{placa_input.upper()}** salvo com sucesso!"
+                        )
                         st.rerun()
 
             st.divider()
@@ -2224,7 +2597,9 @@ else:
             if not df_descargas.empty:
                 st.dataframe(df_descargas, use_container_width=True)
             else:
-                st.info("Nenhum agendamento de descarga cadastrado para esta unidade.")
+                st.info(
+                    "Nenhum agendamento de descarga cadastrado para esta unidade."
+                )
 
         with sub_ress[4]:
             render_gestao_ressuprimento(unidade)
@@ -2247,7 +2622,11 @@ else:
         p_saude, k_ok, k_rup, k_exc = calcular_saude_estoque_dpo(df_est_saude)
 
         s1, s2, s3, s4 = st.columns(4)
-        s1.metric("🏥 Saúde do Estoque DPO", f"{p_saude}%".replace(".", ","), "Meta DPO ≥ 85%")
+        s1.metric(
+            "🏥 Saúde do Estoque DPO",
+            f"{p_saude}%".replace(".", ","),
+            "Meta DPO ≥ 85%",
+        )
         s2.metric("🟢 SKUs Saudáveis (DOI 3-15)", f"{k_ok} SKUs")
         s3.metric("🔴 SKUs em Risco / Ruptura (<3)", f"{k_rup} SKUs")
         s4.metric("🟡 SKUs em Excesso (>15)", f"{k_exc} SKUs")
@@ -2393,7 +2772,9 @@ else:
 
         with tab_descarga_arm:
             st.markdown("### 🚚 Controle de Pátio e Agendamentos de Descarga")
-            st.caption("Visualização em tempo real dos caminhões agendados para descarga nesta unidade.")
+            st.caption(
+                "Visualização em tempo real dos caminhões agendados para descarga nesta unidade."
+            )
 
             conn = sqlite3.connect("puxada_ambev.db")
             df_arm_desc = pd.read_sql_query(
@@ -2406,17 +2787,28 @@ else:
                 st.dataframe(df_arm_desc, use_container_width=True)
 
                 if st.button("🗑️ Excluir Agendamento de Descarga"):
-                    id_exc = st.number_input("Digite o ID do agendamento para remover:", min_value=1, step=1)
+                    id_exc = st.number_input(
+                        "Digite o ID do agendamento para remover:",
+                        min_value=1,
+                        step=1,
+                    )
                     if st.button("Confirmar Exclusão"):
                         conn = sqlite3.connect("puxada_ambev.db")
                         cursor = conn.cursor()
-                        cursor.execute("DELETE FROM agendamentos_descarga WHERE id=?", (id_exc,))
+                        cursor.execute(
+                            "DELETE FROM agendamentos_descarga WHERE id=?",
+                            (id_exc,),
+                        )
                         conn.commit()
                         conn.close()
-                        st.success(f"Agendamento #{id_exc} removido com sucesso!")
+                        st.success(
+                            f"Agendamento #{id_exc} removido com sucesso!"
+                        )
                         st.rerun()
             else:
-                st.info("ℹ️ Nenhum agendamento de descarga pendente no momento para esta unidade.")
+                st.info(
+                    "ℹ️ Nenhum agendamento de descarga pendente no momento para esta unidade."
+                )
 
     # MÓDULO 6 - ENTREGA REVENDA (DISTRIBUIÇÃO)
     elif "Distribuição" in dept_atual:
@@ -2569,13 +2961,14 @@ else:
                     unidade, "Entrega", "6.3 - Rating"
                 )
 
-    # MÓDULO EXCLUSIVO MASTER
+    # MÓDULO EXCLUSIVO MASTER (GESTÃO DE USUÁRIOS E STATUS ATIVO/INATIVO)
     elif "Acesso Master" in dept_atual:
-        st.subheader("🔑 Gestão de Usuários e Permissões")
+        st.subheader("🔑 Gestão de Usuários, Status e Permissões")
 
-        tab_usr1, tab_usr2 = st.tabs(
-            ["➕ Cadastrar Novo Usuário", "📋 Usuários Cadastrados & Permissões"]
-        )
+        tab_usr1, tab_usr2 = st.tabs([
+            "➕ Cadastrar / Alterar Usuário",
+            "📋 Ativar / Inativar Usuários",
+        ])
 
         with tab_usr1:
             with st.form("form_cad_usuario_master"):
@@ -2611,7 +3004,7 @@ else:
                     default=DEPARTAMENTOS_DISPONIVEIS,
                 )
 
-                if st.form_submit_button("Criar Usuário"):
+                if st.form_submit_button("Criar / Atualizar Usuário"):
                     if novo_nome and nova_senha:
                         ops_str = (
                             "TODAS"
@@ -2629,8 +3022,16 @@ else:
                         try:
                             cursor.execute(
                                 """
-                            INSERT INTO usuarios (nome, senha, email, cargo, perfil, e_aprovador, permissoes_operacoes, permissoes_deptos)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            INSERT INTO usuarios (nome, senha, email, cargo, perfil, e_aprovador, permissoes_operacoes, permissoes_deptos, status)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Ativo')
+                            ON CONFLICT(nome) DO UPDATE SET 
+                                senha=excluded.senha, 
+                                email=excluded.email, 
+                                cargo=excluded.cargo, 
+                                perfil=excluded.perfil,
+                                e_aprovador=excluded.e_aprovador,
+                                permissoes_operacoes=excluded.permissoes_operacoes,
+                                permissoes_deptos=excluded.permissoes_deptos
                             """,
                                 (
                                     novo_nome,
@@ -2645,25 +3046,46 @@ else:
                             )
                             conn.commit()
                             st.success(
-                                f"Usuário **{novo_nome}** cadastrado com sucesso!"
+                                f"Usuário **{novo_nome}** salvo/atualizado com sucesso!"
                             )
                             st.rerun()
-                        except sqlite3.IntegrityError:
-                            st.error(
-                                "Erro: Já existe um usuário com esse login!"
-                            )
+                        except Exception as e:
+                            st.error(f"Erro: {e}")
                         finally:
                             conn.close()
 
         with tab_usr2:
             conn = sqlite3.connect("puxada_ambev.db")
             df_usrs = pd.read_sql_query(
-                "SELECT id, nome, email, cargo, perfil, e_aprovador, permissoes_operacoes, permissoes_deptos FROM usuarios",
+                "SELECT id, nome, email, cargo, perfil, status FROM usuarios",
                 conn,
             )
             conn.close()
 
             st.dataframe(df_usrs, use_container_width=True)
+
+            with st.form("form_alt_status_master"):
+                alvo_user = st.selectbox(
+                    "Selecionar Usuário:",
+                    df_usrs["nome"].tolist() if not df_usrs.empty else [],
+                )
+                novo_status_alvo = st.selectbox(
+                    "Alterar Status:", ["Ativo", "Inativo"]
+                )
+                if st.form_submit_button("Atualizar Status do Usuário"):
+                    if alvo_user:
+                        conn = sqlite3.connect("puxada_ambev.db")
+                        cursor = conn.cursor()
+                        cursor.execute(
+                            "UPDATE usuarios SET status = ? WHERE nome = ?",
+                            (novo_status_alvo, alvo_user),
+                        )
+                        conn.commit()
+                        conn.close()
+                        st.success(
+                            f"Status do usuário **{alvo_user}** alterado para **{novo_status_alvo}** com sucesso!"
+                        )
+                        st.rerun()
 
     elif "Relatórios" in dept_atual:
         st.subheader("Base de Dados Completa para Download")
@@ -2681,6 +3103,8 @@ else:
                 "gestao_ressuprimento_diario",
                 "metas_ressuprimento_mensal",
                 "agendamentos_descarga",
+                "cadastro_trechos_frete",
+                "politica_estoque_base",
             ],
         )
         conn = sqlite3.connect("puxada_ambev.db")
