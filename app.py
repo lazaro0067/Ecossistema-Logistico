@@ -1124,7 +1124,6 @@ def render_gestao_ressuprimento(operacao):
                 df_diario["data_registro"], errors="coerce"
             )
             
-            # REQUISIÇÃO: Se nenhum mês for selecionado, traz o ano inteiro
             if not meses_selecionados:
                 meses_selecionados = list(range(1, 13))
 
@@ -1200,15 +1199,14 @@ def render_gestao_ressuprimento(operacao):
                 axis=1,
             )
             
-            # REQUISIÇÃO: Nova coluna "Pendência Período" (Meta - Real)
-            df_comp["PENDÊNCIA PERÍODO"] = df_comp["META"] - df_comp["REAL"]
+            # REQUISIÇÃO: Pendência Período ajustada estritamente para Real - Meta
+            df_comp["PENDÊNCIA PERÍODO"] = df_comp["REAL"] - df_comp["META"]
 
-            # REQUISIÇÃO: O total soma rigorosamente apenas Cerveja e Nab
             df_cerveja_nab = df_comp[df_comp["INDICADOR"].isin(["Cerveja", "Nab"])]
             tot_meta = df_cerveja_nab["META"].sum()
             tot_real = df_cerveja_nab["REAL"].sum()
             tot_tend = df_cerveja_nab["TEND."].sum()
-            tot_pend = tot_meta - tot_real
+            tot_pend = tot_real - tot_meta
             
             tot_ating_real = (tot_real / tot_meta * 100) if tot_meta > 0 else 0.0
             tot_ating_tend = (tot_tend / tot_meta * 100) if tot_meta > 0 else 0.0
