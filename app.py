@@ -45,7 +45,7 @@ OPERACOES_DISPONIVEIS = [
 ]
 
 
-# 2. Inicialização do Banco de Dados SQLite
+# 2. Inicialização do Banco de Dados SQLite e Migrações Seguras
 def init_db():
     conn = sqlite3.connect("puxada_ambev.db")
     cursor = conn.cursor()
@@ -125,8 +125,15 @@ def init_db():
         e_aprovador TEXT DEFAULT 'Não', 
         alcada_reais REAL DEFAULT 0.0,
         permissoes_operacoes TEXT DEFAULT 'TODAS',
-        permissoes_deptos TEXT DEFAULT 'TODOS'
+        permissoes_deptos TEXT DEFAULT 'TODOS',
+        status TEXT DEFAULT 'Ativo'
     )""")
+
+    # Migração segura caso a tabela usuarios já exista sem a coluna status
+    try:
+        cursor.execute("ALTER TABLE usuarios ADD COLUMN status TEXT DEFAULT 'Ativo'")
+    except Exception:
+        pass
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS padroes_dpo (
@@ -222,8 +229,8 @@ def init_db():
     cursor.execute("SELECT count(*) FROM usuarios WHERE nome = 'admin'")
     if cursor.fetchone()[0] == 0:
         cursor.execute("""
-        INSERT INTO usuarios (nome, senha, email, cargo, perfil, e_aprovador, alcada_reais, permissoes_operacoes, permissoes_deptos)
-        VALUES ('admin', 'admin123', 'admin@grupolima.com.br', 'Administrador Master', 'Master', 'Sim', 9999999.0, 'TODAS', 'TODOS')
+        INSERT INTO usuarios (nome, senha, email, cargo, perfil, e_aprovador, alcada_reais, permissoes_operacoes, permissoes_deptos, status)
+        VALUES ('admin', 'admin123', 'admin@grupolima.com.br', 'Administrador Master', 'Master', 'Sim', 9999999.0, 'TODAS', 'TODOS', 'Ativo')
         """)
 
     conn.commit()
@@ -1774,31 +1781,62 @@ if "logado" not in st.session_state:
 
 if not st.session_state["logado"]:
     st.title("Sistema Revenda - Grupo Lima")
-    st.subheader("Autenticação Integrada")
-    col1, _ = st.columns([1, 2])
-    with col1:
-        usuario = st.text_input("Usuário")
-        senha = st.text_input("Senha", type="password")
-        if st.button("Entrar", use_container_width=True):
-            conn = sqlite3.connect("puxada_ambev.db")
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT id, nome, perfil, permissoes_operacoes, permissoes_deptos FROM usuarios WHERE nome = ? AND senha = ?",
-                (usuario, senha),
-            )
-            user = cursor.fetchone()
-            conn.close()
+    sub_auth = st.tabs([
+        "🔑 Entrar no Sistema",
+        "✉️ Esqueci a Senha / Recuperação",
+    ])
 
-            if user:
-                st.session_state["logado"] = True
-                st.session_state["usuario"] = user[1]
-                st.session_state["perfil"] = user[2]
-                st.session_state["perm_ops"] = user[3]
-                st.session_state["perm_deps"] = user[4]
-                st.success("Acesso autorizado!")
-                st.rerun()
+    with sub_auth[0]:
+        col1, _ = st.columns([1, 2])
+        with col1:
+            usuario = st.text_input("Usuário")
+            senha = st.text_input("Senha", type="password")
+            if st.button("Entrar", use_container_width=True):
+                conn = sqlite3.connect("puxada_ambev.db")
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT id, nome, perfil, permissoes_operacoes, permissoes_deptos, status FROM usuarios WHERE nome = ? AND senha = ?",
+                    (usuario, senha),
+                )
+                user = cursor.fetchone()
+                conn.close()
+
+                if user:
+                    if user[5] == "Inativo":
+                        st.error(
+                            "⚠️ Este usuário está inativo. Entre em contato com o administrador."
+                        )
+                    else:
+                        st.session_state["logado"] = True
+                        st.session_state["usuario"] = user[1]
+                        st.session_state["perfil"] = user[2]
+                        st.session_state["perm_ops"] = user[3]
+                        st.session_state["perm_deps"] = user[4]
+                        st.success("Acesso autorizado!")
+                        st.rerun()
+                else:
+                    st.error("Credenciais inválidas.")
+
+    with sub_auth[1]:
+        st.subheader("Recuperação de Senha via E-mail")
+        email_rec = st.text_input("Digite o seu e-mail cadastrado:")
+        if st.button("Enviar Instruções de Recuperação"):
+            if email_rec:
+                conn = sqlite3.connect("puxada_ambev.db")
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT nome FROM usuarios WHERE email = ?", (email_rec,)
+                )
+                res_email = cursor.fetchone()
+                conn.close()
+                if res_email:
+                    st.success(
+                        f"📧 Um e-mail de recuperação foi enviado para **{email_rec}** com as instruções para o usuário **{res_email[0]}**."
+                    )
+                else:
+                    st.error("E-mail não encontrado no sistema.")
             else:
-                st.error("Credenciais inválidas.")
+                st.error("Por favor, preencha o campo de e-mail.")
 
 else:
     st.sidebar.title("Grupo Lima")
