@@ -221,7 +221,7 @@ def init_db():
 init_db()
 
 
-# 3. Funções Auxiliares de Leitura e Tratamento Robustas
+# 3. Funções Auxiliares de Leitura e Tratamento Ultra-Robustas
 def read_word_file(file_obj):
     if not HAS_DOCX:
         return "A biblioteca 'python-docx' não está instalada no servidor."
@@ -245,57 +245,73 @@ def read_word_file(file_obj):
 
 
 def robust_read_file(file_obj):
-    """Lê com segurança arquivos Excel (.xlsx, .xls), Word e CSV, testando diferentes cabeçalhos para evitar erros de ValueError."""
+    """Lê com segurança máxima arquivos Excel (.xlsx, .xls), Word e CSV, encontrando cabeçalhos automaticamente."""
     filename = str(file_obj.name).lower()
 
-    if filename.endswith(".xlsx") or filename.endswith(".xls"):
-        for h in [0, 1, 2, 3]:
+    if filename.endswith(".xls"):
+        for h in [0, 1, 2, 3, 4, 5]:
             try:
                 file_obj.seek(0)
-                df = pd.read_excel(file_obj, header=h)
-                # Verifica se encontrou colunas válidas (não vazias ou sem nome genérico excessivo)
+                df = pd.read_excel(file_obj, header=h, engine="xlrd")
                 if df is not None and not df.empty and len(df.columns) > 1:
+                    # Remove colunas inteiramente vazias se houver
+                    df = df.dropna(how="all", axis=1)
                     return df
             except Exception:
                 continue
-        # Tentativa final sem restrição
-        file_obj.seek(0)
-        return pd.read_excel(file_obj)
 
-    elif filename.endswith(".docx") or filename.endswith(".doc"):
+    if filename.endswith(".xlsx") or filename.endswith(".xls"):
+        for h in [0, 1, 2, 3, 4, 5]:
+            try:
+                file_obj.seek(0)
+                df = pd.read_excel(file_obj, header=h, engine="openpyxl")
+                if df is not None and not df.empty and len(df.columns) > 1:
+                    df = df.dropna(how="all", axis=1)
+                    return df
+            except Exception:
+                try:
+                    file_obj.seek(0)
+                    df = pd.read_excel(file_obj, header=h)
+                    if df is not None and not df.empty and len(df.columns) > 1:
+                        df = df.dropna(how="all", axis=1)
+                        return df
+                except Exception:
+                    continue
+
+    if filename.endswith(".docx") or filename.endswith(".doc"):
         text = read_word_file(file_obj)
         lines = [line.split("|") for line in text.split("\n") if line.strip()]
         return pd.DataFrame(lines) if lines else pd.DataFrame()
 
-    else:
-        for sep_char in [";", ",", "\t"]:
+    for sep_char in [";", ",", "\t"]:
+        try:
+            file_obj.seek(0)
+            df = pd.read_csv(
+                file_obj,
+                sep=sep_char,
+                encoding="utf-8-sig",
+                engine="python",
+                on_bad_lines="skip",
+            )
+            if df is not None and len(df.columns) > 1:
+                return df
+        except Exception:
             try:
                 file_obj.seek(0)
                 df = pd.read_csv(
                     file_obj,
                     sep=sep_char,
-                    encoding="utf-8-sig",
+                    encoding="latin1",
                     engine="python",
                     on_bad_lines="skip",
                 )
                 if df is not None and len(df.columns) > 1:
                     return df
             except Exception:
-                try:
-                    file_obj.seek(0)
-                    df = pd.read_csv(
-                        file_obj,
-                        sep=sep_char,
-                        encoding="latin1",
-                        engine="python",
-                        on_bad_lines="skip",
-                    )
-                    if df is not None and len(df.columns) > 1:
-                        return df
-                except Exception:
-                    continue
-        file_obj.seek(0)
-        return pd.read_csv(file_obj, sep=None, engine="python", on_bad_lines="skip")
+                continue
+
+    file_obj.seek(0)
+    return pd.read_excel(file_obj)
 
 
 def parse_br_float(val):
