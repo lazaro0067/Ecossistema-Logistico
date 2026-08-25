@@ -1075,17 +1075,16 @@ def render_gestao_ressuprimento(operacao):
     cestas_ordenadas = list(cestas_map.keys())
 
     with tab_m1:
-        # Seção de Links de Acesso Direto Estático por Operação
         st.markdown("##### 🔗 Links de Acesso Direto (Visualização Estática / Sem Atualização)")
-        st.caption("Copie o link específico abaixo para compartilhar a visualização desta operação sem permissão de edição:")
+        st.caption("Clique nos botões abaixo para abrir a visualização direta e somente leitura de cada operação:")
         
-        base_url = st.get_option("server.baseUrlPath") or ""
-        # Montar URLs amigáveis para visualização direta por operação
-        col_lnk1, col_lnk2, col_lnk3, col_lnk4 = st.columns(4)
-        col_lnk1.markdown(f"**Barreiras:**\n`?visualizacao=ressuprimento&op=Lima+Barreiras`")
-        col_lnk2.markdown(f"**Rio Verde:**\n`?visualizacao=ressuprimento&op=Lima+Rio+Verde`")
-        col_lnk3.markdown(f"**São Félix:**\n`?visualizacao=ressuprimento&op=Lima+S%C3%A3o+F%C3%élix`")
-        col_lnk4.markdown(f"**Bahia (Consolidado):**\n`?visualizacao=ressuprimento&op=Bahia`")
+        col_btn1, col_btn2, col_btn3, col_btn4 = st.columns(4)
+        
+        # Botões com links diretos para cada operação
+        col_btn1.link_button("🔗 Barreiras", "?visualizacao=ressuprimento&op=Lima+Barreiras", use_container_width=True)
+        col_btn2.link_button("🔗 Rio Verde", "?visualizacao=ressuprimento&op=Lima+Rio+Verde", use_container_width=True)
+        col_btn3.link_button("🔗 São Félix", "?visualizacao=ressuprimento&op=Lima+S%C3%A3o+F%C3%élix", use_container_width=True)
+        col_btn4.link_button("🔗 Bahia (Consol.)", "?visualizacao=ressuprimento&op=Bahia", use_container_width=True)
 
         st.divider()
 
