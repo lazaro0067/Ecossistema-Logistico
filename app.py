@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 import io
 import re
 import sqlite3
@@ -1973,15 +1973,41 @@ else:
 
         with sub_ress[3]:
             st.subheader("📅 Sugestão de Agendamento e Marcação de Pedidos por Dia")
-            st.caption("Selecione o dia de puxada desejado para planejar a quantidade de caixas e paletes que precisam ser marcadas com base na meta de cobertura.")
+            
+            # Buscar datas já marcadas no relatório para validação
+            conn = sqlite3.connect("puxada_ambev.db")
+            df_marcadas_hist = pd.read_sql_query(
+                f"SELECT DISTINCT data_puxada FROM pedidos_marcados WHERE operacao='{unidade}'",
+                conn,
+            )
+            conn.close()
+
+            datas_existentes = []
+            if not df_marcadas_hist.empty:
+                for dt_str in df_marcadas_hist["data_puxada"].dropna().unique():
+                    try:
+                        datas_existentes.append(datetime.strptime(str(dt_str).strip(), "%d/%m/%Y").date())
+                    except Exception:
+                        try:
+                            datas_existentes.append(datetime.strptime(str(dt_str).strip(), "%Y-%m-%d").date())
+                        except Exception:
+                            pass
+
+            ultima_data_marcacao = max(datas_existentes) if datas_existentes else datetime.now().date()
+            min_data_permitida = ultima_data_marcacao + timedelta(days=1)
+
+            st.caption(f"⚠️ A última data de marcação encontrada no relatório subido é **{ultima_data_marcacao.strftime('%d/%m/%Y')}**. Você só pode selecionar datas maiores que esta.")
 
             df_sug_agend = carregar_estoque_consolidado(unidade)
 
             if df_sug_agend is not None and not df_sug_agend.empty:
                 c_ag1, c_ag2 = st.columns(2)
                 
-                # Permite escolher ou digitar a data da puxada alvo
-                data_puxada_alvo = c_ag1.date_input("Data de Puxada Alvo:", value=datetime.now().date())
+                data_puxada_alvo = c_ag1.date_input(
+                    "Data de Puxada Alvo:",
+                    value=min_data_permitida,
+                    min_value=min_data_permitida
+                )
                 meta_doi_marcacao = c_ag2.number_input(
                     "Meta DOI Desejada para Marcação (Dias):",
                     min_value=1.0,
@@ -1991,22 +2017,38 @@ else:
                     key="meta_doi_marcacao_key"
                 )
 
-                # Cálculo de sugestão para marcação no dia
-                df_sug_agend["DOI_Projetado"] = df_sug_agend.apply(
-                    lambda r: round(r["Disp"] / r["Linear_Vendas"], 1)
-                    if r["Linear_Vendas"] > 0
-                    else (999.0 if r["Disp"] > 0 else 0.0),
-                    axis=1,
+                # Calcular dias de projeção e somar o que já está marcado/puxado no relatório
+                conn = sqlite3.connect("puxada_ambev.db")
+                df_tot_marc = pd.read_sql_query(
+                    f"SELECT cod_clean, SUM(cx_marcadas) as total_marcado_rel FROM pedidos_marcados WHERE operacao='{unidade}' GROUP BY cod_clean",
+                    conn,
                 )
+                conn.close()
+
+                if not df_tot_marc.empty:
+                    df_sug_agend = pd.merge(df_sug_agend, df_tot_marc, on="cod_clean", how="left")
+                    df_sug_agend["total_marcado_rel"] = df_sug_agend["total_marcado_rel"].fillna(0)
+                else:
+                    df_sug_agend["total_marcado_rel"] = 0.0
+
+                # Estoque disponível + o que já veio marcado no relatório subido
+                df_sug_agend["Estoque_Disponivel_E_Marcado"] = df_sug_agend["Disp"] + df_sug_agend["total_marcado_rel"]
+
+                # Abater a saída diária esperada com base na diferença de dias
+                dias_proj = max(1, (data_puxada_alvo - ultima_data_marcacao).days)
 
                 caixas_sugeridas = []
                 hl_sugeridos = []
                 for _, r in df_sug_agend.iterrows():
                     lin = float(r["Linear_Vendas"])
-                    disp = float(r["Disp"])
+                    disp_marc = float(r["Estoque_Disponivel_E_Marcado"])
                     f_hl = float(r["fator_hl"])
                     
-                    cx_nec = max(0, int(lin * meta_doi_marcacao - disp))
+                    # Projeção de consumo até a data alvo
+                    consumo_projetado = lin * dias_proj
+                    estoque_projetado_alvo = max(0, disp_marc - consumo_projetado)
+                    
+                    cx_nec = max(0, int(lin * meta_doi_marcacao - estoque_projetado_alvo))
                     caixas_sugeridas.append(cx_nec)
                     hl_sugeridos.append(round(cx_nec * f_hl, 2))
 
@@ -2021,7 +2063,7 @@ else:
                 tot_hl_marc = sum(hl_sugeridos)
                 skus_marc = len([n for n in caixas_sugeridas if n > 0])
 
-                st.markdown(f"##### 📦 Resumo da Sugestão para o Dia: {data_puxada_alvo.strftime('%d/%m/%Y')}")
+                st.markdown(f"##### 📦 Resumo da Sugestão para o Dia: {data_puxada_alvo.strftime('%d/%m/%Y')} (Considerando base de {ultima_data_marcacao.strftime('%d/%m/%Y')})")
                 m_ag1, m_ag2, m_ag3, m_ag4 = st.columns(4)
                 m_ag1.metric("Total Paletes Sugeridos", f"{tot_paletes_marc:,.1f} paletes".replace(".", ","))
                 m_ag2.metric("Total Caixas Sugeridas", f"{formatar_br(tot_cx_marc)} cx")
@@ -2037,6 +2079,7 @@ else:
                     "Marca",
                     "Classe_ABC",
                     "Disp",
+                    "total_marcado_rel",
                     "Linear_Vendas",
                     "DOI_Atual",
                     "Paletes_Sugeridos",
@@ -2046,6 +2089,7 @@ else:
 
                 df_view_ag = df_sug_agend[cols_ag_view].copy()
                 df_view_ag["Disp"] = df_view_ag["Disp"].apply(formatar_br)
+                df_view_ag["total_marcado_rel"] = df_view_ag["total_marcado_rel"].apply(formatar_br)
                 df_view_ag["Linear_Vendas"] = df_view_ag["Linear_Vendas"].apply(formatar_br)
                 df_view_ag["DOI_Atual"] = df_view_ag["DOI_Atual"].apply(lambda x: f"{x:.1f}".replace(".", ","))
                 df_view_ag["Paletes_Sugeridos"] = df_view_ag["Paletes_Sugeridos"].apply(lambda x: f"{x:.1f}".replace(".", ","))
