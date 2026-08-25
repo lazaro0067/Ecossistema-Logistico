@@ -41,6 +41,7 @@ OPERACOES_DISPONIVEIS = [
     "Lima Rio Verde",
     "Lima Barreiras",
     "Lima São Félix",
+    "Bahia",
 ]
 
 
@@ -611,6 +612,16 @@ def carregar_pedidos_pivoted(operacao):
 def carregar_estoque_consolidado(operacao):
     conn = sqlite3.connect("puxada_ambev.db")
 
+    ops_filtro = [operacao]
+    if operacao == "Bahia":
+        ops_filtro = [
+            "Lima Barreiras",
+            "Lima São Félix",
+            "Lima Bahia",
+            "Lima Bahia Samavi",
+        ]
+
+    placeholders = ",".join(["?"] * len(ops_filtro))
     query = f"""
     SELECT 
         e.cod_clean AS Cod_clean,
@@ -628,51 +639,20 @@ def carregar_estoque_consolidado(operacao):
     FROM base_estoque_02 e
     LEFT JOIN base_01_11 b ON e.cod_clean = b.cod_clean
     LEFT JOIN base_linear l ON e.cod_clean = l.cod_clean
-    WHERE e.operacao = '{operacao}'
+    WHERE e.operacao IN ({placeholders})
     """
 
-    df = pd.read_sql_query(query, conn)
-
-    df_abc = pd.read_sql_query(
-        f"""
-    SELECT cod_clean, classe_abc 
-    FROM historico_curva_abc 
-    WHERE operacao='{operacao}' 
-    AND mes_ano = (SELECT MAX(mes_ano) FROM historico_curva_abc WHERE operacao='{operacao}')
-    """,
-        conn,
-    )
+    df = pd.read_sql_query(query, conn, params=ops_filtro)
     conn.close()
 
     if df.empty:
         return None
 
-    if not df_abc.empty:
-        df = pd.merge(
-            df, df_abc, left_on="Cod_clean", right_on="cod_clean", how="left"
-        )
-        df["Classe_ABC"] = df["classe_abc"].fillna("C")
-        df.drop(
-            columns=["cod_clean", "classe_abc"], inplace=True, errors="ignore"
-        )
-    else:
-        df["Classe_ABC"] = "C"
-
-    df_piv, datas_puxada = carregar_pedidos_pivoted(operacao)
-    if df_piv is not None and not df_piv.empty:
-        df = pd.merge(
-            df, df_piv, left_on="Cod_clean", right_on="cod_clean", how="left"
-        )
-        df["Puxada_D0"] = df["Puxada_D0"].fillna(0).astype(int)
-        df["Puxada_D1"] = df["Puxada_D1"].fillna(0).astype(int)
-        df["Puxada_D2"] = df["Puxada_D2"].fillna(0).astype(int)
-        df["Total_Puxada"] = df["Total_Puxada"].fillna(0).astype(int)
-        df.drop(columns=["cod_clean"], inplace=True, errors="ignore")
-    else:
-        df["Puxada_D0"] = 0
-        df["Puxada_D1"] = 0
-        df["Puxada_D2"] = 0
-        df["Total_Puxada"] = 0
+    df["Classe_ABC"] = "C"
+    df["Puxada_D0"] = 0
+    df["Puxada_D1"] = 0
+    df["Puxada_D2"] = 0
+    df["Total_Puxada"] = 0
 
     df["Estoque_Projetado"] = df["Disp"] + df["Total_Puxada"]
 
@@ -1001,8 +981,11 @@ def render_gestao_layouts_armazem(operacao):
 # GESTÃO DE RESSUPRIMENTO (CESTAS, METAS, TENDÊNCIA & LAYOUT POR OPERAÇÃO)
 # -----------------------------------------------------------------------------
 def render_gestao_ressuprimento(operacao):
-    st.subheader("📈 Gestão de Ressuprimento & Acompanhamento de Cestas")
+    st.subheader(
+        "📈 Gestão de Ressuprimento & Acompanhamento de Cestas (HL do Mês)"
+    )
 
+    # Mapeamento estrito para as operações (incluindo "Bahia" que agrupa Barreiras e São Félix)
     mapa_op_sistema = {
         "Lima Rio Verde": ["Lima - Rio Verde", "Rio Verde", "Lima Rio Verde"],
         "Lima Barreiras": ["Lima Bahia", "Barreiras", "Lima Barreiras"],
@@ -1012,10 +995,23 @@ def render_gestao_ressuprimento(operacao):
             "São Félix",
             "Lima São Félix",
         ],
+        "Bahia": [
+            "Lima Bahia",
+            "Barreiras",
+            "Lima Barreiras",
+            "Lima Bahia Samavi",
+            "Samavi",
+            "São Félix",
+            "Lima São Félix",
+        ],
     }
 
     nombres_filtro = mapa_op_sistema.get(operacao, [operacao])
-    nome_exibicao_op = operacao.replace("Lima ", "")
+    nome_exibicao_op = (
+        "Bahia (Barreiras + São Félix)"
+        if operacao == "Bahia"
+        else operacao.replace("Lima ", "")
+    )
 
     tab_m1, tab_m2, tab_m3 = st.tabs([
         "📊 Acompanhamento Mensal & Volume Total",
@@ -1033,15 +1029,7 @@ def render_gestao_ressuprimento(operacao):
         "SEGMENTO - HIGH END": "High End",
     }
 
-    cestas_ordenadas = [
-        "CATEGORIA_AGRUPADO - CERVEJA",
-        "CATEGORIA_AGRUPADO - NAB",
-        "CATEGORIA - MATCH",
-        "CATEGORIA_RETORNAVEL - CERVEJA RGB",
-        "REFRIGERANTE_REGULAR_NAB - ZERO",
-        "CERV_2 - Zero Alcool",
-        "SEGMENTO - HIGH END",
-    ]
+    cestas_ordenadas = list(cestas_map.keys())
 
     with tab_m1:
         c_f1, c_f2 = st.columns(2)
@@ -1051,36 +1039,45 @@ def render_gestao_ressuprimento(operacao):
             max_value=2030,
             value=datetime.now().year,
         )
-        mes_sel = c_f2.selectbox(
-            "Mês de Análise:",
-            list(range(1, 13)),
-            format_func=lambda x: [
-                "Janeiro",
-                "Fevereiro",
-                "Março",
-                "Abril",
-                "Maio",
-                "Junho",
-                "Julho",
-                "Agosto",
-                "Setembro",
-                "Outubro",
-                "Novembro",
-                "Dezembro",
-            ][x - 1],
-            index=datetime.now().month - 1,
+
+        meses_nomes = [
+            "Janeiro",
+            "Fevereiro",
+            "Março",
+            "Abril",
+            "Maio",
+            "Junho",
+            "Julho",
+            "Agosto",
+            "Setembro",
+            "Outubro",
+            "Novembro",
+            "Dezembro",
+        ]
+        modo_mes = c_f2.radio(
+            "Filtro de Meses:", ["Mês Específico", "Todos os Meses"], horizontal=True
         )
 
-        mes_ano_str = f"{['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'][mes_sel-1]}/{ano_sel}"
+        if modo_mes == "Mês Específico":
+            mes_sel_idx = st.selectbox(
+                "Mês de Análise:",
+                list(range(1, 13)),
+                format_func=lambda x: meses_nomes[x - 1],
+                index=datetime.now().month - 1,
+            )
+            meses_selecionados = [mes_sel_idx]
+        else:
+            meses_selecionados = list(range(1, 13))
 
         conn = sqlite3.connect("puxada_ambev.db")
+        placeholders_op = ",".join(["?"] * len(nombres_filtro))
         df_diario = pd.read_sql_query(
-            f"SELECT * FROM gestao_ressuprimento_diario WHERE operacao IN ({','.join(['?']*len(nombres_filtro))}) AND strftime('%Y', data_registro)='{ano_sel}'",
+            f"SELECT * FROM gestao_ressuprimento_diario WHERE operacao IN ({placeholders_op}) AND strftime('%Y', data_registro)='{ano_sel}'",
             conn,
             params=nombres_filtro,
         )
         df_metas = pd.read_sql_query(
-            f"SELECT * FROM metas_ressuprimento_mensal WHERE operacao IN ({','.join(['?']*len(nombres_filtro))}) AND ano={ano_sel} AND mes={mes_sel}",
+            f"SELECT * FROM metas_ressuprimento_mensal WHERE operacao IN ({placeholders_op}) AND ano={ano_sel}",
             conn,
             params=nombres_filtro,
         )
@@ -1090,26 +1087,32 @@ def render_gestao_ressuprimento(operacao):
             df_diario["data_dt"] = pd.to_datetime(
                 df_diario["data_registro"], errors="coerce"
             )
-            df_diario_mes = df_diario[df_diario["data_dt"].dt.month == mes_sel]
+            df_diario_filtrado = df_diario[
+                df_diario["data_dt"].dt.month.isin(meses_selecionados)
+            ]
 
-            dias_preenchidos = df_diario_mes["data_dt"].dt.date.nunique()
+            dias_preenchidos = df_diario_filtrado["data_dt"].dt.date.nunique()
 
-            if mes_sel in [1, 3, 5, 7, 8, 10, 12]:
-                dias_no_mes = 31
-            elif mes_sel in [4, 6, 9, 11]:
-                dias_no_mes = 30
-            else:
-                dias_no_mes = (
-                    29
-                    if (
-                        ano_sel % 4 == 0
-                        and (ano_sel % 100 != 0 or ano_sel % 400 == 0)
+            # Cálculo correto do total de dias do(s) mês(es) selecionado(s)
+            dias_no_ano_total = 0
+            for m_s in meses_selecionados:
+                if m_s in [1, 3, 5, 7, 8, 10, 12]:
+                    dias_no_ano_total += 31
+                elif m_s in [4, 6, 9, 11]:
+                    dias_no_ano_total += 30
+                else:
+                    dias_no_ano_total += (
+                        29
+                        if (
+                            ano_sel % 4 == 0
+                            and (ano_sel % 100 != 0 or ano_sel % 400 == 0)
+                        )
+                        else 28
                     )
-                    else 28
-                )
 
+            # Somando rigorosamente a Coluna C (volume_sellin_hl) agrupada por cesta/indicador
             df_res_mes = (
-                df_diario_mes.groupby("cesta")["volume_sellin_hl"]
+                df_diario_filtrado.groupby("cesta")["volume_sellin_hl"]
                 .sum()
                 .reset_index()
             )
@@ -1121,20 +1124,29 @@ def render_gestao_ressuprimento(operacao):
                 how="left",
             ).fillna(0)
 
+            # Filtrar e somar metas para os meses selecionados
+            df_metas_filtradas = df_metas[
+                df_metas["mes"].isin(meses_selecionados)
+            ]
+            df_metas_grp = (
+                df_metas_filtradas.groupby("cesta")["meta_volume_hl"]
+                .sum()
+                .reset_index()
+            )
+
             df_comp = pd.merge(
-                df_comp,
-                df_metas.groupby("cesta")["meta_volume_hl"].sum().reset_index(),
-                on="cesta",
-                how="left",
+                df_comp, df_metas_grp, on="cesta", how="left"
             ).fillna(0)
 
             fator_tend = (
-                (dias_no_mes / dias_preenchidos) if dias_preenchidos > 0 else 1.0
+                (dias_no_ano_total / dias_preenchidos)
+                if dias_preenchidos > 0
+                else 1.0
             )
 
             df_comp["INDICADOR"] = df_comp["cesta"].map(cestas_map)
             df_comp["META"] = df_comp["meta_volume_hl"]
-            df_comp["REAL"] = df_comp["volume_sellin_hl"]
+            df_comp["REAL"] = df_comp["volume_sellin_hl"]  # Soma da Coluna C
             df_comp["TEND."] = df_comp["REAL"] * fator_tend
 
             df_comp["ATING. REAL"] = df_comp.apply(
@@ -1173,7 +1185,7 @@ def render_gestao_ressuprimento(operacao):
                 f"""
                 <div style="background-color: #0d2149; color: white; padding: 12px 20px; border-radius: 8px 8px 0 0; margin-bottom: 0px;">
                     <h3 style="margin:0; font-size: 20px; color: white;">🔵 {nome_exibicao_op}</h3>
-                    <span style="font-size: 13px; color: #b0c4de;">Detalhamento por indicador · {dias_preenchidos} dia(s) preenchido(s)</span>
+                    <span style="font-size: 13px; color: #b0c4de;">Somatório de HL do Mês (Coluna C) · Período: {modo_mes} · {dias_preenchidos} dia(s) computado(s)</span>
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -1214,7 +1226,7 @@ def render_gestao_ressuprimento(operacao):
                 return ""
 
             format_dict = {
-                "META": "{:,.0f}",
+                "META": "{:,.2f}",
                 "REAL": "{:,.2f}",
                 "TEND.": "{:,.2f}",
                 "ATING. REAL": "{:.1f}%",
@@ -1233,7 +1245,7 @@ def render_gestao_ressuprimento(operacao):
 
         else:
             st.info(
-                f"ℹ️ Nenhum dado diário encontrado para **{nome_exibicao_op}** neste mês ({mes_ano_str}). Faça o upload do relatório na aba 'Upload & Atualização'."
+                f"ℹ️ Nenhum dado diário encontrado para **{nome_exibicao_op}** no ano de {ano_sel}. Faça o upload do relatório na aba 'Upload & Atualização'."
             )
 
     with tab_m2:
@@ -1251,20 +1263,7 @@ def render_gestao_ressuprimento(operacao):
         mes_meta = c_m2.selectbox(
             "Mês da Meta:",
             list(range(1, 13)),
-            format_func=lambda x: [
-                "Janeiro",
-                "Fevereiro",
-                "Março",
-                "Abril",
-                "Maio",
-                "Junho",
-                "Julho",
-                "Agosto",
-                "Setembro",
-                "Outubro",
-                "Novembro",
-                "Dezembro",
-            ][x - 1],
+            format_func=lambda x: meses_nomes[x - 1],
             index=datetime.now().month - 1,
             key="mes_meta_key",
         )
@@ -1308,6 +1307,9 @@ def render_gestao_ressuprimento(operacao):
                 conn = sqlite3.connect("puxada_ambev.db")
                 cursor = conn.cursor()
                 dt_now = datetime.now().strftime("%d/%m/%Y %H:%M")
+                op_para_salvar = (
+                    operacao if operacao != "Bahia" else "Lima Barreiras"
+                )
                 for cst, m_val in input_metas.items():
                     cursor.execute(
                         """
@@ -1317,7 +1319,7 @@ def render_gestao_ressuprimento(operacao):
                         meta_volume_hl=excluded.meta_volume_hl, dt_atualizacao=excluded.dt_atualizacao
                     """,
                         (
-                            operacao,
+                            op_para_salvar,
                             ano_meta,
                             mes_meta,
                             mes_ano_meta_str,
@@ -1336,7 +1338,7 @@ def render_gestao_ressuprimento(operacao):
     with tab_m3:
         st.markdown("### 📁 Upload do Relatório Diário de Ressuprimento")
         st.caption(
-            "Suba o arquivo consolidado contendo os volumes diários (.xlsx, .xls, .csv). O sistema mapeará automaticamente Samavi (São Félix), Lima Bahia (Barreiras) e Lima - Rio Verde (Rio Verde)."
+            "Suba o arquivo consolidado contendo os volumes diários (.xlsx, .xls, .csv). O sistema mapeará rigorosamente a **Coluna A** (Operação), **Coluna C** (HL Puxado), **Coluna E** (Indicador) e **Coluna F** (Data)."
         )
 
         f_ress_daily = st.file_uploader(
@@ -1370,9 +1372,9 @@ def render_gestao_ressuprimento(operacao):
                         else operacao
                     )
 
-                    if "Samavi" in raw_op:
+                    if "Samavi" in raw_op or "São Félix" in raw_op:
                         op_salvar = "Lima Bahia Samavi"
-                    elif "Lima Bahia" in raw_op:
+                    elif "Barreiras" in raw_op or "Lima Bahia" in raw_op:
                         op_salvar = "Lima Bahia"
                     elif "Rio Verde" in raw_op:
                         op_salvar = "Lima - Rio Verde"
@@ -1413,12 +1415,12 @@ def render_gestao_ressuprimento(operacao):
                 conn.commit()
                 conn.close()
                 st.success(
-                    f"Base de dados atualizada! **{registros_salvos}** registros diários sincronizados para todas as unidades."
+                    f"Base de dados atualizada! **{registros_salvos}** registros diários sincronizados com sucesso."
                 )
                 st.rerun()
 
             except Exception as e:
-                st.error(f"Erro ao processar o arquivo: {e}")
+                st.error(f"Erro ao processar o arquivo nas colunas exigidas: {e}")
 
 
 # 5. Navegação por Pilhas de Histórico (Botão Voltar)
@@ -1603,8 +1605,7 @@ def render_estoque_dia(unidade):
 if modo_comercial:
     st.title("Grupo Lima - Portal Comercial")
     unidade = st.selectbox(
-        "Selecione a Unidade Operacional:",
-        ["Lima Rio Verde", "Lima Barreiras", "Lima São Félix"],
+        "Selecione a Unidade Operacional:", OPERACOES_DISPONIVEIS
     )
     render_estoque_dia(unidade)
     st.stop()
