@@ -245,7 +245,6 @@ def read_word_file(file_obj):
 
 
 def robust_read_file(file_obj):
-    """Lê com segurança máxima arquivos Excel (.xlsx, .xls), Word e CSV, encontrando cabeçalhos automaticamente."""
     filename = str(file_obj.name).lower()
 
     if filename.endswith(".xls"):
@@ -353,7 +352,6 @@ def parse_br_float(val):
 
 
 def formatar_br(val):
-    """Formata valores numéricos para o padrão brasileiro (ex: 25.011,25 ou 25.011)"""
     try:
         if pd.isna(val):
             return "0,00"
@@ -468,7 +466,6 @@ def salvar_base_01_11(f_01):
 def salvar_base_linear(f_lin):
     df_lin = robust_read_file(f_lin)
 
-    # Identificação flexível da coluna de Código
     cols_str = [str(c).strip().lower() for c in df_lin.columns]
     col_cod = None
     for i, c in enumerate(cols_str):
@@ -478,7 +475,7 @@ def salvar_base_linear(f_lin):
     if col_cod is None:
         col_cod = df_lin.columns[0]
 
-    # REQUISIÇÃO: Pegar estritamente da Coluna E (índice 4) se existir, com fallback seguro
+    # REQUISIÇÃO ANTERIOR: Pegar estritamente da Coluna E (índice 4)
     if len(df_lin.columns) > 4:
         col_vendas = df_lin.columns[4]
     else:
@@ -647,51 +644,6 @@ def salvar_pedidos_marcados(f_pedidos, operacao):
     conn.close()
 
 
-def carregar_pedidos_pivoted(operacao):
-    conn = sqlite3.connect("puxada_ambev.db")
-    df_pm = pd.read_sql_query(
-        f"SELECT data_puxada, cod_clean, cx_marcadas FROM pedidos_marcados WHERE operacao='{operacao}'",
-        conn,
-    )
-    conn.close()
-
-    if df_pm.empty:
-        return None, []
-
-    datas_unicas = sorted(df_pm["data_puxada"].unique())
-
-    df_grp = (
-        df_pm.groupby(["cod_clean", "data_puxada"])["cx_marcadas"]
-        .sum()
-        .reset_index()
-    )
-    df_piv = (
-        df_grp.pivot(
-            index="cod_clean", columns="data_puxada", values="cx_marcadas"
-        )
-        .fillna(0)
-        .reset_index()
-    )
-
-    d0_col = datas_unicas[0] if len(datas_unicas) > 0 else None
-    d1_col = datas_unicas[1] if len(datas_unicas) > 1 else None
-    d2_col = datas_unicas[2] if len(datas_unicas) > 2 else None
-
-    df_piv["Puxada_D0"] = df_piv[d0_col] if d0_col else 0.0
-    df_piv["Puxada_D1"] = df_piv[d1_col] if d1_col else 0.0
-    df_piv["Puxada_D2"] = df_piv[d2_col] if d2_col else 0.0
-    df_piv["Total_Puxada"] = (
-        df_piv["Puxada_D0"] + df_piv["Puxada_D1"] + df_piv["Puxada_D2"]
-    )
-
-    return (
-        df_piv[
-            ["cod_clean", "Puxada_D0", "Puxada_D1", "Puxada_D2", "Total_Puxada"]
-        ],
-        datas_unicas,
-    )
-
-
 def carregar_estoque_consolidado(operacao):
     conn = sqlite3.connect("puxada_ambev.db")
 
@@ -708,7 +660,7 @@ def carregar_estoque_consolidado(operacao):
     query = f"""
     SELECT 
         e.cod_clean AS Cod_clean,
-        e.descricao AS Descricao,
+        COALESCE(e.descricao, b_01.descricao, 'PRODUTO') AS Descricao,
         COALESCE(l.tipo, 'OUTROS') AS Tipo,
         COALESCE(l.categoria, 'OUTROS') AS Categoria,
         CAST(COALESCE(e.inicial, 0) AS INTEGER) AS Inicial,
@@ -716,11 +668,11 @@ def carregar_estoque_consolidado(operacao):
         CAST(COALESCE(e.saida, 0) AS INTEGER) AS Saida,
         CAST(COALESCE(e.disponivel, 0) AS INTEGER) AS Disp,
         CAST(COALESCE(l.linear_vendas, 0) AS INTEGER) AS Linear_Vendas,
-        COALESCE(b.fator_hl, 0.0) AS fator_hl,
-        COALESCE(b.cx_pallet, 1.0) AS cx_pallet,
+        COALESCE(b_01.fator_hl, 0.0) AS fator_hl,
+        COALESCE(b_01.cx_pallet, 1.0) AS cx_pallet,
         e.dt_atualizacao AS dt_atualizacao
     FROM base_estoque_02 e
-    LEFT JOIN base_01_11 b ON e.cod_clean = b.cod_clean
+    LEFT JOIN base_01_11 b_01 ON e.cod_clean = b_01.cod_clean
     LEFT JOIN base_linear l ON e.cod_clean = l.cod_clean
     WHERE e.operacao IN ({placeholders})
     """
@@ -732,11 +684,7 @@ def carregar_estoque_consolidado(operacao):
         return None
 
     df["Classe_ABC"] = "C"
-    df["Puxada_D0"] = 0
-    df["Puxada_D1"] = 0
-    df["Puxada_D2"] = 0
     df["Total_Puxada"] = 0
-
     df["Estoque_Projetado"] = df["Disp"] + df["Total_Puxada"]
 
     df["DOI_Atual"] = df.apply(
@@ -2024,98 +1972,99 @@ else:
                 )
 
         with sub_ress[3]:
-            st.subheader("📅 Agendamento e Marcação de Pedidos em Paletes")
+            st.subheader("📅 Sugestão de Agendamento e Marcação de Pedidos por Dia")
+            st.caption("Selecione o dia de puxada desejado para planejar a quantidade de caixas e paletes que precisam ser marcadas com base na meta de cobertura.")
 
-            conn = sqlite3.connect("puxada_ambev.db")
-            query_pm = f"""
-            SELECT 
-                p.data_puxada,
-                p.cod_clean,
-                p.descricao,
-                p.cx_solicitadas,
-                p.cx_marcadas,
-                p.hl_marcado,
-                p.status_item,
-                p.numero_pedido,
-                p.dt_atualizacao,
-                COALESCE(b.cx_pallet, 1.0) AS cx_pallet
-            FROM pedidos_marcados p
-            LEFT JOIN base_01_11 b ON p.cod_clean = b.cod_clean
-            WHERE p.operacao='{unidade}'
-            """
-            df_pm_raw = pd.read_sql_query(query_pm, conn)
-            conn.close()
+            df_sug_agend = carregar_estoque_consolidado(unidade)
 
-            if not df_pm_raw.empty:
-                df_pm_raw["Paletes_Marcados"] = (
-                    df_pm_raw["cx_marcadas"] / df_pm_raw["cx_pallet"]
+            if df_sug_agend is not None and not df_sug_agend.empty:
+                c_ag1, c_ag2 = st.columns(2)
+                
+                # Permite escolher ou digitar a data da puxada alvo
+                data_puxada_alvo = c_ag1.date_input("Data de Puxada Alvo:", value=datetime.now().date())
+                meta_doi_marcacao = c_ag2.number_input(
+                    "Meta DOI Desejada para Marcação (Dias):",
+                    min_value=1.0,
+                    max_value=30.0,
+                    value=7.0,
+                    step=0.5,
+                    key="meta_doi_marcacao_key"
+                )
+
+                # Cálculo de sugestão para marcação no dia
+                df_sug_agend["DOI_Projetado"] = df_sug_agend.apply(
+                    lambda r: round(r["Disp"] / r["Linear_Vendas"], 1)
+                    if r["Linear_Vendas"] > 0
+                    else (999.0 if r["Disp"] > 0 else 0.0),
+                    axis=1,
+                )
+
+                caixas_sugeridas = []
+                hl_sugeridos = []
+                for _, r in df_sug_agend.iterrows():
+                    lin = float(r["Linear_Vendas"])
+                    disp = float(r["Disp"])
+                    f_hl = float(r["fator_hl"])
+                    
+                    cx_nec = max(0, int(lin * meta_doi_marcacao - disp))
+                    caixas_sugeridas.append(cx_nec)
+                    hl_sugeridos.append(round(cx_nec * f_hl, 2))
+
+                df_sug_agend["Cx_Sugeridas_Marcacao"] = caixas_sugeridas
+                df_sug_agend["HL_Sugerido"] = hl_sugeridos
+                df_sug_agend["Paletes_Sugeridos"] = (
+                    df_sug_agend["Cx_Sugeridas_Marcacao"] / df_sug_agend["cx_pallet"]
                 ).round(1)
 
-                datas_pux = sorted(df_pm_raw["data_puxada"].unique())
+                tot_paletes_marc = df_sug_agend["Paletes_Sugeridos"].sum()
+                tot_cx_marc = sum(caixas_sugeridas)
+                tot_hl_marc = sum(hl_sugeridos)
+                skus_marc = len([n for n in caixas_sugeridas if n > 0])
 
-                g_col1, g_col2 = st.columns([1, 2])
-                g_col1.markdown(
-                    f"**Datas de Puxada Identificadas no Anexo:** {', '.join(datas_pux)}"
-                )
-
-                resumo_dias = (
-                    df_pm_raw.groupby("data_puxada")
-                    .agg(
-                        Total_Paletes=("Paletes_Marcados", "sum"),
-                        Total_Caixas=("cx_marcadas", "sum"),
-                        Total_HL=("hl_marcado", "sum"),
-                        Total_Itens=("cod_clean", "nunique"),
-                    )
-                    .reset_index()
-                )
-
-                st.markdown(
-                    "##### 📦 Resumo Marcado por Data de Puxada (em Paletes)"
-                )
-                cols_met = st.columns(len(datas_pux))
-                for idx, row_d in resumo_dias.iterrows():
-                    if idx < len(cols_met):
-                        cols_met[idx].metric(
-                            f"📅 {row_d['data_puxada']}",
-                            f"{row_d['Total_Paletes']:,.1f} Paletes".replace(".", ","),
-                            f"{formatar_br(row_d['Total_Caixas'])} cx | {row_d['Total_HL']:,.2f} HL ({row_d['Total_Itens']} SKUs)".replace(".", ","),
-                        )
+                st.markdown(f"##### 📦 Resumo da Sugestão para o Dia: {data_puxada_alvo.strftime('%d/%m/%Y')}")
+                m_ag1, m_ag2, m_ag3, m_ag4 = st.columns(4)
+                m_ag1.metric("Total Paletes Sugeridos", f"{tot_paletes_marc:,.1f} paletes".replace(".", ","))
+                m_ag2.metric("Total Caixas Sugeridas", f"{formatar_br(tot_cx_marc)} cx")
+                m_ag3.metric("Volume Total Sugerido", f"{tot_hl_marc:,.2f} HL".replace(".", ","))
+                m_ag4.metric("SKUs para Marcar", f"{skus_marc} SKUs")
 
                 st.divider()
 
-                st.markdown(
-                    "##### 📋 Listagem Detalhada de Pedidos e SKUs Marcados"
-                )
-                cols_pm = [
-                    "data_puxada",
-                    "cod_clean",
-                    "descricao",
-                    "Paletes_Marcados",
-                    "cx_marcadas",
-                    "hl_marcado",
-                    "status_item",
-                    "numero_pedido",
-                    "dt_atualizacao",
+                st.markdown("##### 📋 Listagem Detalhada de Sugestão de Marcação por SKU")
+                cols_ag_view = [
+                    "Cod_clean",
+                    "Descricao",
+                    "Marca",
+                    "Classe_ABC",
+                    "Disp",
+                    "Linear_Vendas",
+                    "DOI_Atual",
+                    "Paletes_Sugeridos",
+                    "Cx_Sugeridas_Marcacao",
+                    "HL_Sugerido",
                 ]
 
-                df_view_pm = df_pm_raw[cols_pm].copy()
-                df_view_pm["Paletes_Marcados"] = df_view_pm["Paletes_Marcados"].apply(lambda x: f"{x:.1f}".replace(".", ","))
-                df_view_pm["cx_marcadas"] = df_view_pm["cx_marcadas"].apply(formatar_br)
-                df_view_pm["hl_marcado"] = df_view_pm["hl_marcado"].apply(lambda x: f"{x:.2f}".replace(".", ","))
+                df_view_ag = df_sug_agend[cols_ag_view].copy()
+                df_view_ag["Disp"] = df_view_ag["Disp"].apply(formatar_br)
+                df_view_ag["Linear_Vendas"] = df_view_ag["Linear_Vendas"].apply(formatar_br)
+                df_view_ag["DOI_Atual"] = df_view_ag["DOI_Atual"].apply(lambda x: f"{x:.1f}".replace(".", ","))
+                df_view_ag["Paletes_Sugeridos"] = df_view_ag["Paletes_Sugeridos"].apply(lambda x: f"{x:.1f}".replace(".", ","))
+                df_view_ag["Cx_Sugeridas_Marcacao"] = df_view_ag["Cx_Sugeridas_Marcacao"].apply(formatar_br)
+                df_view_ag["HL_Sugerido"] = df_view_ag["HL_Sugerido"].apply(lambda x: f"{x:.2f}".replace(".", ","))
 
                 st.dataframe(
-                    df_view_pm,
+                    df_view_ag.style.map(highlight_curva_abc, subset=["Classe_ABC"]),
                     use_container_width=True,
                 )
 
                 st.download_button(
-                    "Exportar Agendamento em Paletes (.xlsx)",
-                    data=gerar_excel(df_pm_raw[cols_pm]),
-                    file_name=f"Agendamento_Pedidos_Paletes_{unidade}.xlsx",
+                    "Exportar Sugestão de Marcação (.xlsx)",
+                    data=gerar_excel(df_sug_agend[cols_ag_view]),
+                    file_name=f"Sugestao_Marcacao_{data_puxada_alvo.strftime('%Y%m%d')}_{unidade}.xlsx",
                 )
             else:
                 st.info(
-                    "ℹ️ **Nenhum agendamento sincronizado.** Faça o upload do arquivo de **Puxada Marcada (Item 4)** na aba Cadastros."
+                    "ℹ️ **Nenhum dado de estoque disponível.** Faça o upload das bases em Cadastros para gerar as sugestões de marcação."
                 )
 
         with sub_ress[4]:
