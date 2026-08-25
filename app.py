@@ -1024,7 +1024,7 @@ def render_gestao_layouts_armazem(operacao):
 # -----------------------------------------------------------------------------
 # GESTÃO DE RESSUPRIMENTO (CESTAS, METAS, TENDÊNCIA & LAYOUT POR OPERAÇÃO)
 # -----------------------------------------------------------------------------
-def render_gestao_ressuprimento(operacao):
+def render_gestao_ressuprimento(operacao, modo_estatico=False):
     st.subheader(
         "📈 Gestão de Ressuprimento & Acompanhamento de Cestas (HL do Mês)"
     )
@@ -1039,13 +1039,13 @@ def render_gestao_ressuprimento(operacao):
             "Lima São Félix",
         ],
         "Bahia": [
-            "Lima Bahia",
-            "Barreiras",
             "Lima Barreiras",
+            "Lima São Félix",
+            "Lima Bahia",
             "Lima Bahia Samavi",
+            "Barreiras",
             "Samavi",
             "São Félix",
-            "Lima São Félix",
         ],
     }
 
@@ -1056,11 +1056,30 @@ def render_gestao_ressuprimento(operacao):
         else operacao.replace("Lima ", "")
     )
 
-    tab_m1, tab_m2, tab_m3 = st.tabs([
-        "📊 Acompanhamento Mensal & Volume Total",
-        "⚙️ Configuração de Metas Mensais",
-        "📁 Upload & Atualização da Base Diária",
-    ])
+    # Se estiver no modo estático/link direto, oculta os botões de link e de configuração/upload para restringir a visualização
+    if not modo_estatico:
+        st.markdown("##### 🔗 Links de Acesso Direto (Visualização Estática / Sem Atualização)")
+        st.caption("Clique nos botões abaixo para abrir a visualização direta e somente leitura de cada operação:")
+        
+        col_btn1, col_btn2, col_btn3 = st.columns(3)
+        
+        # Rio Verde removido dos links de acesso rápido, Bahia configurada estritamente para Barreiras + São Félix
+        col_btn1.link_button("🔗 Barreiras", "?visualizacao=ressuprimento&op=Lima+Barreiras", use_container_width=True)
+        col_btn2.link_button("🔗 São Félix", "?visualizacao=ressuprimento&op=Lima+S%C3%A3o+F%C3%élix", use_container_width=True)
+        col_btn3.link_button("🔗 Bahia (Barreiras + São Félix)", "?visualizacao=ressuprimento&op=Bahia", use_container_width=True)
+
+        st.divider()
+
+        tab_m1, tab_m2, tab_m3 = st.tabs([
+            "📊 Acompanhamento Mensal & Volume Total",
+            "⚙️ Configuração de Metas Mensais",
+            "📁 Upload & Atualização da Base Diária",
+        ])
+    else:
+        # Se for visualização estática via link, mostra apenas as abas de acompanhamento ou exibe direto o painel analítico
+        tab_m1 = st.container()
+        tab_m2 = None
+        tab_m3 = None
 
     cestas_map = {
         "CATEGORIA_AGRUPADO - CERVEJA": "Cerveja",
@@ -1074,20 +1093,8 @@ def render_gestao_ressuprimento(operacao):
 
     cestas_ordenadas = list(cestas_map.keys())
 
-    with tab_m1:
-        st.markdown("##### 🔗 Links de Acesso Direto (Visualização Estática / Sem Atualização)")
-        st.caption("Clique nos botões abaixo para abrir a visualização direta e somente leitura de cada operação:")
-        
-        col_btn1, col_btn2, col_btn3, col_btn4 = st.columns(4)
-        
-        # Botões com links diretos para cada operação
-        col_btn1.link_button("🔗 Barreiras", "?visualizacao=ressuprimento&op=Lima+Barreiras", use_container_width=True)
-        col_btn2.link_button("🔗 Rio Verde", "?visualizacao=ressuprimento&op=Lima+Rio+Verde", use_container_width=True)
-        col_btn3.link_button("🔗 São Félix", "?visualizacao=ressuprimento&op=Lima+S%C3%A3o+F%C3%élix", use_container_width=True)
-        col_btn4.link_button("🔗 Bahia (Consol.)", "?visualizacao=ressuprimento&op=Bahia", use_container_width=True)
-
-        st.divider()
-
+    # Bloco Acompanhamento Mensal
+    def bloco_acompanhamento():
         c_f1, c_f2 = st.columns(2)
         ano_sel = c_f1.number_input(
             "Ano de Análise:",
@@ -1287,179 +1294,189 @@ def render_gestao_ressuprimento(operacao):
                 f"ℹ️ Verifique se há dados diários cadastrados para **{nome_exibicao_op}** no ano de {ano_sel}."
             )
 
-    with tab_m2:
-        st.markdown(
-            f"### 🎯 Cadastrar / Ajustar Metas Mensais ({nome_exibicao_op})"
-        )
-        c_m1, c_m2 = st.columns(2)
-        ano_meta = c_m1.number_input(
-            "Ano da Meta:",
-            min_value=2024,
-            max_value=2030,
-            value=datetime.now().year,
-            key="ano_meta_key",
-        )
-        mes_meta = c_m2.selectbox(
-            "Mês da Meta:",
-            list(range(1, 13)),
-            format_func=lambda x: meses_nomes[x - 1],
-            index=datetime.now().month - 1,
-            key="mes_meta_key",
-        )
+    if modo_estatico:
+        bloco_acompanhamento()
+    else:
+        with tab_m1:
+            bloco_acompanhamento()
 
-        mes_ano_meta_str = f"{['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'][mes_meta-1]}/{ano_meta}"
-
-        conn = sqlite3.connect("puxada_ambev.db")
-        df_exist_metas = pd.read_sql_query(
-            f"SELECT cesta, meta_volume_hl FROM metas_ressuprimento_mensal WHERE operacao IN ({','.join(['?']*len(nombres_filtro))}) AND ano={ano_meta} AND mes={mes_meta}",
-            conn,
-            params=nombres_filtro,
-        )
-        conn.close()
-
-        dict_metas_exist = (
-            dict(
-                zip(
-                    df_exist_metas["cesta"], df_exist_metas["meta_volume_hl"]
-                )
-            )
-            if not df_exist_metas.empty
-            else {}
-        )
-
-        with st.form("form_cad_metas"):
+        with tab_m2:
             st.markdown(
-                f"**Metas em HL para {mes_ano_meta_str} - {nome_exibicao_op}:**"
+                f"### 🎯 Cadastrar / Ajustar Metas Mensais ({nome_exibicao_op})"
             )
-            input_metas = {}
-            for cst in cestas_ordenadas:
-                cst_nome_amigavel = cestas_map.get(cst, cst)
-                val_init = float(dict_metas_exist.get(cst, 0.0))
-                input_metas[cst] = st.number_input(
-                    f"Meta: {cst_nome_amigavel}",
-                    min_value=0.0,
-                    value=val_init,
-                    step=10.0,
+            c_m1, c_m2 = st.columns(2)
+            ano_meta = c_m1.number_input(
+                "Ano da Meta:",
+                min_value=2024,
+                max_value=2030,
+                value=datetime.now().year,
+                key="ano_meta_key",
+            )
+            meses_nomes_lista = [
+                "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+                "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
+            ]
+            mes_meta = c_m2.selectbox(
+                "Mês da Meta:",
+                list(range(1, 13)),
+                format_func=lambda x: meses_nomes_lista[x - 1],
+                index=datetime.now().month - 1,
+                key="mes_meta_key",
+            )
+
+            mes_ano_meta_str = f"{['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'][mes_meta-1]}/{ano_meta}"
+
+            conn = sqlite3.connect("puxada_ambev.db")
+            df_exist_metas = pd.read_sql_query(
+                f"SELECT cesta, meta_volume_hl FROM metas_ressuprimento_mensal WHERE operacao IN ({','.join(['?']*len(nombres_filtro))}) AND ano={ano_meta} AND mes={mes_meta}",
+                conn,
+                params=nombres_filtro,
+            )
+            conn.close()
+
+            dict_metas_exist = (
+                dict(
+                    zip(
+                        df_exist_metas["cesta"], df_exist_metas["meta_volume_hl"]
+                    )
                 )
+                if not df_exist_metas.empty
+                else {}
+            )
 
-            if st.form_submit_button("💾 Salvar Metas Mensais"):
-                conn = sqlite3.connect("puxada_ambev.db")
-                cursor = conn.cursor()
-                dt_now = datetime.now().strftime("%d/%m/%Y %H:%M")
-                op_para_salvar = (
-                    operacao if operacao != "Bahia" else "Lima Barreiras"
+            with st.form("form_cad_metas"):
+                st.markdown(
+                    f"**Metas em HL para {mes_ano_meta_str} - {nome_exibicao_op}:**"
                 )
-                for cst, m_val in input_metas.items():
-                    cursor.execute(
-                        """
-                    INSERT INTO metas_ressuprimento_mensal (operacao, ano, mes, mes_ano, cesta, meta_volume_hl, dt_atualizacao)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(operacao, ano, mes, cesta) DO UPDATE SET
-                        meta_volume_hl=excluded.meta_volume_hl, dt_atualizacao=excluded.dt_atualizacao
-                    """,
-                        (
-                            op_para_salvar,
-                            ano_meta,
-                            mes_meta,
-                            mes_ano_meta_str,
-                            cst,
-                            m_val,
-                            dt_now,
-                        ),
-                    )
-                conn.commit()
-                conn.close()
-                st.success(
-                    f"Metas de {mes_ano_meta_str} salvas com sucesso para {nome_exibicao_op}!"
-                )
-                st.rerun()
-
-    with tab_m3:
-        st.markdown("### 📁 Upload do Relatório Diário de Ressuprimento")
-        st.caption(
-            "Suba o arquivo consolidado contendo os volumes diários (.xlsx, .xls, .csv). O sistema mapeará rigorosamente a **Coluna A** (Operação), **Coluna C** (HL Puxado), **Coluna E** (Indicador) e **Coluna F** (Data)."
-        )
-
-        f_ress_daily = st.file_uploader(
-            "Selecione o arquivo de relatório diário (.xlsx, .xls, .csv):",
-            type=["xlsx", "xls", "csv"],
-            key="up_ress_daily",
-        )
-
-        if f_ress_daily is not None and st.button(
-            "🚀 Processar e Atualizar Base de Dados"
-        ):
-            try:
-                df_up = robust_read_file(f_ress_daily)
-
-                col_op = df_up.columns[0]
-                col_sellin = df_up.columns[2]
-                col_cesta = df_up.columns[4]
-                col_data = df_up.columns[5]
-
-                conn = sqlite3.connect("puxada_ambev.db")
-                cursor = conn.cursor()
-                dt_now = datetime.now().strftime("%d/%m/%Y %H:%M")
-
-                registros_salvos = 0
-                for _, r in df_up.dropna(
-                    subset=[col_cesta, col_data]
-                ).iterrows():
-                    raw_op = (
-                        str(r[col_op]).strip()
-                        if pd.notna(r[col_op])
-                        else operacao
+                input_metas = {}
+                for cst in cestas_ordenadas:
+                    cst_nome_amigavel = cestas_map.get(cst, cst)
+                    val_init = float(dict_metas_exist.get(cst, 0.0))
+                    input_metas[cst] = st.number_input(
+                        f"Meta: {cst_nome_amigavel}",
+                        min_value=0.0,
+                        value=val_init,
+                        step=10.0,
                     )
 
-                    if "Samavi" in raw_op or "São Félix" in raw_op:
-                        op_salvar = "Lima Bahia Samavi"
-                    elif "Barreiras" in raw_op or "Lima Bahia" in raw_op:
-                        op_salvar = "Lima Bahia"
-                    elif "Rio Verde" in raw_op:
-                        op_salvar = "Lima - Rio Verde"
-                    else:
-                        op_salvar = raw_op
-
-                    cst_val = str(r[col_cesta]).strip()
-                    dt_val = str(
-                        pd.to_datetime(r[col_data]).strftime("%Y-%m-%d")
+                if st.form_submit_button("💾 Salvar Metas Mensais"):
+                    conn = sqlite3.connect("puxada_ambev.db")
+                    cursor = conn.cursor()
+                    dt_now = datetime.now().strftime("%d/%m/%Y %H:%M")
+                    op_para_salvar = (
+                        operacao if operacao != "Bahia" else "Lima Barreiras"
                     )
-                    mes_ano_val = str(
-                        pd.to_datetime(r[col_data]).strftime("%b/%Y")
+                    for cst, m_val in input_metas.items():
+                        cursor.execute(
+                            """
+                        INSERT INTO metas_ressuprimento_mensal (operacao, ano, mes, mes_ano, cesta, meta_volume_hl, dt_atualizacao)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(operacao, ano, mes, cesta) DO UPDATE SET
+                            meta_volume_hl=excluded.meta_volume_hl, dt_atualizacao=excluded.dt_atualizacao
+                        """,
+                            (
+                                op_para_salvar,
+                                ano_meta,
+                                mes_meta,
+                                mes_ano_meta_str,
+                                cst,
+                                m_val,
+                                dt_now,
+                            ),
+                        )
+                    conn.commit()
+                    conn.close()
+                    st.success(
+                        f"Metas de {mes_ano_meta_str} salvas com sucesso para {nome_exibicao_op}!"
                     )
+                    st.rerun()
 
-                    s_hl = parse_br_float(r[col_sellin])
+        with tab_m3:
+            st.markdown("### 📁 Upload do Relatório Diário de Ressuprimento")
+            st.caption(
+                "Suba o arquivo consolidado contendo os volumes diários (.xlsx, .xls, .csv). O sistema mapeará rigorosamente a **Coluna A** (Operação), **Coluna C** (HL Puxado), **Coluna E** (Indicador) e **Coluna F** (Data)."
+            )
 
-                    cursor.execute(
-                        """
-                    INSERT INTO gestao_ressuprimento_diario (operacao, data_registro, mes_ano, cesta, volume_sellin_hl, volume_real_hl, dt_atualizacao)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(operacao, data_registro, cesta) DO UPDATE SET
-                        volume_sellin_hl=excluded.volume_sellin_hl,
-                        volume_real_hl=excluded.volume_sellin_hl,
-                        dt_atualizacao=excluded.dt_atualizacao
-                    """,
-                        (
-                            op_salvar,
-                            dt_val,
-                            mes_ano_val,
-                            cst_val,
-                            s_hl,
-                            s_hl,
-                            dt_now,
-                        ),
+            f_ress_daily = st.file_uploader(
+                "Selecione o arquivo de relatório diário (.xlsx, .xls, .csv):",
+                type=["xlsx", "xls", "csv"],
+                key="up_ress_daily",
+            )
+
+            if f_ress_daily is not None and st.button(
+                "🚀 Processar e Atualizar Base de Dados"
+            ):
+                try:
+                    df_up = robust_read_file(f_ress_daily)
+
+                    col_op = df_up.columns[0]
+                    col_sellin = df_up.columns[2]
+                    col_cesta = df_up.columns[4]
+                    col_data = df_up.columns[5]
+
+                    conn = sqlite3.connect("puxada_ambev.db")
+                    cursor = conn.cursor()
+                    dt_now = datetime.now().strftime("%d/%m/%Y %H:%M")
+
+                    registros_salvos = 0
+                    for _, r in df_up.dropna(
+                        subset=[col_cesta, col_data]
+                    ).iterrows():
+                        raw_op = (
+                            str(r[col_op]).strip()
+                            if pd.notna(r[col_op])
+                            else operacao
+                        )
+
+                        if "Samavi" in raw_op or "São Félix" in raw_op:
+                            op_salvar = "Lima Bahia Samavi"
+                        elif "Barreiras" in raw_op or "Lima Bahia" in raw_op:
+                            op_salvar = "Lima Bahia"
+                        elif "Rio Verde" in raw_op:
+                            op_salvar = "Lima - Rio Verde"
+                        else:
+                            op_salvar = raw_op
+
+                        cst_val = str(r[col_cesta]).strip()
+                        dt_val = str(
+                            pd.to_datetime(r[col_data]).strftime("%Y-%m-%d")
+                        )
+                        mes_ano_val = str(
+                            pd.to_datetime(r[col_data]).strftime("%b/%Y")
+                        )
+
+                        s_hl = parse_br_float(r[col_sellin])
+
+                        cursor.execute(
+                            """
+                        INSERT INTO gestao_ressuprimento_diario (operacao, data_registro, mes_ano, cesta, volume_sellin_hl, volume_real_hl, dt_atualizacao)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(operacao, data_registro, cesta) DO UPDATE SET
+                            volume_sellin_hl=excluded.volume_sellin_hl,
+                            volume_real_hl=excluded.volume_sellin_hl,
+                            dt_atualizacao=excluded.dt_atualizacao
+                        """,
+                            (
+                                op_salvar,
+                                dt_val,
+                                mes_ano_val,
+                                cst_val,
+                                s_hl,
+                                s_hl,
+                                dt_now,
+                            ),
+                        )
+                        registros_salvos += 1
+
+                    conn.commit()
+                    conn.close()
+                    st.success(
+                        f"Base de dados atualizada! **{registros_salvos}** registros diários sincronizados com sucesso."
                     )
-                    registros_salvos += 1
+                    st.rerun()
 
-                conn.commit()
-                conn.close()
-                st.success(
-                    f"Base de dados atualizada! **{registros_salvos}** registros diários sincronizados com sucesso."
-                )
-                st.rerun()
-
-            except Exception as e:
-                st.error(f"Erro ao processar o arquivo nas colunas exigidas: {e}")
+                except Exception as e:
+                    st.error(f"Erro ao processar o arquivo nas colunas exigidas: {e}")
 
 
 # 5. Navegação por Pilhas de Histórico (Botão Voltar)
@@ -1672,7 +1689,7 @@ if modo_visualizacao_estatica:
     st.title("Grupo Lima - Visualização Estática (Acompanhamento de Ressuprimento)")
     op_alvo = op_estatica if op_estatica else "Lima Barreiras"
     st.info(f"🔒 **Modo Somente Leitura / Visualização Exclusiva** · Operação: **{op_alvo}**")
-    render_gestao_ressuprimento(op_alvo)
+    render_gestao_ressuprimento(op_alvo, modo_estatico=True)
     st.stop()
 
 
