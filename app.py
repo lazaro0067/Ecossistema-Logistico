@@ -456,6 +456,71 @@ def highlight_curva_abc(val):
     return ""
 
 
+def processar_politica_estoque_upload(f_pol, operacao):
+    df_raw = robust_read_file(f_pol)
+    dt_now = datetime.now().strftime("%d/%m/%Y %H:%M")
+    conn = sqlite3.connect("puxada_ambev.db")
+    cursor = conn.cursor()
+
+    count = 0
+    for _, r in df_raw.iterrows():
+        try:
+            sku_str = str(r.iloc[2]).strip()
+            partes = sku_str.split("/")
+            if len(partes) >= 2:
+                sub_part = partes[1].strip()
+                cod_match = re.search(r"^\d+", sub_part)
+                cod_clean = int(cod_match.group()) if cod_match else 0
+            else:
+                cod_clean = 0
+
+            if cod_clean == 0:
+                continue
+
+            tipo = str(r.iloc[1]).strip()
+            cat = str(r.iloc[3]).strip()
+            est = parse_br_float(r.iloc[5])
+            dem = parse_br_float(r.iloc[6])
+            doi = parse_br_float(r.iloc[7])
+            pe_min_d = parse_br_float(r.iloc[8])
+            pe_obj_d = parse_br_float(r.iloc[9])
+            pe_max_d = parse_br_float(r.iloc[10])
+            pe_min_h = parse_br_float(r.iloc[11])
+            pe_obj_h = parse_br_float(r.iloc[12])
+            pe_max_h = parse_br_float(r.iloc[13])
+
+            cursor.execute(
+                """
+            INSERT INTO politica_estoque_base (operacao, cod_clean, sku_original, tipo, categoria, estoque, demanda, doi_atual, pe_min_dias, pe_obj_dias, pe_max_dias, pe_min_hl, pe_obj_hl, pe_max_hl, dt_atualizacao)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+                (
+                    operacao,
+                    cod_clean,
+                    sku_str,
+                    tipo,
+                    cat,
+                    est,
+                    dem,
+                    doi,
+                    pe_min_d,
+                    pe_obj_d,
+                    pe_max_d,
+                    pe_min_h,
+                    pe_obj_h,
+                    pe_max_h,
+                    dt_now,
+                ),
+            )
+            count += 1
+        except Exception:
+            continue
+
+    conn.commit()
+    conn.close()
+    return count
+
+
 def salvar_base_01_11(f_01):
     df_01 = robust_read_file(f_01)
     col_cod = [
@@ -688,71 +753,6 @@ def salvar_pedidos_marcados(f_pedidos, operacao):
 
     conn.commit()
     conn.close()
-
-
-def processar_politica_estoque_upload(f_pol, operacao):
-    df_raw = robust_read_file(f_pol)
-    dt_now = datetime.now().strftime("%d/%m/%Y %H:%M")
-    conn = sqlite3.connect("puxada_ambev.db")
-    cursor = conn.cursor()
-
-    count = 0
-    for _, r in df_raw.iterrows():
-        try:
-            sku_str = str(r.iloc[2]).strip()
-            partes = sku_str.split("/")
-            if len(partes) >= 2:
-                sub_part = partes[1].strip()
-                cod_match = re.search(r"^\d+", sub_part)
-                cod_clean = int(cod_match.group()) if cod_match else 0
-            else:
-                cod_clean = 0
-
-            if cod_clean == 0:
-                continue
-
-            tipo = str(r.iloc[1]).strip()
-            cat = str(r.iloc[3]).strip()
-            est = parse_br_float(r.iloc[5])
-            dem = parse_br_float(r.iloc[6])
-            doi = parse_br_float(r.iloc[7])
-            pe_min_d = parse_br_float(r.iloc[8])
-            pe_obj_d = parse_br_float(r.iloc[9])
-            pe_max_d = parse_br_float(r.iloc[10])
-            pe_min_h = parse_br_float(r.iloc[11])
-            pe_obj_h = parse_br_float(r.iloc[12])
-            pe_max_h = parse_br_float(r.iloc[13])
-
-            cursor.execute(
-                """
-            INSERT INTO politica_estoque_base (operacao, cod_clean, sku_original, tipo, categoria, estoque, demanda, doi_atual, pe_min_dias, pe_obj_dias, pe_max_dias, pe_min_hl, pe_obj_hl, pe_max_hl, dt_atualizacao)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-                (
-                    operacao,
-                    cod_clean,
-                    sku_str,
-                    tipo,
-                    cat,
-                    est,
-                    dem,
-                    doi,
-                    pe_min_d,
-                    pe_obj_d,
-                    pe_max_d,
-                    pe_min_h,
-                    pe_obj_h,
-                    pe_max_h,
-                    dt_now,
-                ),
-            )
-            count += 1
-        except Exception:
-            continue
-
-    conn.commit()
-    conn.close()
-    return count
 
 
 def carregar_estoque_consolidado(operacao):
