@@ -468,9 +468,8 @@ def salvar_base_01_11(f_01):
 def salvar_base_linear(f_lin):
     df_lin = robust_read_file(f_lin)
 
-    # Identificação flexível das colunas para evitar IndexError
+    # Identificação flexível da coluna de Código
     cols_str = [str(c).strip().lower() for c in df_lin.columns]
-
     col_cod = None
     for i, c in enumerate(cols_str):
         if "cód" in c or "cod" in c or "item" in c or "produto" in c:
@@ -479,12 +478,10 @@ def salvar_base_linear(f_lin):
     if col_cod is None:
         col_cod = df_lin.columns[0]
 
-    col_vendas = None
-    for i, c in enumerate(cols_str):
-        if "linear" in c or "venda" in c or "média" in c or "media" in c:
-            col_vendas = df_lin.columns[i]
-            break
-    if col_vendas is None:
+    # REQUISIÇÃO: Pegar estritamente da Coluna E (índice 4) se existir, com fallback seguro
+    if len(df_lin.columns) > 4:
+        col_vendas = df_lin.columns[4]
+    else:
         col_vendas = (
             df_lin.columns[1] if len(df_lin.columns) > 1 else df_lin.columns[0]
         )
