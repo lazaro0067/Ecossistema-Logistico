@@ -107,7 +107,6 @@ def init_db():
         dt_atualizacao TEXT
     )""")
 
-    # Novas tabelas para o Sistema Gestão Puxada e Vinculação de Pedidos
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS carretas (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -545,12 +544,43 @@ def highlight_curva_abc(val):
     return ""
 
 
-# Compatibilidade segura para versões do Pandas (map vs applymap)
 def aplicar_estilo_tabela(df_styled, subset_cols):
     try:
         return df_styled.map(highlight_curva_abc, subset=subset_cols)
     except AttributeError:
         return df_styled.applymap(highlight_curva_abc, subset=subset_cols)
+
+
+def gerar_excel(df):
+    output = io.BytesIO()
+    try:
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name="Dados")
+    except Exception:
+        df.to_csv(output, index=False, sep=";")
+    return output.getvalue()
+
+
+def gerar_csv(df):
+    return df.to_csv(index=False, sep=";", encoding="utf-8-sig").encode("utf-8-sig")
+
+
+def render_botoes_download(df_export, nome_base):
+    c_dl1, c_dl2 = st.columns(2)
+    c_dl1.download_button(
+        f"📥 Baixar {nome_base} (.xlsx)",
+        data=gerar_excel(df_export),
+        file_name=f"{nome_base}_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+    )
+    c_dl2.download_button(
+        f"📥 Baixar {nome_base} (.csv)",
+        data=gerar_csv(df_export),
+        file_name=f"{nome_base}_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
 
 
 def salvar_base_01_11(f_01):
@@ -933,16 +963,6 @@ def calcular_saude_estoque_dpo(df):
     excesso = len(df[df["doi_atual"] > 15.0])
     pct_saude = (saudaveis / total_skus) * 100.0 if total_skus > 0 else 0.0
     return round(pct_saude, 1), saudaveis, ruptura, excesso
-
-
-def gerar_excel(df):
-    output = io.BytesIO()
-    try:
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            df.to_excel(writer, index=False, sheet_name="Dados")
-    except Exception:
-        df.to_csv(output, index=False, sep=";")
-    return output.getvalue()
 
 
 # 4. Auxiliares e IA para Padrões DPO
@@ -1522,6 +1542,9 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
                 height=(len(df_view) + 1) * 38 + 5,
             )
 
+            st.markdown("##### 📥 Opções de Download do Relatório Mensal")
+            render_botoes_download(df_final, f"Acompanhamento_Mensal_{operacao}")
+
         else:
             st.info(
                 f"ℹ️ Verifique se há dados diários cadastrados para **{nome_exibicao_op}** no ano de {ano_sel}."
@@ -1606,18 +1629,14 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
             )
             st.dataframe(df_view_dia, use_container_width=True)
 
-            st.download_button(
-                "Exportar Carregamento Dia a Dia (.xlsx)",
-                data=gerar_excel(df_pivot),
-                file_name=f"Carregamento_Dia_a_Dia_{mes_dia:02d}_{ano_dia}_{operacao.replace(' ', '_')}.xlsx",
-                key="dl_dia_a_dia",
-            )
+            st.markdown("##### 📥 Opções de Download do Carregamento Diário")
+            render_botoes_download(df_pivot, f"Carregamento_Dia_a_Dia_{mes_dia:02d}_{ano_dia}_{operacao}")
         else:
             st.info(
                 f"ℹ️ Nenhum registro de carregamento diário encontrado para **{nome_exibicao_op}** em {meses_nomes_lista[mes_dia - 1]}/{ano_dia}."
             )
 
-    # Bloco Política de Estoque com Calendário, Cards Interativos e Filtros
+    # Bloco Política de Estoque com Filtros Múltiplos e Atualização Dinâmica de Cards
     def bloco_politica_estoque():
         st.markdown(
             "### 📦 Gestão de Política de Estoque & Upload de Dados Médios"
@@ -1707,50 +1726,49 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
             df_pol["Status Política"] = df_pol.apply(classificar_status_pol, axis=1)
             df_pol["status_obj"] = df_pol.apply(classificar_status_obj, axis=1)
 
+            # Filtros múltiplos por multiselect que atualizam dinamicamente os cards e tabela
+            st.markdown("##### 🎛️ Filtros de Status (Estoque Objetivo & Política)")
+            opcoes_status_disp = [
+                "🎯 Estoque Objetivo",
+                "🟢 Dentro da Política",
+                "🔴 Abaixo da Política",
+                "🔵 Acima da Política",
+            ]
+            
+            status_selecionados = st.multiselect(
+                "Selecione o(s) status desejado(s) para filtragem e atualização dos cartões:",
+                options=opcoes_status_disp,
+                default=[],
+            )
+
+            # Filtrar dataframe base para calcular os totais dinâmicos conforme a seleção
+            df_filtrado_cards = df_pol.copy()
+            if status_selecionados:
+                condicoes_msk = pd.Series([False] * len(df_filtrado_cards), index=df_filtrado_cards.index)
+                if "🎯 Estoque Objetivo" in status_selecionados:
+                    condicoes_msk = condicoes_msk | (df_filtrado_cards["status_obj"] == "Estoque Objetivo")
+                if "🟢 Dentro da Política" in status_selecionados:
+                    condicoes_msk = condicoes_msk | (df_filtrado_cards["Status Política"] == "🟢 Dentro da Política")
+                if "🔴 Abaixo da Política" in status_selecionados:
+                    condicoes_msk = condicoes_msk | (df_filtrado_cards["Status Política"] == "🔴 Abaixo da Política")
+                if "🔵 Acima da Política" in status_selecionados:
+                    condicoes_msk = condicoes_msk | (df_filtrado_cards["Status Política"] == "🔵 Acima da Política")
+                df_filtrado_cards = df_filtrado_cards[condicoes_msk]
+
+            # Totais dinâmicos para exibição nos cards atualizados
             tot_produtos = len(df_pol)
+            obj_cnt = len(df_pol[df_pol["status_obj"] == "Estoque Objetivo"])
+            dentro_cnt = len(df_pol[df_pol["Status Política"] == "🟢 Dentro da Política"])
             abaixo_cnt = len(df_pol[df_pol["Status Política"] == "🔴 Abaixo da Política"])
             acima_cnt = len(df_pol[df_pol["Status Política"] == "🔵 Acima da Política"])
-            dentro_cnt = len(df_pol[df_pol["Status Política"] == "🟢 Dentro da Política"])
-            obj_cnt = len(df_pol[df_pol["status_obj"] == "Estoque Objetivo"])
 
-            st.markdown(f"##### 📊 Cards de Indicadores de Política (Data: {data_selecionada.strftime('%d/%m/%Y')})")
+            st.markdown(f"##### 📊 Cards de Indicadores de Política Dinâmicos (Data: {data_selecionada.strftime('%d/%m/%Y')})")
             c_card1, c_card2, c_card3, c_card4 = st.columns(4)
-            c_card1.metric("🎯 Estoque Objetivo", f"{obj_cnt} SKUs")
-            c_card2.metric("🟢 Dentro da Política", f"{dentro_cnt} SKUs")
-            c_card3.metric("🔴 Abaixo da Política", f"{abaixo_cnt} SKUs")
-            c_card4.metric("🔵 Acima da Política", f"{acima_cnt} SKUs")
+            c_card1.metric("🎯 Estoque Objetivo", f"{obj_cnt} SKUs", delta=f"Filtrados: {len(df_filtrado_cards[df_filtrado_cards['status_obj'] == 'Estoque Objetivo'])}")
+            c_card2.metric("🟢 Dentro da Política", f"{dentro_cnt} SKUs", delta=f"Filtrados: {len(df_filtrado_cards[df_filtrado_cards['Status Política'] == '🟢 Dentro da Política'])}")
+            c_card3.metric("🔴 Abaixo da Política", f"{abaixo_cnt} SKUs", delta=f"Filtrados: {len(df_filtrado_cards[df_filtrado_cards['Status Política'] == '🔴 Abaixo da Política'])}")
+            c_card4.metric("🔵 Acima da Política", f"{acima_cnt} SKUs", delta=f"Filtrados: {len(df_filtrado_cards[df_filtrado_cards['Status Política'] == '🔵 Acima da Política'])}")
 
-            st.markdown(
-                "##### 🎛️ Filtros Rápidos por Card (Clique para Filtrar)"
-            )
-            if "filtro_card_ativo" not in st.session_state:
-                st.session_state["filtro_card_ativo"] = "TODOS"
-
-            c_c1, c_c2, c_c3, c_c4, c_c5 = st.columns(5)
-            if c_c1.button(
-                f"📋 Todos\n({tot_produtos})", use_container_width=True
-            ):
-                st.session_state["filtro_card_ativo"] = "TODOS"
-            if c_c2.button(
-                f"🎯 Objetivo\n({obj_cnt})", use_container_width=True
-            ):
-                st.session_state["filtro_card_ativo"] = "Estoque Objetivo"
-            if c_c3.button(
-                f"🟢 Dentro\n({dentro_cnt})", use_container_width=True
-            ):
-                st.session_state["filtro_card_ativo"] = "🟢 Dentro da Política"
-            if c_c4.button(
-                f"🔴 Abaixo\n({abaixo_cnt})", use_container_width=True
-            ):
-                st.session_state["filtro_card_ativo"] = "🔴 Abaixo da Política"
-            if c_c5.button(
-                f"🔵 Acima\n({acima_cnt})", use_container_width=True
-            ):
-                st.session_state["filtro_card_ativo"] = "🔵 Acima da Política"
-
-            st.caption(
-                f"Filtro ativo no momento: **{st.session_state['filtro_card_ativo']}**"
-            )
             st.divider()
 
             tipos_disp = ["TODOS"] + sorted(
@@ -1764,16 +1782,7 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
             filtro_tipo = c_f1.selectbox("Filtrar por Tipo:", tipos_disp)
             filtro_cat = c_f2.selectbox("Filtrar por Categoria:", cats_disp)
 
-            df_view = df_pol.copy()
-            if st.session_state["filtro_card_ativo"] != "TODOS":
-                if st.session_state["filtro_card_ativo"] == "Estoque Objetivo":
-                    df_view = df_view[df_view["status_obj"] == "Estoque Objetivo"]
-                else:
-                    df_view = df_view[
-                        df_view["Status Política"]
-                        == st.session_state["filtro_card_ativo"]
-                    ]
-
+            df_view = df_filtrado_cards.copy()
             if filtro_tipo != "TODOS":
                 df_view = df_view[df_view["tipo"] == filtro_tipo]
             if filtro_cat != "TODAS":
@@ -1794,6 +1803,9 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
                 "Status Política",
             ]
             st.dataframe(df_view[cols_show], use_container_width=True)
+
+            st.markdown("##### 📥 Opções de Download da Política de Estoque")
+            render_botoes_download(df_view[cols_show], f"Politica_Estoque_{data_str_sel}_{operacao}")
         else:
             st.info(
                 "Nenhum dado de política de estoque importado para a data selecionada."
@@ -2193,6 +2205,9 @@ def render_estoque_dia(unidade):
                 df_view_rn,
                 use_container_width=True,
             )
+
+        st.markdown("##### 📥 Opções de Download do Estoque Comercial")
+        render_botoes_download(df_filtrado, f"Estoque_Comercial_{unidade}")
     else:
         st.info(
             "ℹ️ **Nenhum estoque disponível no momento.** Solicite a atualização da base em Ressuprimento."
@@ -2350,7 +2365,7 @@ else:
         m3.metric("🔴 SKUs Ruptura", f"{k_rup}")
         m4.metric("🟡 SKUs Overstock", f"{k_exc}")
 
-    # MÓDULO PUXADA (FRETES, GESTÃO PUXADA, DESCASGA & VINCULAR PEDIDO)
+    # MÓDULO PUXADA (FRETES, GESTÃO PUXADA, DESCARGA & VINCULAR PEDIDO)
     elif "Puxada" in dept_atual:
         sub_pux = st.tabs([
             "📋 Cadastro de Trechos",
@@ -2404,13 +2419,10 @@ else:
                         finally:
                             conn.close()
 
-            st.dataframe(
-                pd.read_sql_query(
-                    "SELECT * FROM cadastro_trechos_frete",
-                    sqlite3.connect("puxada_ambev.db"),
-                ),
-                use_container_width=True,
-            )
+            df_trechos_geral = pd.read_sql_query("SELECT * FROM cadastro_trechos_frete", sqlite3.connect("puxada_ambev.db"))
+            st.dataframe(df_trechos_geral, use_container_width=True)
+            st.markdown("##### 📥 Opções de Download de Trechos")
+            render_botoes_download(df_trechos_geral, "Cadastro_Trechos_Frete")
 
         with sub_pux[1]:
             st.markdown("### Solicitação de Frete Integrada")
@@ -2478,6 +2490,8 @@ else:
             )
             conn.close()
             st.dataframe(df_p, use_container_width=True)
+            st.markdown("##### 📥 Opções de Download de Aprovações")
+            render_botoes_download(df_p, f"Aprovacoes_Frete_{unidade}")
 
         with sub_pux[3]:
             st.markdown("### Histórico Geral de Fretes e Puxadas")
@@ -2488,6 +2502,8 @@ else:
             )
             conn.close()
             st.dataframe(df_h, use_container_width=True)
+            st.markdown("##### 📥 Opções de Download do Histórico de Fretes")
+            render_botoes_download(df_h, f"Historico_Fretes_{unidade}")
 
         with sub_pux[4]:
             st.subheader("📅 Agendamento e Gestão de Descarga (Pátio)")
@@ -2548,6 +2564,9 @@ else:
 
             if not df_descargas.empty:
                 st.dataframe(df_descargas, use_container_width=True)
+                st.markdown("##### 📥 Opções de Download de Descargas")
+                render_botoes_download(df_descargas, f"Agendamentos_Descarga_{unidade}")
+
                 id_exc_desc = st.number_input(
                     "Digite o ID do agendamento para remover:",
                     min_value=1,
@@ -2618,6 +2637,7 @@ else:
                 df_carretas = pd.read_sql_query(f"SELECT id, placa, modelo, capacidade_hl, status FROM carretas WHERE operacao='{unidade}'", conn)
                 conn.close()
                 st.dataframe(df_carretas, use_container_width=True)
+                render_botoes_download(df_carretas, f"Carretas_{unidade}")
 
             with sub_gp[1]:
                 st.markdown("##### 🏢 Cadastro de Transportadoras")
@@ -2655,6 +2675,7 @@ else:
                 df_transp = pd.read_sql_query(f"SELECT id, nome, cnpj, contato FROM transportadoras_gestao WHERE operacao='{unidade}'", conn)
                 conn.close()
                 st.dataframe(df_transp, use_container_width=True)
+                render_botoes_download(df_transp, f"Transportadoras_{unidade}")
 
             with sub_gp[2]:
                 st.markdown("##### 🏭 Cadastro de Fábricas")
@@ -2692,6 +2713,7 @@ else:
                 df_fab = pd.read_sql_query("SELECT id, nome, cidade, uf FROM fabricas", conn)
                 conn.close()
                 st.dataframe(df_fab, use_container_width=True)
+                render_botoes_download(df_fab, "Fabricas_Cadastradas")
 
             with sub_gp[3]:
                 st.markdown("##### 👤 Cadastro de Motoristas")
@@ -2723,6 +2745,7 @@ else:
                 df_mot = pd.read_sql_query(f"SELECT id, nome, cnh, telefone FROM motoristas WHERE operacao='{unidade}'", conn)
                 conn.close()
                 st.dataframe(df_mot, use_container_width=True)
+                render_botoes_download(df_mot, f"Motoristas_{unidade}")
 
         with sub_pux[6]:
             st.subheader("🔗 Vincular Pedido (Gestão Puxada)")
@@ -2792,6 +2815,8 @@ else:
 
             if not df_vinculos.empty:
                 st.dataframe(df_vinculos, use_container_width=True)
+                render_botoes_download(df_vinculos, f"Pedidos_Vinculados_{unidade}")
+
                 id_del_vinc = st.number_input("Digite o ID do vínculo para remover:", min_value=1, step=1, key="id_del_vinc_input")
                 if st.button("🗑️ Excluir Vínculo de Pedido"):
                     conn = sqlite3.connect("puxada_ambev.db")
@@ -3041,11 +3066,8 @@ else:
                     use_container_width=True,
                 )
 
-                st.download_button(
-                    "Exportar Sugestão de Marcação (.xlsx)",
-                    data=gerar_excel(df_sug_agend[cols_ag_view]),
-                    file_name=f"Sugestao_Marcacao_{data_puxada_alvo.strftime('%Y%m%d')}_{unidade}.xlsx",
-                )
+                st.markdown("##### 📥 Opções de Download da Sugestão de Marcação")
+                render_botoes_download(df_sug_agend[cols_ag_view], f"Sugestao_Marcacao_{data_puxada_alvo.strftime('%Y%m%d')}_{unidade}")
             else:
                 st.info(
                     "ℹ️ **Nenhum dado de estoque disponível.** Faça o upload das bases em Cadastros para gerar as sugestões de marcação."
@@ -3235,6 +3257,7 @@ else:
 
             if not df_arm_desc.empty:
                 st.dataframe(df_arm_desc, use_container_width=True)
+                render_botoes_download(df_arm_desc, f"Controle_Patio_Descarga_{unidade}")
             else:
                 st.info(
                     "ℹ️ Nenhum agendamento de descarga pendente no momento para esta unidade."
@@ -3493,6 +3516,7 @@ else:
             conn.close()
 
             st.dataframe(df_usrs, use_container_width=True)
+            render_botoes_download(df_usrs, "Usuarios_Sistema")
 
             with st.form("form_alt_status_master"):
                 alvo_user = st.selectbox(
@@ -3546,6 +3570,8 @@ else:
         df = pd.read_sql_query(f"SELECT * FROM {tabela}", conn)
         conn.close()
         st.dataframe(df, use_container_width=True)
+        st.markdown("##### 📥 Opções de Download da Base Completa")
+        render_botoes_download(df, f"Tabela_{tabela}")
 
     else:
         st.info(f"O módulo de **{dept_atual}** está ativo e sincronizado.")
