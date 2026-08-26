@@ -495,6 +495,248 @@ def highlight_curva_abc(val):
     return ""
 
 
+# Compatibilidade segura para versões do Pandas (map vs applymap)
+def aplicar_estilo_tabela(df_styled, subset_cols):
+    try:
+        return df_styled.map(highlight_curva_abc, subset=subset_cols)
+    except AttributeError:
+        return df_styled.applymap(highlight_curva_abc, subset=subset_cols)
+
+
+def salvar_base_01_11(f_01):
+    df_01 = robust_read_file(f_01)
+    col_cod = [
+        c for c in df_01.columns if "Código" in str(c) or "Cod" in str(c)
+    ][0]
+    df_01["cod_clean"] = pd.to_numeric(df_01[col_cod], errors="coerce")
+
+    col_q = df_01.columns[16] if len(df_01.columns) > 16 else df_01.columns[-1]
+    df_01["fator_hl"] = (
+        df_01[col_q].astype(str).str.replace(",", ".").astype(float)
+    )
+
+    col_cx = [
+        c
+        for c in df_01.columns
+        if "Caixas Pallet" in str(c) or "Pallet" in str(c)
+    ]
+    if col_cx:
+        df_01["cx_pallet"] = pd.to_numeric(
+            df_01[col_cx[0]], errors="coerce"
+        ).fillna(1)
+    else:
+        df_01["cx_pallet"] = 1.0
+
+    df_01["cx_pallet"] = df_01["cx_pallet"].apply(lambda x: x if x > 0 else 1)
+
+    col_desc = [
+        c for c in df_01.columns if "Descrição" in str(c) or "Desc" in str(c)
+    ][0]
+    df_sub = df_01[["cod_clean", col_desc, "fator_hl", "cx_pallet"]].dropna(
+        subset=["cod_clean"]
+    )
+
+    conn = sqlite3.connect("puxada_ambev.db")
+    cursor = conn.cursor()
+    for _, r in df_sub.iterrows():
+        cursor.execute(
+            """
+        INSERT INTO base_01_11 (cod_clean, descricao, fator_hl, cx_pallet)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(cod_clean) DO UPDATE SET
+            descricao=excluded.descricao, fator_hl=excluded.fator_hl, cx_pallet=excluded.cx_pallet
+        """,
+            (
+                int(r["cod_clean"]),
+                str(r[col_desc]),
+                float(r["fator_hl"]),
+                float(r["cx_pallet"]),
+            ),
+        )
+    conn.commit()
+    conn.close()
+
+
+def salvar_base_linear(f_lin):
+    df_lin = robust_read_file(f_lin)
+
+    cols_str = [str(c).strip().lower() for c in df_lin.columns]
+    col_cod = None
+    for i, c in enumerate(cols_str):
+        if "cód" in c or "cod" in c or "item" in c or "produto" in c:
+            col_cod = df_lin.columns[i]
+            break
+    if col_cod is None:
+        col_cod = df_lin.columns[0]
+
+    if len(df_lin.columns) > 4:
+        col_vendas = df_lin.columns[4]
+    else:
+        col_vendas = (
+            df_lin.columns[1] if len(df_lin.columns) > 1 else df_lin.columns[0]
+        )
+
+    df_lin["cod_clean"] = pd.to_numeric(df_lin[col_cod], errors="coerce")
+    df_lin["linear_vendas"] = df_lin[col_vendas].apply(parse_br_float)
+    df_lin["Tipo"] = df_lin.get("Tipo", df_lin.get("tipo", pd.Series())).fillna(
+        "OUTROS"
+    )
+    df_lin["Categoria"] = df_lin.get(
+        "Categoria", df_lin.get("categoria", pd.Series())
+    ).fillna("OUTROS")
+
+    dt_now = datetime.now().strftime("%d/%m/%Y %H:%M")
+
+    conn = sqlite3.connect("puxada_ambev.db")
+    cursor = conn.cursor()
+    for _, r in df_lin.dropna(subset=["cod_clean"]).iterrows():
+        cursor.execute(
+            """
+        INSERT INTO base_linear (cod_clean, tipo, categoria, linear_vendas, dt_atualizacao)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(cod_clean) DO UPDATE SET
+            tipo=excluded.tipo, categoria=excluded.categoria,
+            linear_vendas=excluded.linear_vendas, dt_atualizacao=excluded.dt_atualizacao
+        """,
+            (
+                int(r["cod_clean"]),
+                str(r.get("Tipo", "OUTROS")),
+                str(r.get("Categoria", "OUTROS")),
+                float(r["linear_vendas"]),
+                dt_now,
+            ),
+        )
+    conn.commit()
+    conn.close()
+
+
+def salvar_base_estoque_02(f_02, operacao):
+    df_02 = robust_read_file(f_02)
+
+    col_cod = [
+        c for c in df_02.columns if "Cod" in str(c) or "COD" in str(c)
+    ][0]
+    col_desc = [c for c in df_02.columns if "Desc" in str(c)][0]
+    col_init = [c for c in df_02.columns if "Inic" in str(c)][0]
+    col_ent = [c for c in df_02.columns if "Ent" in str(c)][0]
+    col_sai = [
+        c for c in df_02.columns if "Saida" in str(c) or "Sai" in str(c)
+    ][0]
+    col_disp = [c for c in df_02.columns if "Disp" in str(c)][0]
+
+    df_02["cod_clean"] = pd.to_numeric(df_02[col_cod], errors="coerce")
+    df_02["Inicial"] = pd.to_numeric(df_02[col_init], errors="coerce").fillna(0)
+    df_02["Ent."] = pd.to_numeric(df_02[col_ent], errors="coerce").fillna(0)
+    df_02["Saidas"] = pd.to_numeric(df_02[col_sai], errors="coerce").fillna(0)
+    df_02["Disp."] = pd.to_numeric(df_02[col_disp], errors="coerce").fillna(0)
+
+    dt_now = datetime.now().strftime("%d/%m/%Y %H:%M")
+
+    conn = sqlite3.connect("puxada_ambev.db")
+    cursor = conn.cursor()
+    for _, r in df_02.dropna(subset=["cod_clean"]).iterrows():
+        cursor.execute(
+            """
+        INSERT INTO base_estoque_02 (operacao, cod_clean, descricao, inicial, entrada, saida, disponivel, dt_atualizacao)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(operacao, cod_clean) DO UPDATE SET
+            descricao=excluded.descricao, inicial=excluded.inicial, entrada=excluded.entrada,
+            saida=excluded.saida, disponivel=excluded.disponivel, dt_atualizacao=excluded.dt_atualizacao
+        """,
+            (
+                operacao,
+                int(r["cod_clean"]),
+                str(r[col_desc]),
+                float(r["Inicial"]),
+                float(r["Ent."]),
+                float(r["Saidas"]),
+                float(r["Disp."]),
+                dt_now,
+            ),
+        )
+    conn.commit()
+    conn.close()
+
+
+def salvar_pedidos_marcados(f_pedidos, operacao):
+    df_pedidos = robust_read_file(f_pedidos)
+
+    col_cod_r = (
+        df_pedidos.columns[17]
+        if len(df_pedidos.columns) > 17
+        else [
+            c
+            for c in df_pedidos.columns
+            if "Código" in str(c) or "Cod" in str(c)
+        ][0]
+    )
+    col_marc_w = (
+        df_pedidos.columns[22]
+        if len(df_pedidos.columns) > 22
+        else [c for c in df_pedidos.columns if "Marcado" in str(c)][0]
+    )
+    col_desc = [
+        c
+        for c in df_pedidos.columns
+        if "Produto" in str(c) or "Desc" in str(c)
+    ][0]
+    col_dt = [
+        c
+        for c in df_pedidos.columns
+        if "Data Puxada" in str(c) or "Data" in str(c)
+    ][0]
+    col_solic = [
+        c
+        for c in df_pedidos.columns
+        if "QtdeSKUs - Item" in str(c) or "Solicitado" in str(c)
+    ][0]
+    col_hl = [
+        c for c in df_pedidos.columns if "HL" in str(c) or "Hecto" in str(c)
+    ][0]
+
+    conn = sqlite3.connect("puxada_ambev.db")
+    cursor = conn.cursor()
+
+    cursor.execute("DELETE FROM pedidos_marcados WHERE operacao=?", (operacao,))
+
+    dt_now = datetime.now().strftime("%d/%m/%Y %H:%M")
+    for _, r in df_pedidos.iterrows():
+        cod_raw = str(r.get(col_cod_r, "")).strip()
+
+        if len(cod_raw) > 1:
+            cod_clean_str = cod_raw[:-1]
+        else:
+            cod_clean_str = cod_raw
+
+        cod_clean = pd.to_numeric(cod_clean_str, errors="coerce")
+        if pd.isna(cod_clean):
+            continue
+
+        cx_marcadas_w = parse_br_float(r.get(col_marc_w))
+
+        cursor.execute(
+            """
+        INSERT INTO pedidos_marcados (operacao, data_puxada, cod_clean, descricao, cx_solicitadas, cx_marcadas, hl_marcado, status_item, numero_pedido, dt_atualizacao)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+            (
+                operacao,
+                str(r.get(col_dt)).strip(),
+                int(cod_clean),
+                str(r.get(col_desc)).strip(),
+                parse_br_float(r.get(col_solic)),
+                cx_marcadas_w,
+                parse_br_float(r.get(col_hl)),
+                str(r.get("Status - Item", "")).strip(),
+                str(r.get("Nº - Pedido", "")).strip(),
+                dt_now,
+            ),
+        )
+
+    conn.commit()
+    conn.close()
+
+
 def processar_politica_estoque_upload(f_pol, operacao):
     df_raw = robust_read_file(f_pol)
     dt_now = datetime.now().strftime("%d/%m/%Y %H:%M")
@@ -1325,7 +1567,7 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
                 f"ℹ️ Nenhum registro de carregamento diário encontrado para **{nome_exibicao_op}** em {meses_nomes_lista[mes_dia - 1]}/{ano_dia}."
             )
 
-    # Bloco Política de Estoque com Calendário, Filtro de Demanda > 0, Cards com Percentuais e Filtros
+    # Bloco Política de Estoque com Calendário, Cards Interativos e Filtros
     def bloco_politica_estoque():
         st.markdown(
             "### 📦 Gestão de Política de Estoque & Upload de Dados Médios"
@@ -1393,13 +1635,6 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
         conn.close()
 
         if not df_pol.empty:
-            # FILTRAR APENAS ITENS QUE POSSUEM DEMANDA > 0
-            df_pol = df_pol[df_pol["demanda"] > 0].copy()
-
-            if df_pol.empty:
-                st.warning("⚠️ Nenhum SKU com demanda ativa (> 0) encontrado para esta data.")
-                return
-
             def classificar_status_pol(row):
                 doi, p_min, p_max = (
                     row["doi_atual"],
@@ -1428,18 +1663,12 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
             dentro_cnt = len(df_pol[df_pol["Status Política"] == "🟢 Dentro da Política"])
             obj_cnt = len(df_pol[df_pol["status_obj"] == "Estoque Objetivo"])
 
-            # CÁLCULO DOS PERCENTUAIS
-            p_obj = (obj_cnt / tot_produtos * 100) if tot_produtos > 0 else 0.0
-            p_dentro = (dentro_cnt / tot_produtos * 100) if tot_produtos > 0 else 0.0
-            p_abaixo = (abaixo_cnt / tot_produtos * 100) if tot_produtos > 0 else 0.0
-            p_acima = (acima_cnt / tot_produtos * 100) if tot_produtos > 0 else 0.0
-
-            st.markdown(f"##### 📊 Cards de Indicadores de Política (Demanda > 0 | Data: {data_selecionada.strftime('%d/%m/%Y')})")
+            st.markdown(f"##### 📊 Cards de Indicadores de Política (Data: {data_selecionada.strftime('%d/%m/%Y')})")
             c_card1, c_card2, c_card3, c_card4 = st.columns(4)
-            c_card1.metric("🎯 Estoque Objetivo", f"{obj_cnt} SKUs ({p_obj:.1f}%)".replace(".", ","))
-            c_card2.metric("🟢 Dentro da Política", f"{dentro_cnt} SKUs ({p_dentro:.1f}%)".replace(".", ","))
-            c_card3.metric("🔴 Abaixo da Política", f"{abaixo_cnt} SKUs ({p_abaixo:.1f}%)".replace(".", ","))
-            c_card4.metric("🔵 Acima da Política", f"{acima_cnt} SKUs ({p_acima:.1f}%)".replace(".", ","))
+            c_card1.metric("🎯 Estoque Objetivo", f"{obj_cnt} SKUs")
+            c_card2.metric("🟢 Dentro da Política", f"{dentro_cnt} SKUs")
+            c_card3.metric("🔴 Abaixo da Política", f"{abaixo_cnt} SKUs")
+            c_card4.metric("🔵 Acima da Política", f"{acima_cnt} SKUs")
 
             st.markdown(
                 "##### 🎛️ Filtros Rápidos por Card (Clique para Filtrar)"
@@ -1449,23 +1678,23 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
 
             c_c1, c_c2, c_c3, c_c4, c_c5 = st.columns(5)
             if c_c1.button(
-                f"📋 Todos\n({tot_produtos} | 100%)", use_container_width=True
+                f"📋 Todos\n({tot_produtos})", use_container_width=True
             ):
                 st.session_state["filtro_card_ativo"] = "TODOS"
             if c_c2.button(
-                f"🎯 Objetivo\n({obj_cnt} | {p_obj:.1f}%)".replace(".", ","), use_container_width=True
+                f"🎯 Objetivo\n({obj_cnt})", use_container_width=True
             ):
                 st.session_state["filtro_card_ativo"] = "Estoque Objetivo"
             if c_c3.button(
-                f"🟢 Dentro\n({dentro_cnt} | {p_dentro:.1f}%)".replace(".", ","), use_container_width=True
+                f"🟢 Dentro\n({dentro_cnt})", use_container_width=True
             ):
                 st.session_state["filtro_card_ativo"] = "🟢 Dentro da Política"
             if c_c4.button(
-                f"🔴 Abaixo\n({abaixo_cnt} | {p_abaixo:.1f}%)".replace(".", ","), use_container_width=True
+                f"🔴 Abaixo\n({abaixo_cnt})", use_container_width=True
             ):
                 st.session_state["filtro_card_ativo"] = "🔴 Abaixo da Política"
             if c_c5.button(
-                f"🔵 Acima\n({acima_cnt} | {p_acima:.1f}%)".replace(".", ","), use_container_width=True
+                f"🔵 Acima\n({acima_cnt})", use_container_width=True
             ):
                 st.session_state["filtro_card_ativo"] = "🔵 Acima da Política"
 
@@ -2441,9 +2670,7 @@ else:
                 )
 
                 st.dataframe(
-                    df_view_ag.style.map(
-                        highlight_curva_abc, subset=["classe_abc"]
-                    ),
+                    aplicar_estilo_tabela(df_view_ag.style, subset_cols=["classe_abc"]),
                     use_container_width=True,
                 )
 
