@@ -107,6 +107,56 @@ def init_db():
         dt_atualizacao TEXT
     )""")
 
+    # Novas tabelas para o Sistema Gestão Puxada e Vinculação de Pedidos
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS carretas (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        operacao TEXT,
+        placa TEXT UNIQUE NOT NULL,
+        modelo TEXT,
+        capacidade_hl REAL,
+        status TEXT DEFAULT 'Disponível'
+    )""")
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS transportadoras_gestao (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        operacao TEXT,
+        nome TEXT UNIQUE NOT NULL,
+        cnpj TEXT,
+        contato TEXT
+    )""")
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS fabricas (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nome TEXT UNIQUE NOT NULL,
+        cidade TEXT,
+        uf TEXT
+    )""")
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS motoristas (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        operacao TEXT,
+        nome TEXT NOT NULL,
+        cnh TEXT,
+        telefone TEXT
+    )""")
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS vinculos_pedidos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        operacao TEXT,
+        numero_pedido TEXT,
+        data_puxada TEXT,
+        placa TEXT,
+        fabrica TEXT,
+        transportadora TEXT,
+        motorista TEXT,
+        dt_atualizacao TEXT
+    )""")
+
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS operacoes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2300,13 +2350,16 @@ else:
         m3.metric("🔴 SKUs Ruptura", f"{k_rup}")
         m4.metric("🟡 SKUs Overstock", f"{k_exc}")
 
-    # MÓDULO PUXADA (FRETES INTEGRADOS)
+    # MÓDULO PUXADA (FRETES, GESTÃO PUXADA, DESCASGA & VINCULAR PEDIDO)
     elif "Puxada" in dept_atual:
         sub_pux = st.tabs([
             "📋 Cadastro de Trechos",
             "🚀 Solicitação de Frete",
             "📊 Aprovações de Frete",
             "📜 Histórico Geral",
+            "🚚 Gestão de Descarga (Pátio)",
+            "🚛 Gestão Puxada & Cadastros",
+            "🔗 Vincular Pedido",
         ])
 
         with sub_pux[0]:
@@ -2436,13 +2489,327 @@ else:
             conn.close()
             st.dataframe(df_h, use_container_width=True)
 
+        with sub_pux[4]:
+            st.subheader("📅 Agendamento e Gestão de Descarga (Pátio)")
+            st.caption(
+                "Cadastre e gerencie os agendamentos de descarga informando Placa, Slot, Data e Tipo de Carga."
+            )
+
+            with st.form("form_agendamento_descarga_puxada"):
+                c_d1, c_d2 = st.columns(2)
+                placa_input = c_d1.text_input("Placa do Veículo (Ex: ABC-1234):")
+                slot_input = c_d2.text_input("Slot de Descarga (Ex: Slot 03):")
+
+                c_d3, c_d4 = st.columns(2)
+                data_descarga_input = c_d3.date_input("Data da Descarga:")
+                tipo_carga_input = c_d4.selectbox(
+                    "Tipo de Carga:", ["Descartável", "Retornável"]
+                )
+
+                obs_descarga = st.text_area("Observações da Descarga:")
+
+                if st.form_submit_button("🚚 Salvar Agendamento de Descarga"):
+                    if not placa_input.strip() or not slot_input.strip():
+                        st.error("Preencha a Placa e o Slot para prosseguir.")
+                    else:
+                        conn = sqlite3.connect("puxada_ambev.db")
+                        cursor = conn.cursor()
+                        dt_now = datetime.now().strftime("%d/%m/%Y %H:%M")
+                        cursor.execute(
+                            """
+                            INSERT INTO agendamentos_descarga (operacao, placa, slot, data_descarga, tipo_carga, observacao, dt_atualizacao)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                unidade,
+                                placa_input.strip().upper(),
+                                slot_input.strip(),
+                                str(data_descarga_input),
+                                tipo_carga_input,
+                                obs_descarga,
+                                dt_now,
+                            ),
+                        )
+                        conn.commit()
+                        conn.close()
+                        st.success(
+                            f"Agendamento de descarga para a placa **{placa_input.upper()}** salvo com sucesso!"
+                        )
+                        st.rerun()
+
+            st.divider()
+            st.markdown("##### 📋 Agendamentos de Descarga Cadastrados")
+            conn = sqlite3.connect("puxada_ambev.db")
+            df_descargas = pd.read_sql_query(
+                f"SELECT id, placa, slot, data_descarga, tipo_carga, observacao, dt_atualizacao FROM agendamentos_descarga WHERE operacao='{unidade}' ORDER BY data_descarga DESC",
+                conn,
+            )
+            conn.close()
+
+            if not df_descargas.empty:
+                st.dataframe(df_descargas, use_container_width=True)
+                id_exc_desc = st.number_input(
+                    "Digite o ID do agendamento para remover:",
+                    min_value=1,
+                    step=1,
+                    key="id_exc_desc_input",
+                )
+                if st.button("🗑️ Excluir Agendamento Selecionado"):
+                    conn = sqlite3.connect("puxada_ambev.db")
+                    cursor = conn.cursor()
+                    cursor.execute("DELETE FROM agendamentos_descarga WHERE id=?", (id_exc_desc,))
+                    conn.commit()
+                    conn.close()
+                    st.warning(f"Agendamento #{id_exc_desc} removido com sucesso!")
+                    st.rerun()
+            else:
+                st.info(
+                    "Nenhum agendamento de descarga cadastrado para esta unidade."
+                )
+
+        with sub_pux[5]:
+            st.subheader("🚛 Sistema Gestão Puxada - Cadastros Centrais")
+            st.caption(
+                "Gerencie os cadastros de Carretas, Transportadoras, Fábricas e Motoristas utilizados nas operações."
+            )
+
+            sub_gp = st.tabs([
+                "🚛 Cadastro de Carretas",
+                "🏢 Cadastro de Transportadoras",
+                "🏭 Cadastro de Fábricas",
+                "👤 Cadastro de Motoristas",
+            ])
+
+            with sub_gp[0]:
+                st.markdown("##### 🚛 Cadastro de Carretas")
+                with st.form("form_cad_carreta"):
+                    c_c1, c_c2 = st.columns(2)
+                    placa_c = c_c1.text_input("Placa da Carreta (Ex: ABC-1234):")
+                    modelo_c = c_c2.text_input("Modelo (Ex: Sider, Baú, Carrega-tudo):")
+                    c_c3, c_c4 = st.columns(2)
+                    cap_c = c_c3.number_input("Capacidade (HL):", min_value=0.0, value=100.0, step=10.0)
+                    status_c = c_c4.selectbox("Status:", ["Disponível", "Em Trânsito", "Manutenção"])
+
+                    if st.form_submit_button("💾 Salvar Carreta"):
+                        if placa_c.strip():
+                            conn = sqlite3.connect("puxada_ambev.db")
+                            cursor = conn.cursor()
+                            try:
+                                cursor.execute(
+                                    """
+                                    INSERT INTO carretas (operacao, placa, modelo, capacidade_hl, status)
+                                    VALUES (?, ?, ?, ?, ?)
+                                    ON CONFLICT(placa) DO UPDATE SET
+                                        modelo=excluded.modelo, capacidade_hl=excluded.capacidade_hl, status=excluded.status
+                                    """,
+                                    (unidade, placa_c.strip().upper(), modelo_c.strip(), cap_c, status_c),
+                                )
+                                conn.commit()
+                                st.success(f"Carreta **{placa_c.upper()}** salva com sucesso!")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Erro ao salvar carreta: {e}")
+                            finally:
+                                conn.close()
+                        else:
+                            st.error("Informe a placa da carreta.")
+
+                conn = sqlite3.connect("puxada_ambev.db")
+                df_carretas = pd.read_sql_query(f"SELECT id, placa, modelo, capacidade_hl, status FROM carretas WHERE operacao='{unidade}'", conn)
+                conn.close()
+                st.dataframe(df_carretas, use_container_width=True)
+
+            with sub_gp[1]:
+                st.markdown("##### 🏢 Cadastro de Transportadoras")
+                with st.form("form_cad_transportadora"):
+                    t_n1, t_n2 = st.columns(2)
+                    nome_t = t_n1.text_input("Nome da Transportadora:")
+                    cnpj_t = t_n2.text_input("CNPJ:")
+                    contato_t = st.text_input("Contato / E-mail / Telefone:")
+
+                    if st.form_submit_button("💾 Salvar Transportadora"):
+                        if nome_t.strip():
+                            conn = sqlite3.connect("puxada_ambev.db")
+                            cursor = conn.cursor()
+                            try:
+                                cursor.execute(
+                                    """
+                                    INSERT INTO transportadoras_gestao (operacao, nome, cnpj, contato)
+                                    VALUES (?, ?, ?, ?)
+                                    ON CONFLICT(nome) DO UPDATE SET
+                                        cnpj=excluded.cnpj, contato=excluded.contato
+                                    """,
+                                    (unidade, nome_t.strip(), cnpj_t.strip(), contato_t.strip()),
+                                )
+                                conn.commit()
+                                st.success(f"Transportadora **{nome_t}** salva com sucesso!")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Erro: {e}")
+                            finally:
+                                conn.close()
+                        else:
+                            st.error("Informe o nome da transportadora.")
+
+                conn = sqlite3.connect("puxada_ambev.db")
+                df_transp = pd.read_sql_query(f"SELECT id, nome, cnpj, contato FROM transportadoras_gestao WHERE operacao='{unidade}'", conn)
+                conn.close()
+                st.dataframe(df_transp, use_container_width=True)
+
+            with sub_gp[2]:
+                st.markdown("##### 🏭 Cadastro de Fábricas")
+                with st.form("form_cad_fabrica"):
+                    f_n1, f_n2 = st.columns(2)
+                    nome_f = f_n1.text_input("Nome da Fábrica (Ex: Cervejaria Anápolis):")
+                    cidade_f = f_n2.text_input("Cidade:")
+                    uf_f = st.text_input("UF (Ex: GO, SP, BA):")
+
+                    if st.form_submit_button("💾 Salvar Fábrica"):
+                        if nome_f.strip():
+                            conn = sqlite3.connect("puxada_ambev.db")
+                            cursor = conn.cursor()
+                            try:
+                                cursor.execute(
+                                    """
+                                    INSERT INTO fabricas (nome, cidade, uf)
+                                    VALUES (?, ?, ?)
+                                    ON CONFLICT(nome) DO UPDATE SET
+                                        cidade=excluded.cidade, uf=excluded.uf
+                                    """,
+                                    (nome_f.strip(), cidade_f.strip(), uf_f.strip().upper()),
+                                )
+                                conn.commit()
+                                st.success(f"Fábrica **{nome_f}** salva com sucesso!")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Erro: {e}")
+                            finally:
+                                conn.close()
+                        else:
+                            st.error("Informe o nome da fábrica.")
+
+                conn = sqlite3.connect("puxada_ambev.db")
+                df_fab = pd.read_sql_query("SELECT id, nome, cidade, uf FROM fabricas", conn)
+                conn.close()
+                st.dataframe(df_fab, use_container_width=True)
+
+            with sub_gp[3]:
+                st.markdown("##### 👤 Cadastro de Motoristas")
+                with st.form("form_cad_motorista"):
+                    m_n1, m_n2 = st.columns(2)
+                    nome_m = m_n1.text_input("Nome Completo do Motorista:")
+                    cnh_m = m_n2.text_input("CNH:")
+                    tel_m = st.text_input("Telefone:")
+
+                    if st.form_submit_button("💾 Salvar Motorista"):
+                        if nome_m.strip():
+                            conn = sqlite3.connect("puxada_ambev.db")
+                            cursor = conn.cursor()
+                            cursor.execute(
+                                """
+                                INSERT INTO motoristas (operacao, nome, cnh, telefone)
+                                VALUES (?, ?, ?, ?)
+                                """,
+                                (unidade, nome_m.strip(), cnh_m.strip(), tel_m.strip()),
+                            )
+                            conn.commit()
+                            conn.close()
+                            st.success(f"Motorista **{nome_m}** cadastrado com sucesso!")
+                            st.rerun()
+                        else:
+                            st.error("Informe o nome do motorista.")
+
+                conn = sqlite3.connect("puxada_ambev.db")
+                df_mot = pd.read_sql_query(f"SELECT id, nome, cnh, telefone FROM motoristas WHERE operacao='{unidade}'", conn)
+                conn.close()
+                st.dataframe(df_mot, use_container_width=True)
+
+        with sub_pux[6]:
+            st.subheader("🔗 Vincular Pedido (Gestão Puxada)")
+            st.caption(
+                "Vincule manualmente um pedido de puxada selecionando os cadastros prévios de carretas, fábricas, transportadoras e motoristas."
+            )
+
+            conn = sqlite3.connect("puxada_ambev.db")
+            carretas_list = pd.read_sql_query(f"SELECT placa FROM carretas WHERE operacao='{unidade}'", conn)["placa"].tolist()
+            fabricas_list = pd.read_sql_query("SELECT nome FROM fabricas", conn)["nome"].tolist()
+            transp_list = pd.read_sql_query(f"SELECT nome FROM transportadoras_gestao WHERE operacao='{unidade}'", conn)["nome"].tolist()
+            motoristas_list = pd.read_sql_query(f"SELECT nome FROM motoristas WHERE operacao='{unidade}'", conn)["nome"].tolist()
+            conn.close()
+
+            with st.form("form_vincular_pedido"):
+                pedido_input = st.text_input("Número do Pedido (Entrada Manual):", placeholder="Ex: PED-987654")
+                data_puxada_sel = st.date_input("Data da Puxada (Calendário):", value=datetime.now().date())
+
+                c_v1, c_v2 = st.columns(2)
+                placa_sel = c_v1.selectbox("Selecionar Placa (Carreta):", carretas_list if carretas_list else ["Nenhuma carreta cadastrada"])
+                fabrica_sel = c_v2.selectbox("Selecionar Fábrica:", fabricas_list if fabricas_list else ["Nenhuma fábrica cadastrada"])
+
+                c_v3, c_v4 = st.columns(2)
+                transp_sel = c_v3.selectbox("Selecionar Transportadora:", transp_list if transp_list else ["Nenhuma transportadora cadastrada"])
+                motorista_sel = c_v4.selectbox("Selecionar Motorista:", motoristas_list if motoristas_list else ["Nenhum motorista cadastrado"])
+
+                btn_vincular = st.form_submit_button("🔗 Salvar e Vincular Pedido")
+
+                if btn_vincular:
+                    if not pedido_input.strip():
+                        st.error("Por favor, preencha o número do pedido.")
+                    elif not carretas_list or not fabricas_list or not transp_list or not motoristas_list:
+                        st.error("Certifique-se de ter cadastrado carretas, fábricas, transportadoras e motoristas na aba 'Gestão Puxada & Cadastros'.")
+                    else:
+                        conn = sqlite3.connect("puxada_ambev.db")
+                        cursor = conn.cursor()
+                        dt_now = datetime.now().strftime("%d/%m/%Y %H:%M")
+                        cursor.execute(
+                            """
+                            INSERT INTO vinculos_pedidos (operacao, numero_pedido, data_puxada, placa, fabrica, transportadora, motorista, dt_atualizacao)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                unidade,
+                                pedido_input.strip(),
+                                str(data_puxada_sel),
+                                placa_sel,
+                                fabrica_sel,
+                                transp_sel,
+                                motorista_sel,
+                                dt_now,
+                            ),
+                        )
+                        conn.commit()
+                        conn.close()
+                        st.success(f"Pedido **{pedido_input.strip()}** vinculado com sucesso para a data **{data_puxada_sel.strftime('%d/%m/%Y')}**!")
+                        st.rerun()
+
+            st.divider()
+            st.markdown("##### 📜 Pedidos Vinculados Cadastrados")
+            conn = sqlite3.connect("puxada_ambev.db")
+            df_vinculos = pd.read_sql_query(
+                f"SELECT id, numero_pedido, data_puxada, placa, fabrica, transportadora, motorista, dt_atualizacao FROM vinculos_pedidos WHERE operacao='{unidade}' ORDER BY data_puxada DESC",
+                conn,
+            )
+            conn.close()
+
+            if not df_vinculos.empty:
+                st.dataframe(df_vinculos, use_container_width=True)
+                id_del_vinc = st.number_input("Digite o ID do vínculo para remover:", min_value=1, step=1, key="id_del_vinc_input")
+                if st.button("🗑️ Excluir Vínculo de Pedido"):
+                    conn = sqlite3.connect("puxada_ambev.db")
+                    cursor = conn.cursor()
+                    cursor.execute("DELETE FROM vinculos_pedidos WHERE id=?", (id_del_vinc,))
+                    conn.commit()
+                    conn.close()
+                    st.warning(f"Vínculo #{id_del_vinc} removido com sucesso!")
+                    st.rerun()
+            else:
+                st.info("Nenhum pedido vinculado cadastrado para esta unidade.")
+
     # MÓDULO RESSUPRIMENTO
     elif "Ressuprimento" in dept_atual:
         sub_ress = st.tabs([
             "📁 Cadastros & Atualização de Bases",
             "📊 Gestão de Estoque",
             "🛒 Sugestão de Compra & Marcação por Dia",
-            "📅 Agendamento de Descarga",
             "📈 Gestão Ressuprimento (Cestas & Metas)",
         ])
 
@@ -2685,70 +3052,6 @@ else:
                 )
 
         with sub_ress[3]:
-            st.subheader("📅 Agendamento de Descarga")
-            st.caption(
-                "Cadastre os agendamentos de descarga informando Placa, Slot, Data e Tipo de Carga. Os registros aparecerão automaticamente na aba de Descarga no Armazém."
-            )
-
-            with st.form("form_agendamento_descarga"):
-                c_d1, c_d2 = st.columns(2)
-                placa_input = c_d1.text_input("Placa do Veículo (Ex: ABC-1234):")
-                slot_input = c_d2.text_input("Slot de Descarga (Ex: Slot 03):")
-
-                c_d3, c_d4 = st.columns(2)
-                data_descarga_input = c_d3.date_input("Data da Descarga:")
-                tipo_carga_input = c_d4.selectbox(
-                    "Tipo de Carga:", ["Descartável", "Retornável"]
-                )
-
-                obs_descarga = st.text_area("Observações da Descarga:")
-
-                if st.form_submit_button("🚚 Salvar Agendamento de Descarga"):
-                    if not placa_input.strip() or not slot_input.strip():
-                        st.error("Preencha a Placa e o Slot para prosseguir.")
-                    else:
-                        conn = sqlite3.connect("puxada_ambev.db")
-                        cursor = conn.cursor()
-                        dt_now = datetime.now().strftime("%d/%m/%Y %H:%M")
-                        cursor.execute(
-                            """
-                            INSERT INTO agendamentos_descarga (operacao, placa, slot, data_descarga, tipo_carga, observacao, dt_atualizacao)
-                            VALUES (?, ?, ?, ?, ?, ?, ?)
-                            """,
-                            (
-                                unidade,
-                                placa_input.strip().upper(),
-                                slot_input.strip(),
-                                str(data_descarga_input),
-                                tipo_carga_input,
-                                obs_descarga,
-                                dt_now,
-                            ),
-                        )
-                        conn.commit()
-                        conn.close()
-                        st.success(
-                            f"Agendamento de descarga para a placa **{placa_input.upper()}** salvo com sucesso!"
-                        )
-                        st.rerun()
-
-            st.divider()
-            st.markdown("##### 📋 Agendamentos de Descarga Cadastrados")
-            conn = sqlite3.connect("puxada_ambev.db")
-            df_descargas = pd.read_sql_query(
-                f"SELECT id, placa, slot, data_descarga, tipo_carga, observacao, dt_atualizacao FROM agendamentos_descarga WHERE operacao='{unidade}' ORDER BY data_descarga DESC",
-                conn,
-            )
-            conn.close()
-
-            if not df_descargas.empty:
-                st.dataframe(df_descargas, use_container_width=True)
-            else:
-                st.info(
-                    "Nenhum agendamento de descarga cadastrado para esta unidade."
-                )
-
-        with sub_ress[4]:
             render_gestao_ressuprimento(unidade)
 
     # MÓDULO VENDAS
@@ -2932,26 +3235,6 @@ else:
 
             if not df_arm_desc.empty:
                 st.dataframe(df_arm_desc, use_container_width=True)
-
-                if st.button("🗑️ Excluir Agendamento de Descarga"):
-                    id_exc = st.number_input(
-                        "Digite o ID do agendamento para remover:",
-                        min_value=1,
-                        step=1,
-                    )
-                    if st.button("Confirmar Exclusão"):
-                        conn = sqlite3.connect("puxada_ambev.db")
-                        cursor = conn.cursor()
-                        cursor.execute(
-                            "DELETE FROM agendamentos_descarga WHERE id=?",
-                            (id_exc,),
-                        )
-                        conn.commit()
-                        conn.close()
-                        st.success(
-                            f"Agendamento #{id_exc} removido com sucesso!"
-                        )
-                        st.rerun()
             else:
                 st.info(
                     "ℹ️ Nenhum agendamento de descarga pendente no momento para esta unidade."
@@ -3252,6 +3535,11 @@ else:
                 "agendamentos_descarga",
                 "cadastro_trechos_frete",
                 "politica_estoque_base",
+                "carretas",
+                "transportadoras_gestao",
+                "fabricas",
+                "motoristas",
+                "vinculos_pedidos",
             ],
         )
         conn = sqlite3.connect("puxada_ambev.db")
