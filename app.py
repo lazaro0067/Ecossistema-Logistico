@@ -16,12 +16,67 @@ try:
 except ImportError:
     HAS_DOCX = False
 
-# 1. Configuração Inicial da Página
+# 1. Configuração Inicial da Página & Design System Sênior CSS
 st.set_page_config(
     page_title="Gestão DPO & Distribuição - Grupo Lima",
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# Injeção de CSS Customizado para Estilo Sênior (Clean, Cards com sombra suave, Sidebar Profissional)
+st.markdown("""
+    <style>
+        /* Estilização Geral do Fundo e Tipografia */
+        .main {
+            background-color: #f4f6f9;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        }
+        
+        /* Cards Estilo Sênior Corporativo */
+        .senior-card {
+            background-color: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+            margin-bottom: 16px;
+        }
+        
+        /* Cards com Cores Vivas (Visão RN / Kanban) */
+        .card-vibrante-coral {
+            background: linear-gradient(135deg, #ff6b6b 0%, #ee5253 100%);
+            color: white;
+            border-radius: 12px;
+            padding: 16px;
+            box-shadow: 0 6px 12px rgba(238, 82, 83, 0.3);
+            margin-bottom: 12px;
+        }
+        .card-vibrante-verde {
+            background: linear-gradient(135deg, #1dd1a1 0%, #10ac84 100%);
+            color: white;
+            border-radius: 12px;
+            padding: 16px;
+            box-shadow: 0 6px 12px rgba(16, 172, 132, 0.3);
+            margin-bottom: 12px;
+        }
+        .card-vibrante-azul {
+            background: linear-gradient(135deg, #2e86de 0%, #0abde3 100%);
+            color: white;
+            border-radius: 12px;
+            padding: 16px;
+            box-shadow: 0 6px 12px rgba(10, 189, 227, 0.3);
+            margin-bottom: 12px;
+        }
+        .card-vibrante-amarelo {
+            background: linear-gradient(135deg, #feca57 0%, #ff9f43 100%);
+            color: white;
+            border-radius: 12px;
+            padding: 16px;
+            box-shadow: 0 6px 12px rgba(255, 159, 67, 0.3);
+            margin-bottom: 12px;
+        }
+    </style>
+""", unsafe_allow_html=True)
 
 DEPARTAMENTOS_DISPONIVEIS = [
     "Visão Geral (Dashboard)",
@@ -1118,9 +1173,6 @@ def render_gerenciador_padroes_dpo(operacao, modulo, subbloco):
             )
 
 
-# -----------------------------------------------------------------------------
-# AUXILIARES PARA GESTÃO E ANEXO DE IMAGENS DO LAYOUT DO ARMAZÉM
-# -----------------------------------------------------------------------------
 def salvar_layout_imagem(operacao, nome_area, file_uploader_obj):
     if file_uploader_obj is not None:
         file_bytes = file_uploader_obj.read()
@@ -1251,9 +1303,6 @@ def render_gestao_layouts_armazem(operacao):
         )
 
 
-# -----------------------------------------------------------------------------
-# GESTÃO DE RESSUPRIMENTO & POLÍTICA DE ESTOQUE
-# -----------------------------------------------------------------------------
 def render_gestao_ressuprimento(operacao, modo_estatico=False):
     st.subheader(
         "📈 Gestão de Ressuprimento & Acompanhamento de Cestas (HL do Mês)"
@@ -2043,7 +2092,7 @@ if "visualizacao" in st.query_params:
 
 
 def render_estoque_dia(unidade):
-    st.subheader("📱 Portal do RN - Consulta Comercial de Vendas")
+    st.subheader("📱 Portal do RN - Consulta Comercial de Vendas (Cards com Cores Vivas)")
 
     df = carregar_estoque_consolidado(unidade)
 
@@ -2072,29 +2121,28 @@ def render_estoque_dia(unidade):
         if "rn_filtro_status" not in st.session_state:
             st.session_state["rn_filtro_status"] = "TODOS"
 
+        # Cards Superiores com Cores Vivas e Vibrantes (Padrão 2ª Referência)
         k1, k2, k3, k4 = st.columns(4)
 
-        if k1.button(
-            f"🔴 Stock Out\n### {stock_out_cnt} SKUs", use_container_width=True
-        ):
-            st.session_state["rn_filtro_status"] = "🔴 Stock Out (Zerado)"
+        with k1:
+            if st.button(f"🔴 Stock Out\n{stock_out_cnt} SKUs", use_container_width=True):
+                st.session_state["rn_filtro_status"] = "🔴 Stock Out (Zerado)"
+            st.markdown('<div class="card-vibrante-coral" style="text-align:center; margin-top:-10px;"><b>Crítico / Zerado</b></div>', unsafe_allow_html=True)
 
-        if k2.button(
-            f"🟡 Stock Low\n### {stock_low_cnt} SKUs", use_container_width=True
-        ):
-            st.session_state["rn_filtro_status"] = "🟡 Stock Low (Baixo)"
+        with k2:
+            if st.button(f"🟡 Stock Low\n{stock_low_cnt} SKUs", use_container_width=True):
+                st.session_state["rn_filtro_status"] = "🟡 Stock Low (Baixo)"
+            st.markdown('<div class="card-vibrante-amarelo" style="text-align:center; margin-top:-10px;"><b>Atenção / Baixo</b></div>', unsafe_allow_html=True)
 
-        if k3.button(
-            f"🟢 Stock Ideal\n### {stock_ideal_cnt} SKUs",
-            use_container_width=True,
-        ):
-            st.session_state["rn_filtro_status"] = "🟢 Stock Ideal"
+        with k3:
+            if st.button(f"🟢 Stock Ideal\n{stock_ideal_cnt} SKUs", use_container_width=True):
+                st.session_state["rn_filtro_status"] = "🟢 Stock Ideal"
+            st.markdown('<div class="card-vibrante-verde" style="text-align:center; margin-top:-10px;"><b>Saudável / Ideal</b></div>', unsafe_allow_html=True)
 
-        if k4.button(
-            f"🔵 Stock Over\n### {stock_over_cnt} SKUs",
-            use_container_width=True,
-        ):
-            st.session_state["rn_filtro_status"] = "🔵 Stock Over (Excesso)"
+        with k4:
+            if st.button(f"🔵 Stock Over\n{stock_over_cnt} SKUs", use_container_width=True):
+                st.session_state["rn_filtro_status"] = "🔵 Stock Over (Excesso)"
+            st.markdown('<div class="card-vibrante-azul" style="text-align:center; margin-top:-10px;"><b>Excesso / Overstock</b></div>', unsafe_allow_html=True)
 
         st.divider()
 
@@ -2129,25 +2177,25 @@ def render_estoque_dia(unidade):
 
         modo_view = st.radio(
             "Formato de Visualização:",
-            ["📱 Cards para Celular", "📊 Tabela Comercial"],
+            ["📱 Cards com Cores Vivas (Kanban)", "📊 Tabela Comercial"],
             horizontal=True,
         )
 
         if "Cards" in modo_view:
-            st.markdown(f"Exibindo **{len(df_filtrado)}** produtos:")
+            st.markdown(f"Exibindo **{len(df_filtrado)}** produtos com visualização em cartões coloridos:")
             for _, r in df_filtrado.iterrows():
                 if "Stock Out" in r["status"]:
-                    border_color = "#dc3545"
-                    bg_badge = "#f8d7da"
+                    card_class = "card-vibrante-coral"
+                    b_color = "#ee5253"
                 elif "Stock Low" in r["status"]:
-                    border_color = "#ffc107"
-                    bg_badge = "#fff3cd"
+                    card_class = "card-vibrante-amarelo"
+                    b_color = "#ff9f43"
                 elif "Stock Ideal" in r["status"]:
-                    border_color = "#28a745"
-                    bg_badge = "#d4edda"
+                    card_class = "card-vibrante-verde"
+                    b_color = "#10ac84"
                 else:
-                    border_color = "#0288d1"
-                    bg_badge = "#e8f4f8"
+                    card_class = "card-vibrante-azul"
+                    b_color = "#0abde3"
 
                 disp_fmt = formatar_br(r["disp"])
                 pux_fmt = formatar_br(r["total_puxada"])
@@ -2155,17 +2203,17 @@ def render_estoque_dia(unidade):
 
                 st.markdown(
                     f"""
-                    <div style="background-color: #ffffff; border: 1px solid #e0e0e0; border-left: 6px solid {border_color}; border-radius: 8px; padding: 12px; margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+                    <div class="senior-card" style="border-left: 6px solid {b_color};">
                         <div style="display: flex; justify-content: space-between; align-items: center;">
-                            <span style="font-size: 11px; color: #666; font-weight: bold;">CÓD: {r['cod_clean']} | {r['marca']}</span>
-                            <span style="font-size: 11px; font-weight: bold; background-color: {bg_badge}; padding: 3px 8px; border-radius: 12px;">{r['status']}</span>
+                            <span style="font-size: 11px; color: #444; font-weight: bold;">CÓD: {r['cod_clean']} | MARCA: {r['marca']}</span>
+                            <span style="font-size: 11px; font-weight: bold; background-color: #ffffff; color: #222; padding: 4px 10px; border-radius: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">{r['status']}</span>
                         </div>
-                        <div style="font-size: 15px; font-weight: bold; color: #111; margin: 6px 0;">{r['descricao']}</div>
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px; background-color: #f9f9f9; padding: 8px; border-radius: 6px;">
+                        <div style="font-size: 16px; font-weight: bold; color: #1e293b; margin: 8px 0;">{r['descricao']}</div>
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px; background-color: #f8fafc; padding: 10px; border-radius: 8px;">
                             <div><b>Estoque Físico:</b> <span style="color: #0288d1; font-size: 15px; font-weight: bold;">{disp_fmt} cx</span></div>
-                            <div><b>A Caminho (Puxada):</b> <span style="color: #2e7d32; font-size: 15px; font-weight: bold;">{pux_fmt} cx</span></div>
+                            <div><b>A Caminho (Puxada):</b> <span style="color: #10ac84; font-size: 15px; font-weight: bold;">{pux_fmt} cx</span></div>
                         </div>
-                        <div style="display: flex; justify-content: space-between; margin-top: 6px; font-size: 12px; color: #555;">
+                        <div style="display: flex; justify-content: space-between; margin-top: 8px; font-size: 12px; color: #64748b;">
                             <span>Estoque Projetado: <b>{proj_fmt} cx</b></span>
                             <span>Cobertura: <b>{r['doi_atual']:.1f} dias</b></span>
                         </div>
@@ -2351,11 +2399,12 @@ else:
         df_est_vg = carregar_estoque_consolidado(unidade)
         p_saude, k_ok, k_rup, k_exc = calcular_saude_estoque_dpo(df_est_vg)
 
+        # Cards Sênior no Dashboard
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("🏥 Saúde do Estoque DPO", f"{p_saude}%")
-        m2.metric("🟢 SKUs Saudáveis", f"{k_ok}")
-        m3.metric("🔴 SKUs Ruptura", f"{k_rup}")
-        m4.metric("🟡 SKUs Overstock", f"{k_exc}")
+        m1.markdown(f'<div class="senior-card"><h4>🏥 Saúde do Estoque DPO</h4><h2 style="color:#10ac84; margin:0;">{p_saude}%</h2><span style="font-size:12px; color:#64748b;">Meta DPO ≥ 85%</span></div>', unsafe_allow_html=True)
+        m2.markdown(f'<div class="senior-card"><h4>🟢 SKUs Saudáveis</h4><h2 style="color:#2e86de; margin:0;">{k_ok}</h2><span style="font-size:12px; color:#64748b;">DOI entre 3 e 15 dias</span></div>', unsafe_allow_html=True)
+        m3.markdown(f'<div class="senior-card"><h4>🔴 SKUs Ruptura</h4><h2 style="color:#ee5253; margin:0;">{k_rup}</h2><span style="font-size:12px; color:#64748b;">DOI abaixo de 3 dias</span></div>', unsafe_allow_html=True)
+        m4.markdown(f'<div class="senior-card"><h4>🟡 SKUs Overstock</h4><h2 style="color:#ff9f43; margin:0;">{k_exc}</h2><span style="font-size:12px; color:#64748b;">DOI acima de 15 dias</span></div>', unsafe_allow_html=True)
 
     elif "Puxada" in dept_atual:
         sub_pux = st.tabs([
