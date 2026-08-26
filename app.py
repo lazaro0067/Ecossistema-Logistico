@@ -23,15 +23,25 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Injeção de CSS Customizado para Estilo Sênior (Clean, Cards com sombra suave, Sidebar Profissional)
 st.markdown("""
     <style>
-        /* Estilização Geral do Fundo e Tipografia */
         .main {
             background-color: #f4f6f9;
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
         }
         
+        /* Estilização da Sidebar com Fundo Azul Sênior (Referência Foto Executiva) */
+        section[data-testid="stSidebar"] {
+            background-color: #0d2149;
+            color: #ffffff;
+        }
+        section[data-testid="stSidebar"] .stRadio label, 
+        section[data-testid="stSidebar"] .stSelectbox label, 
+        section[data-testid="stSidebar"] p, 
+        section[data-testid="stSidebar"] span {
+            color: #ffffff !important;
+        }
+
         /* Cards Estilo Sênior Corporativo */
         .senior-card {
             background-color: #ffffff;
@@ -42,7 +52,7 @@ st.markdown("""
             margin-bottom: 16px;
         }
         
-        /* Cards com Cores Vivas (Visão RN / Kanban) */
+        /* Cards com Cores Vivas */
         .card-vibrante-coral {
             background: linear-gradient(135deg, #ff6b6b 0%, #ee5253 100%);
             color: white;
@@ -208,8 +218,14 @@ def init_db():
         fabrica TEXT,
         transportadora TEXT,
         motorista TEXT,
+        notas_fiscais TEXT,
         dt_atualizacao TEXT
     )""")
+
+    try:
+        cursor.execute("ALTER TABLE vinculos_pedidos ADD COLUMN notas_fiscais TEXT")
+    except Exception:
+        pass
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS operacoes (
@@ -553,6 +569,20 @@ def classificar_tipo_sku(desc_or_sku):
         return "MARKETPLACE"
     else:
         return "OUTROS"
+
+
+def classificar_categoria_detalhada(desc_or_sku):
+    d = str(desc_or_sku).upper()
+    if "RET" in d or "RGB" in d:
+        return "Retornável (Ret)"
+    elif "DESC" in d or "LATA" in d or "LONG" in d or "PET" in d:
+        return "Descartável (Desc)"
+    elif "CERVEJA" in d or "CHOPP" in d or "BRAHMA" in d or "SKOL" in d or "SPATEN" in d or "BUD" in d:
+        return "Cerveja"
+    elif "NAB" in d or "REFRIGERANTE" in d or "PEPSI" in d or "GUARANA" in d or "AGUA" in d:
+        return "NAB"
+    else:
+        return "Outros"
 
 
 def extract_ambev_brand(desc):
@@ -1004,6 +1034,7 @@ def carregar_estoque_consolidado(operacao):
 
     df["estoque_hl"] = (df["fator_hl"] * df["disp"]).round(2)
     df["marca"] = df["descricao"].apply(extract_ambev_brand)
+    df["categoria_detalhada"] = df["descricao"].apply(classificar_categoria_detalhada)
     df["paletes_ocupados"] = (df["disp"] / df["cx_pallet"]).round(1)
 
     return df
@@ -1020,7 +1051,6 @@ def calcular_saude_estoque_dpo(df):
     return round(pct_saude, 1), saudaveis, ruptura, excesso
 
 
-# 4. Auxiliares e IA para Padrões DPO
 def carregar_padrao_dpo(operacao, modulo, subbloco):
     conn = sqlite3.connect("puxada_ambev.db")
     cursor = conn.cursor()
@@ -2092,7 +2122,7 @@ if "visualizacao" in st.query_params:
 
 
 def render_estoque_dia(unidade):
-    st.subheader("📱 Portal do RN - Consulta Comercial de Vendas (Cards com Cores Vivas)")
+    st.subheader("📱 Portal do RN - Consulta Comercial de Vendas (Cerveja, NAB, Ret, Desc)")
 
     df = carregar_estoque_consolidado(unidade)
 
@@ -2113,43 +2143,54 @@ def render_estoque_dia(unidade):
             lambda r: get_status(r["doi_atual"], r["disp"]), axis=1
         )
 
+        total_skus_geral = len(df)
         stock_out_cnt = len(df[df["status"] == "🔴 Stock Out (Zerado)"])
         stock_low_cnt = len(df[df["status"] == "🟡 Stock Low (Baixo)"])
         stock_ideal_cnt = len(df[df["status"] == "🟢 Stock Ideal"])
         stock_over_cnt = len(df[df["status"] == "🔵 Stock Over (Excesso)"])
 
+        pct_out = (stock_out_cnt / total_skus_geral * 100) if total_skus_geral > 0 else 0
+        pct_low = (stock_low_cnt / total_skus_geral * 100) if total_skus_geral > 0 else 0
+        pct_ideal = (stock_ideal_cnt / total_skus_geral * 100) if total_skus_geral > 0 else 0
+        pct_over = (stock_over_cnt / total_skus_geral * 100) if total_skus_geral > 0 else 0
+
         if "rn_filtro_status" not in st.session_state:
             st.session_state["rn_filtro_status"] = "TODOS"
 
-        # Cards Superiores com Cores Vivas e Vibrantes (Padrão 2ª Referência)
+        # Cards Superiores com Cores Vivas e Percentual em cada card
         k1, k2, k3, k4 = st.columns(4)
 
         with k1:
-            if st.button(f"🔴 Stock Out\n{stock_out_cnt} SKUs", use_container_width=True):
+            if st.button(f"🔴 Stock Out\n{stock_out_cnt} SKUs ({pct_out:.1f}%)", use_container_width=True):
                 st.session_state["rn_filtro_status"] = "🔴 Stock Out (Zerado)"
-            st.markdown('<div class="card-vibrante-coral" style="text-align:center; margin-top:-10px;"><b>Crítico / Zerado</b></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="card-vibrante-coral" style="text-align:center; margin-top:-10px;"><b>Crítico / Zerado ({pct_out:.1f}%)</b></div>', unsafe_allow_html=True)
 
         with k2:
-            if st.button(f"🟡 Stock Low\n{stock_low_cnt} SKUs", use_container_width=True):
+            if st.button(f"🟡 Stock Low\n{stock_low_cnt} SKUs ({pct_low:.1f}%)", use_container_width=True):
                 st.session_state["rn_filtro_status"] = "🟡 Stock Low (Baixo)"
-            st.markdown('<div class="card-vibrante-amarelo" style="text-align:center; margin-top:-10px;"><b>Atenção / Baixo</b></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="card-vibrante-amarelo" style="text-align:center; margin-top:-10px;"><b>Atenção / Baixo ({pct_low:.1f}%)</b></div>', unsafe_allow_html=True)
 
         with k3:
-            if st.button(f"🟢 Stock Ideal\n{stock_ideal_cnt} SKUs", use_container_width=True):
+            if st.button(f"🟢 Stock Ideal\n{stock_ideal_cnt} SKUs ({pct_ideal:.1f}%)", use_container_width=True):
                 st.session_state["rn_filtro_status"] = "🟢 Stock Ideal"
-            st.markdown('<div class="card-vibrante-verde" style="text-align:center; margin-top:-10px;"><b>Saudável / Ideal</b></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="card-vibrante-verde" style="text-align:center; margin-top:-10px;"><b>Saudável / Ideal ({pct_ideal:.1f}%)</b></div>', unsafe_allow_html=True)
 
         with k4:
-            if st.button(f"🔵 Stock Over\n{stock_over_cnt} SKUs", use_container_width=True):
+            if st.button(f"🔵 Stock Over\n{stock_over_cnt} SKUs ({pct_over:.1f}%)", use_container_width=True):
                 st.session_state["rn_filtro_status"] = "🔵 Stock Over (Excesso)"
-            st.markdown('<div class="card-vibrante-azul" style="text-align:center; margin-top:-10px;"><b>Excesso / Overstock</b></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="card-vibrante-azul" style="text-align:center; margin-top:-10px;"><b>Excesso / Overstock ({pct_over:.1f}%)</b></div>', unsafe_allow_html=True)
 
         st.divider()
 
-        c_f1, c_f2 = st.columns([2, 1])
+        # Filtros Específicos para Cerveja, NAB, Ret, Desc
+        c_f1, c_f2, c_f3 = st.columns([2, 1, 1])
         busca = c_f1.text_input("🔍 Pesquisar por Código ou Nome do Produto:")
-        marca_sel = c_f2.selectbox(
-            "Marca:", ["TODAS"] + sorted(df["marca"].unique().tolist())
+        
+        tipo_filtro_sel = c_f2.selectbox(
+            "Tipo (Cerveja / NAB):", ["TODOS", "CERVEJA", "NAB"]
+        )
+        cat_det_sel = c_f3.selectbox(
+            "Categoria (Ret / Desc):", ["TODAS", "Retornável (Ret)", "Descartável (Desc)", "Cerveja", "NAB"]
         )
 
         if st.session_state["rn_filtro_status"] != "TODOS":
@@ -2166,8 +2207,11 @@ def render_estoque_dia(unidade):
                 df_filtrado["status"] == st.session_state["rn_filtro_status"]
             ]
 
-        if marca_sel != "TODAS":
-            df_filtrado = df_filtrado[df_filtrado["marca"] == marca_sel]
+        if tipo_filtro_sel != "TODOS":
+            df_filtrado = df_filtrado[df_filtrado["tipo"] == tipo_filtro_sel]
+
+        if cat_det_sel != "TODAS":
+            df_filtrado = df_filtrado[df_filtrado["categoria_detalhada"] == cat_det_sel]
 
         if busca:
             df_filtrado = df_filtrado[
@@ -2182,19 +2226,15 @@ def render_estoque_dia(unidade):
         )
 
         if "Cards" in modo_view:
-            st.markdown(f"Exibindo **{len(df_filtrado)}** produtos com visualização em cartões coloridos:")
+            st.markdown(f"Exibindo **{len(df_filtrado)}** produtos filtrados (Cerveja, NAB, Ret, Desc):")
             for _, r in df_filtrado.iterrows():
                 if "Stock Out" in r["status"]:
-                    card_class = "card-vibrante-coral"
                     b_color = "#ee5253"
                 elif "Stock Low" in r["status"]:
-                    card_class = "card-vibrante-amarelo"
                     b_color = "#ff9f43"
                 elif "Stock Ideal" in r["status"]:
-                    card_class = "card-vibrante-verde"
                     b_color = "#10ac84"
                 else:
-                    card_class = "card-vibrante-azul"
                     b_color = "#0abde3"
 
                 disp_fmt = formatar_br(r["disp"])
@@ -2205,7 +2245,7 @@ def render_estoque_dia(unidade):
                     f"""
                     <div class="senior-card" style="border-left: 6px solid {b_color};">
                         <div style="display: flex; justify-content: space-between; align-items: center;">
-                            <span style="font-size: 11px; color: #444; font-weight: bold;">CÓD: {r['cod_clean']} | MARCA: {r['marca']}</span>
+                            <span style="font-size: 11px; color: #444; font-weight: bold;">CÓD: {r['cod_clean']} | TIPO: {r['tipo']} | CAT: {r['categoria_detalhada']}</span>
                             <span style="font-size: 11px; font-weight: bold; background-color: #ffffff; color: #222; padding: 4px 10px; border-radius: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">{r['status']}</span>
                         </div>
                         <div style="font-size: 16px; font-weight: bold; color: #1e293b; margin: 8px 0;">{r['descricao']}</div>
@@ -2225,9 +2265,8 @@ def render_estoque_dia(unidade):
             cols_rn = [
                 "cod_clean",
                 "descricao",
-                "marca",
                 "tipo",
-                "categoria",
+                "categoria_detalhada",
                 "disp",
                 "linear_vendas",
                 "doi_atual",
@@ -2275,23 +2314,30 @@ if modo_visualizacao_estatica:
     st.stop()
 
 
-# 7. Autenticação e Navegação do Sistema
+# 7. Autenticação e Navegação do Sistema (Com Login Vivo e Esqueci a Senha Abaixo)
 if "logado" not in st.session_state:
     st.session_state["logado"] = False
 
 if not st.session_state["logado"]:
-    st.title("Sistema Revenda - Grupo Lima")
-    sub_auth = st.tabs([
-        "🔑 Entrar no Sistema",
-        "✉️ Esqueci a Senha / Recuperação",
-    ])
+    st.markdown("""
+        <div style="text-align: center; padding: 20px;">
+            <h1 style="color: #0d2149;">Sistema Revenda - Grupo Lima</h1>
+            <p style="color: #555;">Faça login com suas credenciais corporativas para acessar o sistema.</p>
+        </div>
+    """, unsafe_allow_html=True)
 
-    with sub_auth[0]:
-        col1, _ = st.columns([1, 2])
-        with col1:
-            usuario = st.text_input("Usuário")
+    col1, col2, col3 = st.columns([1, 1.2, 1])
+    with col2:
+        with st.container():
+            st.markdown("""
+                <div style="background: #ffffff; padding: 30px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.08); border: 1px solid #e2e8f0;">
+                <h3 style="color: #0d2149; margin-top: 0; text-align: center;">🔐 Acesso Restrito</h3>
+            """, unsafe_allow_html=True)
+
+            usuario = st.text_input("Usuário Corporativo")
             senha = st.text_input("Senha", type="password")
-            if st.button("Entrar", use_container_width=True):
+
+            if st.button("🚀 Entrar no Sistema", use_container_width=True):
                 conn = sqlite3.connect("puxada_ambev.db")
                 cursor = conn.cursor()
                 cursor.execute(
@@ -2317,26 +2363,30 @@ if not st.session_state["logado"]:
                 else:
                     st.error("Credenciais inválidas.")
 
-    with sub_auth[1]:
-        st.subheader("Recuperação de Senha via E-mail")
-        email_rec = st.text_input("Digite o seu e-mail cadastrado:")
-        if st.button("Enviar Instruções de Recuperação"):
-            if email_rec:
-                conn = sqlite3.connect("puxada_ambev.db")
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT nome FROM usuarios WHERE email = ?", (email_rec,)
-                )
-                res_email = cursor.fetchone()
-                conn.close()
-                if res_email:
-                    st.success(
-                        f"📧 Instruções de recuperação enviadas para o e-mail **{email_rec}** associado ao usuário **{res_email[0]}**."
-                    )
-                else:
-                    st.error("E-mail não encontrado no sistema.")
-            else:
-                st.error("Por favor, preencha o e-mail.")
+            st.markdown("<hr style='margin: 20px 0;'>", unsafe_allow_html=True)
+            
+            # Esqueci a senha com validação por e-mail logo abaixo do entrar
+            with st.expander("✉️ Esqueci minha senha / Recuperação"):
+                email_rec = st.text_input("Digite o seu e-mail cadastrado para validação:")
+                if st.button("Enviar E-mail de Recuperação", use_container_width=True):
+                    if email_rec:
+                        conn = sqlite3.connect("puxada_ambev.db")
+                        cursor = conn.cursor()
+                        cursor.execute(
+                            "SELECT nome FROM usuarios WHERE email = ?", (email_rec,)
+                        )
+                        res_email = cursor.fetchone()
+                        conn.close()
+                        if res_email:
+                            st.success(
+                                f"📧 E-mail validado com sucesso! Instruções de recuperação enviadas para **{email_rec}** (Usuário: **{res_email[0]}**)."
+                            )
+                        else:
+                            st.error("E-mail não encontrado no sistema.")
+                    else:
+                        st.error("Por favor, preencha o e-mail cadastrado.")
+
+            st.markdown("</div>", unsafe_allow_html=True)
 
 else:
     st.sidebar.title("Grupo Lima")
@@ -2399,7 +2449,6 @@ else:
         df_est_vg = carregar_estoque_consolidado(unidade)
         p_saude, k_ok, k_rup, k_exc = calcular_saude_estoque_dpo(df_est_vg)
 
-        # Cards Sênior no Dashboard
         m1, m2, m3, m4 = st.columns(4)
         m1.markdown(f'<div class="senior-card"><h4>🏥 Saúde do Estoque DPO</h4><h2 style="color:#10ac84; margin:0;">{p_saude}%</h2><span style="font-size:12px; color:#64748b;">Meta DPO ≥ 85%</span></div>', unsafe_allow_html=True)
         m2.markdown(f'<div class="senior-card"><h4>🟢 SKUs Saudáveis</h4><h2 style="color:#2e86de; margin:0;">{k_ok}</h2><span style="font-size:12px; color:#64748b;">DOI entre 3 e 15 dias</span></div>', unsafe_allow_html=True)
@@ -2415,7 +2464,7 @@ else:
             "🚚 Gestão de Descarga (Pátio)",
             "🚛 Gestão Puxada & Cadastros",
             "📅 Gestão Mensal de Viagens",
-            "🔗 Vincular Pedido",
+            "🔗 Vincular Pedido & NFs",
         ])
 
         with sub_pux[0]:
@@ -2919,7 +2968,7 @@ else:
 
         with sub_pux[6]:
             st.subheader("📅 Gestão Mensal de Viagens & Informações Consolidadas")
-            st.caption("Visualize o consolidado mensal de viagens e métricas agrupadas por carretas, motoristas, fábricas e transportadoras.")
+            st.caption("Visualize o consolidado mensal de viagens, métricas agrupadas e notas fiscais vinculadas.")
 
             c_gm1, c_gm2 = st.columns(2)
             ano_gm = c_gm1.number_input("Ano da Gestão Mensal:", min_value=2024, max_value=2030, value=datetime.now().year, key="ano_gestao_mensal")
@@ -2944,7 +2993,7 @@ else:
 
             st.markdown(f"##### 📊 Resumo Executivo - {meses_nomes_gm[mes_gm-1]}/{ano_gm}")
 
-            with st.expander(f"📦 1. Viagens no Mês ({total_viagens} Viagens realizadas) - CLIQUE PARA ABRIR", expanded=True):
+            with st.expander(f"📦 1. Viagens no Mês ({total_viagens} Viagens realizadas com NFs) - CLIQUE PARA ABRIR", expanded=True):
                 st.metric("Total de Viagens Registradas", f"{total_viagens} viagens")
                 if not df_vinc_mes.empty:
                     st.dataframe(df_vinc_mes, use_container_width=True)
@@ -2985,9 +3034,9 @@ else:
                     st.info("Sem dados para agrupar.")
 
         with sub_pux[7]:
-            st.subheader("🔗 Vincular Pedido & Edição (✏️)")
+            st.subheader("🔗 Vincular Pedido, Anexar NFs (Múltiplas) & Edição (✏️)")
             st.caption(
-                "Vincule ou edite manualmente um pedido de puxada selecionando carretas, fábricas, transportadoras e motoristas."
+                "Após o pedido ser carregado, anexe uma ou mais Notas Fiscais (NFs) para tornar o relatório completo."
             )
 
             conn = sqlite3.connect("puxada_ambev.db")
@@ -2997,11 +3046,11 @@ else:
             motoristas_list = pd.read_sql_query(f"SELECT nome FROM motoristas WHERE operacao='{unidade}'", conn)["nome"].tolist()
             conn.close()
 
-            modo_vinc = st.radio("Ação Vínculo:", ["➕ Novo Vínculo", "✏️ Editar Vínculo Existente"], horizontal=True, key="modo_vinc_radio")
+            modo_vinc = st.radio("Ação Vínculo:", ["➕ Novo Vínculo & NFs", "✏️ Editar Vínculo & Anexos Existentes"], horizontal=True, key="modo_vinc_radio")
 
             if "Novo" in modo_vinc:
                 with st.form("form_vincular_pedido"):
-                    pedido_input = st.text_input("Número do Pedido:", placeholder="Ex: PED-987654")
+                    pedido_input = st.text_input("Número do Pedido Carregado:", placeholder="Ex: PED-987654")
                     data_puxada_sel = st.date_input("Data da Puxada:", value=datetime.now().date())
 
                     c_v1, c_v2 = st.columns(2)
@@ -3012,7 +3061,11 @@ else:
                     transp_sel = c_v3.selectbox("Transportadora:", transp_list if transp_list else ["Nenhuma cadastrada"])
                     motorista_sel = c_v4.selectbox("Motorista:", motoristas_list if motoristas_list else ["Nenhum cadastrado"])
 
-                    if st.form_submit_button("🔗 Salvar e Vincular Pedido"):
+                    st.markdown("---")
+                    st.markdown("##### 📄 Anexar Notas Fiscais (NFs) do Carregamento")
+                    nfs_input = st.text_area("Números / Chaves das NFs Carregadas (Separe por vírgula ou quebra de linha):", placeholder="Ex: NF-12345, NF-12346, NF-12347")
+
+                    if st.form_submit_button("🔗 Salvar Pedido, NFs e Vincular"):
                         if not pedido_input.strip():
                             st.error("Informe o número do pedido.")
                         else:
@@ -3021,14 +3074,14 @@ else:
                             dt_now = datetime.now().strftime("%d/%m/%Y %H:%M")
                             cursor.execute(
                                 """
-                                INSERT INTO vinculos_pedidos (operacao, numero_pedido, data_puxada, placa, fabrica, transportadora, motorista, dt_atualizacao)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                INSERT INTO vinculos_pedidos (operacao, numero_pedido, data_puxada, placa, fabrica, transportadora, motorista, notas_fiscais, dt_atualizacao)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                                 """,
-                                (unidade, pedido_input.strip(), str(data_puxada_sel), placa_sel, fabrica_sel, transp_sel, motorista_sel, dt_now),
+                                (unidade, pedido_input.strip(), str(data_puxada_sel), placa_sel, fabrica_sel, transp_sel, motorista_sel, nfs_input.strip(), dt_now),
                             )
                             conn.commit()
                             conn.close()
-                            st.success(f"Pedido **{pedido_input.strip()}** vinculado com sucesso!")
+                            st.success(f"Pedido **{pedido_input.strip()}** e suas Notas Fiscais foram salvos com sucesso!")
                             st.rerun()
             else:
                 conn = sqlite3.connect("puxada_ambev.db")
@@ -3040,36 +3093,38 @@ else:
                     r_vinc = df_vinc_all[df_vinc_all["id"] == real_id_vinc].iloc[0]
                     with st.form("form_edit_vinc"):
                         np_e = st.text_input("Número do Pedido:", value=r_vinc["numero_pedido"])
-                        dp_e = st.date_input("Data da Puxada:", value=datetime.strptime(r_vinc["data_puxada"], "%Y-%m-%d").date() if len(r_vinc["data_puxada"])>=10 else datetime.now().date())
+                        dp_e = st.date_input("Data da Puxada:", value=datetime.strptime(r_vinc["data_puxada"], "%Y-%m-%d").date() if len(str(r_vinc["data_puxada"]))>=10 else datetime.now().date())
                         
                         pl_e = st.selectbox("Placa:", carretas_list, index=carretas_list.index(r_vinc["placa"]) if r_vinc["placa"] in carretas_list else 0)
                         fa_e = st.selectbox("Fábrica:", fabricas_list, index=fabricas_list.index(r_vinc["fabrica"]) if r_vinc["fabrica"] in fabricas_list else 0)
                         tr_e = st.selectbox("Transportadora:", transp_list, index=transp_list.index(r_vinc["transportadora"]) if r_vinc["transportadora"] in transp_list else 0)
                         mo_e = st.selectbox("Motorista:", motoristas_list, index=motoristas_list.index(r_vinc["motorista"]) if r_vinc["motorista"] in motoristas_list else 0)
 
-                        if st.form_submit_button("✏️ Atualizar Vínculo"):
+                        nfs_e = st.text_area("Notas Fiscais Vinculadas:", value=str(r_vinc["notas_fiscais"] if pd.notna(r_vinc["notas_fiscais"]) else ""))
+
+                        if st.form_submit_button("✏️ Atualizar Vínculo e NFs"):
                             conn = sqlite3.connect("puxada_ambev.db")
                             cursor = conn.cursor()
-                            cursor.execute("UPDATE vinculos_pedidos SET numero_pedido=?, data_puxada=?, placa=?, fabrica=?, transportadora=?, motorista=? WHERE id=?", (np_e, str(dp_e), pl_e, fa_e, tr_e, mo_e, real_id_vinc))
+                            cursor.execute("UPDATE vinculos_pedidos SET numero_pedido=?, data_puxada=?, placa=?, fabrica=?, transportadora=?, motorista=?, notas_fiscais=? WHERE id=?", (np_e, str(dp_e), pl_e, fa_e, tr_e, mo_e, nfs_e, real_id_vinc))
                             conn.commit()
                             conn.close()
-                            st.success("Vínculo atualizado com sucesso!")
+                            st.success("Vínculo e Notas Fiscais atualizados com sucesso!")
                             st.rerun()
                 else:
                     st.info("Nenhum vínculo cadastrado.")
 
             st.divider()
-            st.markdown("##### 📜 Pedidos Vinculados Cadastrados")
+            st.markdown("##### 📜 Pedidos Vinculados e NFs Cadastradas")
             conn = sqlite3.connect("puxada_ambev.db")
             df_vinculos = pd.read_sql_query(
-                f"SELECT id, numero_pedido, data_puxada, placa, fabrica, transportadora, motorista, dt_atualizacao FROM vinculos_pedidos WHERE operacao='{unidade}' ORDER BY data_puxada DESC",
+                f"SELECT id, numero_pedido, data_puxada, placa, fabrica, transportadora, motorista, notas_fiscais, dt_atualizacao FROM vinculos_pedidos WHERE operacao='{unidade}' ORDER BY data_puxada DESC",
                 conn,
             )
             conn.close()
 
             if not df_vinculos.empty:
                 st.dataframe(df_vinculos, use_container_width=True)
-                render_botoes_download(df_vinculos, f"Pedidos_Vinculados_{unidade}")
+                render_botoes_download(df_vinculos, f"Pedidos_Vinculados_NFs_{unidade}")
 
                 id_del_vinc = st.number_input("Digite o ID do vínculo para remover:", min_value=1, step=1, key="id_del_vinc_input")
                 if st.button("🗑️ Excluir Vínculo de Pedido"):
@@ -3542,8 +3597,13 @@ else:
             render_gerenciador_padroes_dpo(unidade, "Entrega", "6.1 - NPS")
 
     elif "Acesso Master" in dept_atual:
-        st.subheader("🔑 Gestão de Usuários, Status e Permissões")
-        tab_usr1, tab_usr2 = st.tabs(["➕ Cadastrar / Alterar Usuário", "📋 Ativar / Inativar Usuários"])
+        st.subheader("🔑 Gestão de Usuários, Edição (✏️) e Exclusão (🗑️)")
+        
+        tab_usr1, tab_usr2, tab_usr3 = st.tabs([
+            "➕ Cadastrar Novo Usuário",
+            "✏️ Editar Usuário Existente (Lápis)",
+            "📋 Listar / Inativar / Excluir Usuários"
+        ])
 
         with tab_usr1:
             with st.form("form_cad_usuario_master"):
@@ -3562,48 +3622,88 @@ else:
                 sel_ops = st.multiselect("Unidades Operacionais Permitidas:", OPERACOES_DISPONIVEIS, default=OPERACOES_DISPONIVEIS)
                 sel_deps = st.multiselect("Departamentos Permitidos:", DEPARTAMENTOS_DISPONIVEIS, default=DEPARTAMENTOS_DISPONIVEIS)
 
-                if st.form_submit_button("Criar / Atualizar Usuário"):
+                if st.form_submit_button("Criar Novo Usuário"):
                     if novo_nome and nova_senha:
                         ops_str = "TODAS" if len(sel_ops) == len(OPERACOES_DISPONIVEIS) else ",".join(sel_ops)
                         deps_str = "TODOS" if len(sel_deps) == len(DEPARTAMENTOS_DISPONIVEIS) else ",".join(sel_deps)
 
                         conn = sqlite3.connect("puxada_ambev.db")
                         cursor = conn.cursor()
+                        try:
+                            cursor.execute(
+                                """
+                                INSERT INTO usuarios (nome, senha, email, cargo, perfil, e_aprovador, permissoes_operacoes, permissoes_deptos, status)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Ativo')
+                                """,
+                                (novo_nome, nova_senha, novo_email, novo_cargo, novo_perfil, e_aprov, ops_str, deps_str),
+                            )
+                            conn.commit()
+                            st.success(f"Usuário **{novo_nome}** cadastrado com sucesso!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Erro: {e}")
+                        finally:
+                            conn.close()
+
+        with tab_usr2:
+            conn = sqlite3.connect("puxada_ambev.db")
+            df_usrs_ed = pd.read_sql_query("SELECT * FROM usuarios", conn)
+            conn.close()
+
+            if not df_usrs_ed.empty:
+                alvo_edit_usr = st.selectbox("Selecione o Usuário para Editar:", df_usrs_ed.apply(lambda r: f"#{r['id']} - {r['nome']} ({r['perfil']})", axis=1).tolist())
+                real_id_usr = int(alvo_edit_usr.split("-")[0].replace("#", "").strip())
+                r_usr = df_usrs_ed[df_usrs_ed["id"] == real_id_usr].iloc[0]
+
+                with st.form("form_edit_usuario_master"):
+                    e_nome = st.text_input("Nome do Usuário / Login:", value=r_usr["nome"])
+                    e_senha = st.text_input("Senha:", value=r_usr["senha"], type="password")
+                    c_e1, c_e2 = st.columns(2)
+                    e_email = c_e1.text_input("E-mail:", value=str(r_usr["email"] if pd.notna(r_usr["email"]) else ""))
+                    e_cargo = c_e2.text_input("Cargo:", value=str(r_usr["cargo"] if pd.notna(r_usr["cargo"]) else ""))
+
+                    c_e3, c_e4 = st.columns(2)
+                    e_perfil = c_e3.selectbox("Perfil de Acesso:", ["Operacional", "Master"], index=0 if r_usr["perfil"]=="Operacional" else 1)
+                    e_aprovador = c_e4.selectbox("É Aprovador?", ["Não", "Sim"], index=0 if r_usr["e_aprovador"]=="Não" else 1)
+                    e_status = st.selectbox("Status:", ["Ativo", "Inativo"], index=0 if r_usr["status"]=="Ativo" else 1)
+
+                    if st.form_submit_button("✏️ Atualizar Dados do Usuário"):
+                        conn = sqlite3.connect("puxada_ambev.db")
+                        cursor = conn.cursor()
                         cursor.execute(
                             """
-                            INSERT INTO usuarios (nome, senha, email, cargo, perfil, e_aprovador, permissoes_operacoes, permissoes_deptos, status)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Ativo')
-                            ON CONFLICT(nome) DO UPDATE SET 
-                                senha=excluded.senha, email=excluded.email, cargo=excluded.cargo, 
-                                perfil=excluded.perfil, e_aprovador=excluded.e_aprovador,
-                                permissoes_operacoes=excluded.permissoes_operacoes, permissoes_deptos=excluded.permissoes_deptos
+                            UPDATE usuarios SET nome=?, senha=?, email=?, cargo=?, perfil=?, e_aprovador=?, status=? WHERE id=?
                             """,
-                            (novo_nome, nova_senha, novo_email, novo_cargo, novo_perfil, e_aprov, ops_str, deps_str),
+                            (e_nome, e_senha, e_email, e_cargo, e_perfil, e_aprovador, e_status, real_id_usr),
                         )
                         conn.commit()
                         conn.close()
-                        st.success(f"Usuário **{novo_nome}** salvo com sucesso!")
+                        st.success(f"Usuário **{e_nome}** atualizado com sucesso!")
                         st.rerun()
+            else:
+                st.info("Nenhum usuário cadastrado para editar.")
 
-        with tab_usr2:
+        with tab_usr3:
             conn = sqlite3.connect("puxada_ambev.db")
             df_usrs = pd.read_sql_query("SELECT id, nome, email, cargo, perfil, status FROM usuarios", conn)
             conn.close()
             st.dataframe(df_usrs, use_container_width=True)
             render_botoes_download(df_usrs, "Usuarios_Sistema")
 
-            with st.form("form_alt_status_master"):
-                alvo_user = st.selectbox("Selecionar Usuário:", df_usrs["nome"].tolist() if not df_usrs.empty else [])
-                novo_status_alvo = st.selectbox("Alterar Status:", ["Ativo", "Inativo"])
-                if st.form_submit_button("Atualizar Status"):
-                    if alvo_user:
-                        conn = sqlite3.connect("puxada_ambev.db")
-                        cursor = conn.cursor()
-                        cursor.execute("UPDATE usuarios SET status = ? WHERE nome = ?", (novo_status_alvo, alvo_user))
-                        conn.commit()
-                        conn.close()
-                        st.success(f"Status atualizado para **{novo_status_alvo}**!")
-                        st.rerun()
+            st.markdown("---")
+            st.markdown("##### 🗑️ Excluir Definitivamente um Usuário")
+            id_del_usr = st.number_input("Digite o ID do usuário para excluir:", min_value=1, step=1, key="id_del_usr_input")
+            if st.button("🗑️ Excluir Usuário Selecionado"):
+                if id_del_usr == 1:
+                    st.error("Não é permitido excluir o usuário Administrador principal (ID 1).")
+                else:
+                    conn = sqlite3.connect("puxada_ambev.db")
+                    cursor = conn.cursor()
+                    cursor.execute("DELETE FROM usuarios WHERE id=?", (id_del_usr,))
+                    conn.commit()
+                    conn.close()
+                    st.warning(f"Usuário #{id_del_usr} excluído com sucesso!")
+                    st.rerun()
 
     elif "Relatórios" in dept_atual:
         st.subheader("Base de Dados Completa para Download")
@@ -3614,7 +3714,7 @@ else:
                 "cotacoes_frete", "historico_curva_abc", "padroes_dpo", "layout_armazem",
                 "gestao_ressuprimento_diario", "metas_ressuprimento_mensal", "agendamentos_descarga",
                 "cadastro_trechos_frete", "politica_estoque_base", "carretas",
-                "transportadoras_gestao", "fabricas", "motoristas", "vinculos_pedidos",
+                "transportadoras_gestao", "fabricas", "motoristas", "vinculos_pedidos", "usuarios"
             ],
         )
         conn = sqlite3.connect("puxada_ambev.db")
