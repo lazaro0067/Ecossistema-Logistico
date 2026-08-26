@@ -1340,7 +1340,6 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
 
     cestas_ordenadas = list(cestas_map.keys())
 
-    # Bloco Acompanhamento Mensal
     def bloco_acompanhamento():
         c_f1, c_f2 = st.columns(2)
         ano_sel = c_f1.number_input(
@@ -1550,7 +1549,6 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
                 f"ℹ️ Verifique se há dados diários cadastrados para **{nome_exibicao_op}** no ano de {ano_sel}."
             )
 
-    # Bloco Carregamento Dia a Dia
     def bloco_carregamento_dia_a_dia():
         st.markdown(f"### 📅 Carregamento Dia a Dia - {nome_exibicao_op}")
         st.caption(
@@ -1636,7 +1634,6 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
                 f"ℹ️ Nenhum registro de carregamento diário encontrado para **{nome_exibicao_op}** em {meses_nomes_lista[mes_dia - 1]}/{ano_dia}."
             )
 
-    # Bloco Política de Estoque com Filtros Múltiplos e Atualização Dinâmica de Cards
     def bloco_politica_estoque():
         st.markdown(
             "### 📦 Gestão de Política de Estoque & Upload de Dados Médios"
@@ -1726,7 +1723,6 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
             df_pol["Status Política"] = df_pol.apply(classificar_status_pol, axis=1)
             df_pol["status_obj"] = df_pol.apply(classificar_status_obj, axis=1)
 
-            # Filtros múltiplos por multiselect que atualizam dinamicamente os cards e tabela
             st.markdown("##### 🎛️ Filtros de Status (Estoque Objetivo & Política)")
             opcoes_status_disp = [
                 "🎯 Estoque Objetivo",
@@ -1741,7 +1737,6 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
                 default=[],
             )
 
-            # Filtrar dataframe base para calcular os totais dinâmicos conforme a seleção
             df_filtrado_cards = df_pol.copy()
             if status_selecionados:
                 condicoes_msk = pd.Series([False] * len(df_filtrado_cards), index=df_filtrado_cards.index)
@@ -1755,7 +1750,6 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
                     condicoes_msk = condicoes_msk | (df_filtrado_cards["Status Política"] == "🔵 Acima da Política")
                 df_filtrado_cards = df_filtrado_cards[condicoes_msk]
 
-            # Totais dinâmicos para exibição nos cards atualizados
             tot_produtos = len(df_pol)
             obj_cnt = len(df_pol[df_pol["status_obj"] == "Estoque Objetivo"])
             dentro_cnt = len(df_pol[df_pol["Status Política"] == "🟢 Dentro da Política"])
@@ -2024,7 +2018,6 @@ def go_back():
         st.session_state["nav_stack"].pop()
 
 
-# 6. Portal Comercial Direto ou Visualização Estática por Operação via Parâmetro URL
 modo_comercial = False
 modo_visualizacao_estatica = False
 op_estatica = None
@@ -2352,7 +2345,6 @@ else:
 
     dept_atual = st.session_state["nav_stack"][-1]
 
-    # DASHBOARD PRINCIPAL
     if "Visão Geral" in dept_atual:
         st.subheader("Painel Geral de Desempenho Operacional")
 
@@ -2365,7 +2357,6 @@ else:
         m3.metric("🔴 SKUs Ruptura", f"{k_rup}")
         m4.metric("🟡 SKUs Overstock", f"{k_exc}")
 
-    # MÓDULO PUXADA (FRETES, GESTÃO PUXADA, DESCARGA & VINCULAR PEDIDO)
     elif "Puxada" in dept_atual:
         sub_pux = st.tabs([
             "📋 Cadastro de Trechos",
@@ -2374,51 +2365,72 @@ else:
             "📜 Histórico Geral",
             "🚚 Gestão de Descarga (Pátio)",
             "🚛 Gestão Puxada & Cadastros",
+            "📅 Gestão Mensal de Viagens",
             "🔗 Vincular Pedido",
         ])
 
         with sub_pux[0]:
             st.markdown("### Cadastro de Trechos, Transportadoras e Aprovadores")
-            with st.form("form_cad_trecho"):
-                c1, c2 = st.columns(2)
-                t_in = c1.text_input("Trecho (Ex: Anápolis -> Rio Verde):")
-                tr_in = c2.text_input("Transportadora:")
-                c3, c4 = st.columns(2)
-                v_in = c3.number_input(
-                    "Valor do Frete (R$):", min_value=0.0, step=100.0
-                )
-                ap_in = c4.text_input("Aprovador:")
+            
+            c_modo_tr = st.radio("Ação:", ["➕ Novo Trecho", "✏️ Editar Trecho Existente"], horizontal=True)
+            
+            if "Novo" in c_modo_tr:
+                with st.form("form_cad_trecho"):
+                    c1, c2 = st.columns(2)
+                    t_in = c1.text_input("Trecho (Ex: Anápolis -> Rio Verde):")
+                    tr_in = c2.text_input("Transportadora:")
+                    c3, c4 = st.columns(2)
+                    v_in = c3.number_input("Valor do Frete (R$):", min_value=0.0, step=100.0)
+                    ap_in = c4.text_input("Aprovador:")
 
-                if st.form_submit_button("💾 Salvar Trecho Vinculado"):
-                    if t_in and tr_in:
-                        conn = sqlite3.connect("puxada_ambev.db")
-                        cursor = conn.cursor()
-                        try:
-                            cursor.execute(
-                                """
-                            INSERT INTO cadastro_trechos_frete (trecho, transportadora, valor_frete, aprovador) 
-                            VALUES (?, ?, ?, ?)
-                            ON CONFLICT(trecho) DO UPDATE SET 
-                                transportadora=excluded.transportadora, 
-                                valor_frete=excluded.valor_frete, 
-                                aprovador=excluded.aprovador
-                            """,
-                                (
-                                    t_in.strip(),
-                                    tr_in.strip(),
-                                    v_in,
-                                    ap_in.strip(),
-                                ),
-                            )
+                    if st.form_submit_button("💾 Salvar Trecho Vinculado"):
+                        if t_in and tr_in:
+                            conn = sqlite3.connect("puxada_ambev.db")
+                            cursor = conn.cursor()
+                            try:
+                                cursor.execute(
+                                    """
+                                INSERT INTO cadastro_trechos_frete (trecho, transportadora, valor_frete, aprovador) 
+                                VALUES (?, ?, ?, ?)
+                                ON CONFLICT(trecho) DO UPDATE SET 
+                                    transportadora=excluded.transportadora, 
+                                    valor_frete=excluded.valor_frete, 
+                                    aprovador=excluded.aprovador
+                                """,
+                                    (t_in.strip(), tr_in.strip(), v_in, ap_in.strip()),
+                                )
+                                conn.commit()
+                                st.success(f"Trecho **{t_in}** cadastrado/atualizado com sucesso!")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Erro: {e}")
+                            finally:
+                                conn.close()
+            else:
+                conn = sqlite3.connect("puxada_ambev.db")
+                df_tr_ed = pd.read_sql_query("SELECT * FROM cadastro_trechos_frete", conn)
+                conn.close()
+                if not df_tr_ed.empty:
+                    trecho_sel_ed = st.selectbox("Selecione o Trecho para Editar:", df_tr_ed["trecho"].tolist())
+                    r_tr = df_tr_ed[df_tr_ed["trecho"] == trecho_sel_ed].iloc[0]
+                    with st.form("form_edit_trecho"):
+                        t_e = st.text_input("Trecho:", value=r_tr["trecho"])
+                        tr_e = st.text_input("Transportadora:", value=r_tr["transportadora"])
+                        v_e = st.number_input("Valor do Frete (R$):", min_value=0.0, value=float(r_tr["valor_frete"]), step=100.0)
+                        ap_e = st.text_input("Aprovador:", value=r_tr["aprovador"])
+                        
+                        if st.form_submit_button("💾 Atualizar Trecho"):
+                            conn = sqlite3.connect("puxada_ambev.db")
+                            cursor = conn.cursor()
+                            cursor.execute("UPDATE cadastro_trechos_frete SET trecho=?, transportadora=?, valor_frete=?, aprovador=? WHERE id=?", (t_e, tr_e, v_e, ap_e, int(r_tr["id"])))
                             conn.commit()
-                            st.success(
-                                f"Trecho **{t_in}** cadastrado/atualizado com sucesso!"
-                            )
-                        except Exception as e:
-                            st.error(f"Erro: {e}")
-                        finally:
                             conn.close()
+                            st.success("Trecho atualizado com sucesso!")
+                            st.rerun()
+                else:
+                    st.info("Nenhum trecho cadastrado para editar.")
 
+            st.divider()
             df_trechos_geral = pd.read_sql_query("SELECT * FROM cadastro_trechos_frete", sqlite3.connect("puxada_ambev.db"))
             st.dataframe(df_trechos_geral, use_container_width=True)
             st.markdown("##### 📥 Opções de Download de Trechos")
@@ -2587,52 +2599,80 @@ else:
                 )
 
         with sub_pux[5]:
-            st.subheader("🚛 Sistema Gestão Puxada - Cadastros Centrais")
+            st.subheader("🚛 Sistema Gestão Puxada - Cadastros Centrais & Edição (✏️)")
             st.caption(
-                "Gerencie os cadastros de Carretas, Transportadoras, Fábricas e Motoristas utilizados nas operações."
+                "Gerencie e edite os cadastros de Carretas, Transportadoras, Fábricas e Motoristas. Use o botão ✏️ para editar após salvar."
             )
 
             sub_gp = st.tabs([
-                "🚛 Cadastro de Carretas",
-                "🏢 Cadastro de Transportadoras",
-                "🏭 Cadastro de Fábricas",
-                "👤 Cadastro de Motoristas",
+                "🚛 Carretas",
+                "🏢 Transportadoras",
+                "🏭 Fábricas",
+                "👤 Motoristas",
             ])
 
             with sub_gp[0]:
                 st.markdown("##### 🚛 Cadastro de Carretas")
-                with st.form("form_cad_carreta"):
-                    c_c1, c_c2 = st.columns(2)
-                    placa_c = c_c1.text_input("Placa da Carreta (Ex: ABC-1234):")
-                    modelo_c = c_c2.text_input("Modelo (Ex: Sider, Baú, Carrega-tudo):")
-                    c_c3, c_c4 = st.columns(2)
-                    cap_c = c_c3.number_input("Capacidade (HL):", min_value=0.0, value=100.0, step=10.0)
-                    status_c = c_c4.selectbox("Status:", ["Disponível", "Em Trânsito", "Manutenção"])
+                modo_c_car = st.radio("Ação Carreta:", ["➕ Novo", "✏️ Editar (Lápis)"], horizontal=True, key="r_car_modo")
+                
+                if "Novo" in modo_c_car:
+                    with st.form("form_cad_carreta"):
+                        c_c1, c_c2 = st.columns(2)
+                        placa_c = c_c1.text_input("Placa da Carreta (Ex: ABC-1234):")
+                        modelo_c = c_c2.text_input("Modelo (Ex: Sider, Baú):")
+                        c_c3, c_c4 = st.columns(2)
+                        cap_c = c_c3.number_input("Capacidade (HL):", min_value=0.0, value=100.0, step=10.0)
+                        status_c = c_c4.selectbox("Status:", ["Disponível", "Em Trânsito", "Manutenção"])
 
-                    if st.form_submit_button("💾 Salvar Carreta"):
-                        if placa_c.strip():
-                            conn = sqlite3.connect("puxada_ambev.db")
-                            cursor = conn.cursor()
-                            try:
-                                cursor.execute(
-                                    """
-                                    INSERT INTO carretas (operacao, placa, modelo, capacidade_hl, status)
-                                    VALUES (?, ?, ?, ?, ?)
-                                    ON CONFLICT(placa) DO UPDATE SET
-                                        modelo=excluded.modelo, capacidade_hl=excluded.capacidade_hl, status=excluded.status
-                                    """,
-                                    (unidade, placa_c.strip().upper(), modelo_c.strip(), cap_c, status_c),
-                                )
+                        if st.form_submit_button("💾 Salvar Carreta"):
+                            if placa_c.strip():
+                                conn = sqlite3.connect("puxada_ambev.db")
+                                cursor = conn.cursor()
+                                try:
+                                    cursor.execute(
+                                        """
+                                        INSERT INTO carretas (operacao, placa, modelo, capacidade_hl, status)
+                                        VALUES (?, ?, ?, ?, ?)
+                                        ON CONFLICT(placa) DO UPDATE SET
+                                            modelo=excluded.modelo, capacidade_hl=excluded.capacidade_hl, status=excluded.status
+                                        """,
+                                        (unidade, placa_c.strip().upper(), modelo_c.strip(), cap_c, status_c),
+                                    )
+                                    conn.commit()
+                                    st.success(f"Carreta **{placa_c.upper()}** salva com sucesso!")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Erro: {e}")
+                                finally:
+                                    conn.close()
+                            else:
+                                st.error("Informe a placa da carreta.")
+                else:
+                    conn = sqlite3.connect("puxada_ambev.db")
+                    df_car_all = pd.read_sql_query(f"SELECT * FROM carretas WHERE operacao='{unidade}'", conn)
+                    conn.close()
+                    if not df_car_all.empty:
+                        car_id_sel = st.selectbox("Selecione o ID / Placa da Carreta para Editar:", df_car_all.apply(lambda r: f"#{r['id']} - {r['placa']}", axis=1).tolist())
+                        real_id = int(car_id_sel.split("-")[0].replace("#", "").strip())
+                        r_car = df_car_all[df_car_all["id"] == real_id].iloc[0]
+                        with st.form("form_edit_carreta"):
+                            pl_e = st.text_input("Placa:", value=r_car["placa"])
+                            mo_e = st.text_input("Modelo:", value=r_car["modelo"])
+                            ca_e = st.number_input("Capacidade (HL):", min_value=0.0, value=float(r_car["capacidade_hl"]), step=10.0)
+                            st_e = st.selectbox("Status:", ["Disponível", "Em Trânsito", "Manutenção"], index=["Disponível", "Em Trânsito", "Manutenção"].index(r_car["status"]) if r_car["status"] in ["Disponível", "Em Trânsito", "Manutenção"] else 0)
+                            
+                            if st.form_submit_button("✏️ Atualizar Carreta"):
+                                conn = sqlite3.connect("puxada_ambev.db")
+                                cursor = conn.cursor()
+                                cursor.execute("UPDATE carretas SET placa=?, modelo=?, capacidade_hl=?, status=? WHERE id=?", (pl_e.upper(), mo_e, ca_e, st_e, real_id))
                                 conn.commit()
-                                st.success(f"Carreta **{placa_c.upper()}** salva com sucesso!")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Erro ao salvar carreta: {e}")
-                            finally:
                                 conn.close()
-                        else:
-                            st.error("Informe a placa da carreta.")
+                                st.success("Carreta atualizada com sucesso!")
+                                st.rerun()
+                    else:
+                        st.info("Nenhuma carreta cadastrada.")
 
+                st.divider()
                 conn = sqlite3.connect("puxada_ambev.db")
                 df_carretas = pd.read_sql_query(f"SELECT id, placa, modelo, capacidade_hl, status FROM carretas WHERE operacao='{unidade}'", conn)
                 conn.close()
@@ -2641,36 +2681,63 @@ else:
 
             with sub_gp[1]:
                 st.markdown("##### 🏢 Cadastro de Transportadoras")
-                with st.form("form_cad_transportadora"):
-                    t_n1, t_n2 = st.columns(2)
-                    nome_t = t_n1.text_input("Nome da Transportadora:")
-                    cnpj_t = t_n2.text_input("CNPJ:")
-                    contato_t = st.text_input("Contato / E-mail / Telefone:")
+                modo_c_tr = st.radio("Ação Transportadora:", ["➕ Novo", "✏️ Editar (Lápis)"], horizontal=True, key="r_tr_modo")
+                
+                if "Novo" in modo_c_tr:
+                    with st.form("form_cad_transportadora"):
+                        t_n1, t_n2 = st.columns(2)
+                        nome_t = t_n1.text_input("Nome da Transportadora:")
+                        cnpj_t = t_n2.text_input("CNPJ:")
+                        contato_t = st.text_input("Contato / E-mail / Telefone:")
 
-                    if st.form_submit_button("💾 Salvar Transportadora"):
-                        if nome_t.strip():
-                            conn = sqlite3.connect("puxada_ambev.db")
-                            cursor = conn.cursor()
-                            try:
-                                cursor.execute(
-                                    """
-                                    INSERT INTO transportadoras_gestao (operacao, nome, cnpj, contato)
-                                    VALUES (?, ?, ?, ?)
-                                    ON CONFLICT(nome) DO UPDATE SET
-                                        cnpj=excluded.cnpj, contato=excluded.contato
-                                    """,
-                                    (unidade, nome_t.strip(), cnpj_t.strip(), contato_t.strip()),
-                                )
+                        if st.form_submit_button("💾 Salvar Transportadora"):
+                            if nome_t.strip():
+                                conn = sqlite3.connect("puxada_ambev.db")
+                                cursor = conn.cursor()
+                                try:
+                                    cursor.execute(
+                                        """
+                                        INSERT INTO transportadoras_gestao (operacao, nome, cnpj, contato)
+                                        VALUES (?, ?, ?, ?)
+                                        ON CONFLICT(nome) DO UPDATE SET
+                                            cnpj=excluded.cnpj, contato=excluded.contato
+                                        """,
+                                        (unidade, nome_t.strip(), cnpj_t.strip(), contato_t.strip()),
+                                    )
+                                    conn.commit()
+                                    st.success(f"Transportadora **{nome_t}** salva com sucesso!")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Erro: {e}")
+                                finally:
+                                    conn.close()
+                            else:
+                                st.error("Informe o nome da transportadora.")
+                else:
+                    conn = sqlite3.connect("puxada_ambev.db")
+                    df_tr_all = pd.read_sql_query(f"SELECT * FROM transportadoras_gestao WHERE operacao='{unidade}'", conn)
+                    conn.close()
+                    if not df_tr_all.empty:
+                        tr_id_sel = st.selectbox("Selecione a Transportadora para Editar:", df_tr_all.apply(lambda r: f"#{r['id']} - {r['nome']}", axis=1).tolist())
+                        real_id_tr = int(tr_id_sel.split("-")[0].replace("#", "").strip())
+                        r_trg = df_tr_all[df_tr_all["id"] == real_id_tr].iloc[0]
+                        with st.form("form_edit_transp"):
+                            no_e = st.text_input("Nome:", value=r_trg["nome"])
+                            cn_e = st.text_input("CNPJ:", value=r_trg["cnpj"])
+                            co_e = st.text_input("Contato:", value=r_trg["contato"])
+                            
+                            if st.form_submit_button("✏️ Atualizar Transportadora"):
+                                conn = sqlite3.connect("puxada_ambev.db")
+                                cursor = conn.cursor()
+                                cursor.execute("UPDATE transportadoras_gestao SET nome=?, cnpj=?, contato=? WHERE id=?", (no_e, cn_e, co_e, real_id_tr))
                                 conn.commit()
-                                st.success(f"Transportadora **{nome_t}** salva com sucesso!")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Erro: {e}")
-                            finally:
                                 conn.close()
-                        else:
-                            st.error("Informe o nome da transportadora.")
+                                st.success("Transportadora atualizada com sucesso!")
+                                st.rerun()
+                    else:
+                        st.info("Nenhuma transportadora cadastrada.")
 
+                st.divider()
                 conn = sqlite3.connect("puxada_ambev.db")
                 df_transp = pd.read_sql_query(f"SELECT id, nome, cnpj, contato FROM transportadoras_gestao WHERE operacao='{unidade}'", conn)
                 conn.close()
@@ -2679,36 +2746,63 @@ else:
 
             with sub_gp[2]:
                 st.markdown("##### 🏭 Cadastro de Fábricas")
-                with st.form("form_cad_fabrica"):
-                    f_n1, f_n2 = st.columns(2)
-                    nome_f = f_n1.text_input("Nome da Fábrica (Ex: Cervejaria Anápolis):")
-                    cidade_f = f_n2.text_input("Cidade:")
-                    uf_f = st.text_input("UF (Ex: GO, SP, BA):")
+                modo_c_fb = st.radio("Ação Fábrica:", ["➕ Novo", "✏️ Editar (Lápis)"], horizontal=True, key="r_fb_modo")
+                
+                if "Novo" in modo_c_fb:
+                    with st.form("form_cad_fabrica"):
+                        f_n1, f_n2 = st.columns(2)
+                        nome_f = f_n1.text_input("Nome da Fábrica (Ex: Cervejaria Anápolis):")
+                        cidade_f = f_n2.text_input("Cidade:")
+                        uf_f = st.text_input("UF (Ex: GO, SP, BA):")
 
-                    if st.form_submit_button("💾 Salvar Fábrica"):
-                        if nome_f.strip():
-                            conn = sqlite3.connect("puxada_ambev.db")
-                            cursor = conn.cursor()
-                            try:
-                                cursor.execute(
-                                    """
-                                    INSERT INTO fabricas (nome, cidade, uf)
-                                    VALUES (?, ?, ?)
-                                    ON CONFLICT(nome) DO UPDATE SET
-                                        cidade=excluded.cidade, uf=excluded.uf
-                                    """,
-                                    (nome_f.strip(), cidade_f.strip(), uf_f.strip().upper()),
-                                )
+                        if st.form_submit_button("💾 Salvar Fábrica"):
+                            if nome_f.strip():
+                                conn = sqlite3.connect("puxada_ambev.db")
+                                cursor = conn.cursor()
+                                try:
+                                    cursor.execute(
+                                        """
+                                        INSERT INTO fabricas (nome, cidade, uf)
+                                        VALUES (?, ?, ?)
+                                        ON CONFLICT(nome) DO UPDATE SET
+                                            cidade=excluded.cidade, uf=excluded.uf
+                                        """,
+                                        (nome_f.strip(), cidade_f.strip(), uf_f.strip().upper()),
+                                    )
+                                    conn.commit()
+                                    st.success(f"Fábrica **{nome_f}** salva com sucesso!")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Erro: {e}")
+                                finally:
+                                    conn.close()
+                            else:
+                                st.error("Informe o nome da fábrica.")
+                else:
+                    conn = sqlite3.connect("puxada_ambev.db")
+                    df_fb_all = pd.read_sql_query("SELECT * FROM fabricas", conn)
+                    conn.close()
+                    if not df_fb_all.empty:
+                        fb_id_sel = st.selectbox("Selecione a Fábrica para Editar:", df_fb_all.apply(lambda r: f"#{r['id']} - {r['nome']}", axis=1).tolist())
+                        real_id_fb = int(fb_id_sel.split("-")[0].replace("#", "").strip())
+                        r_fbg = df_fb_all[df_fb_all["id"] == real_id_fb].iloc[0]
+                        with st.form("form_edit_fab"):
+                            nf_e = st.text_input("Nome:", value=r_fbg["nome"])
+                            ci_e = st.text_input("Cidade:", value=r_fbg["cidade"])
+                            uf_e = st.text_input("UF:", value=r_fbg["uf"])
+                            
+                            if st.form_submit_button("✏️ Atualizar Fábrica"):
+                                conn = sqlite3.connect("puxada_ambev.db")
+                                cursor = conn.cursor()
+                                cursor.execute("UPDATE fabricas SET nome=?, cidade=?, uf=? WHERE id=?", (nf_e, ci_e, uf_e.upper(), real_id_fb))
                                 conn.commit()
-                                st.success(f"Fábrica **{nome_f}** salva com sucesso!")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Erro: {e}")
-                            finally:
                                 conn.close()
-                        else:
-                            st.error("Informe o nome da fábrica.")
+                                st.success("Fábrica atualizada com sucesso!")
+                                st.rerun()
+                    else:
+                        st.info("Nenhuma fábrica cadastrada.")
 
+                st.divider()
                 conn = sqlite3.connect("puxada_ambev.db")
                 df_fab = pd.read_sql_query("SELECT id, nome, cidade, uf FROM fabricas", conn)
                 conn.close()
@@ -2717,30 +2811,57 @@ else:
 
             with sub_gp[3]:
                 st.markdown("##### 👤 Cadastro de Motoristas")
-                with st.form("form_cad_motorista"):
-                    m_n1, m_n2 = st.columns(2)
-                    nome_m = m_n1.text_input("Nome Completo do Motorista:")
-                    cnh_m = m_n2.text_input("CNH:")
-                    tel_m = st.text_input("Telefone:")
+                modo_c_mot = st.radio("Ação Motorista:", ["➕ Novo", "✏️ Editar (Lápis)"], horizontal=True, key="r_mot_modo")
+                
+                if "Novo" in modo_c_mot:
+                    with st.form("form_cad_motorista"):
+                        m_n1, m_n2 = st.columns(2)
+                        nome_m = m_n1.text_input("Nome Completo do Motorista:")
+                        cnh_m = m_n2.text_input("CNH:")
+                        tel_m = st.text_input("Telefone:")
 
-                    if st.form_submit_button("💾 Salvar Motorista"):
-                        if nome_m.strip():
-                            conn = sqlite3.connect("puxada_ambev.db")
-                            cursor = conn.cursor()
-                            cursor.execute(
-                                """
-                                INSERT INTO motoristas (operacao, nome, cnh, telefone)
-                                VALUES (?, ?, ?, ?)
-                                """,
-                                (unidade, nome_m.strip(), cnh_m.strip(), tel_m.strip()),
-                            )
-                            conn.commit()
-                            conn.close()
-                            st.success(f"Motorista **{nome_m}** cadastrado com sucesso!")
-                            st.rerun()
-                        else:
-                            st.error("Informe o nome do motorista.")
+                        if st.form_submit_button("💾 Salvar Motorista"):
+                            if nome_m.strip():
+                                conn = sqlite3.connect("puxada_ambev.db")
+                                cursor = conn.cursor()
+                                cursor.execute(
+                                    """
+                                    INSERT INTO motoristas (operacao, nome, cnh, telefone)
+                                    VALUES (?, ?, ?, ?)
+                                    """,
+                                    (unidade, nome_m.strip(), cnh_m.strip(), tel_m.strip()),
+                                )
+                                conn.commit()
+                                conn.close()
+                                st.success(f"Motorista **{nome_m}** cadastrado com sucesso!")
+                                st.rerun()
+                            else:
+                                st.error("Informe o nome do motorista.")
+                else:
+                    conn = sqlite3.connect("puxada_ambev.db")
+                    df_mot_all = pd.read_sql_query(f"SELECT * FROM motoristas WHERE operacao='{unidade}'", conn)
+                    conn.close()
+                    if not df_mot_all.empty:
+                        mot_id_sel = st.selectbox("Selecione o Motorista para Editar:", df_mot_all.apply(lambda r: f"#{r['id']} - {r['nome']}", axis=1).tolist())
+                        real_id_mot = int(mot_id_sel.split("-")[0].replace("#", "").strip())
+                        r_motg = df_mot_all[df_mot_all["id"] == real_id_mot].iloc[0]
+                        with st.form("form_edit_mot"):
+                            nm_e = st.text_input("Nome:", value=r_motg["nome"])
+                            cnh_e = st.text_input("CNH:", value=r_motg["cnh"])
+                            tel_e = st.text_input("Telefone:", value=r_motg["telefone"])
+                            
+                            if st.form_submit_button("✏️ Atualizar Motorista"):
+                                conn = sqlite3.connect("puxada_ambev.db")
+                                cursor = conn.cursor()
+                                cursor.execute("UPDATE motoristas SET nome=?, cnh=?, telefone=? WHERE id=?", (nm_e, cnh_e, tel_e, real_id_mot))
+                                conn.commit()
+                                conn.close()
+                                st.success("Motorista atualizado com sucesso!")
+                                st.rerun()
+                    else:
+                        st.info("Nenhum motorista cadastrado.")
 
+                st.divider()
                 conn = sqlite3.connect("puxada_ambev.db")
                 df_mot = pd.read_sql_query(f"SELECT id, nome, cnh, telefone FROM motoristas WHERE operacao='{unidade}'", conn)
                 conn.close()
@@ -2748,9 +2869,76 @@ else:
                 render_botoes_download(df_mot, f"Motoristas_{unidade}")
 
         with sub_pux[6]:
-            st.subheader("🔗 Vincular Pedido (Gestão Puxada)")
+            st.subheader("📅 Gestão Mensal de Viagens & Informações Consolidadas")
+            st.caption("Visualize o consolidado mensal de viagens e métricas agrupadas por carretas, motoristas, fábricas e transportadoras.")
+
+            c_gm1, c_gm2 = st.columns(2)
+            ano_gm = c_gm1.number_input("Ano da Gestão Mensal:", min_value=2024, max_value=2030, value=datetime.now().year, key="ano_gestao_mensal")
+            meses_nomes_gm = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
+            mes_gm = c_gm2.selectbox("Mês de Análise:", list(range(1, 13)), format_func=lambda x: meses_nomes_gm[x-1], index=datetime.now().month-1, key="mes_gestao_mensal")
+
+            conn = sqlite3.connect("puxada_ambev.db")
+            query_vinculos_mes = f"""
+                SELECT * FROM vinculos_pedidos 
+                WHERE operacao = ? 
+                  AND CAST(STRFTIME('%Y', data_puxada) AS INTEGER) = ?
+                  AND CAST(STRFTIME('%m', data_puxada) AS INTEGER) = ?
+            """
+            df_vinc_mes = pd.read_sql_query(query_vinculos_mes, conn, params=[unidade, ano_gm, mes_gm])
+            conn.close()
+
+            total_viagens = len(df_vinc_mes)
+            viagens_carretas_cnt = df_vinc_mes["placa"].nunique() if not df_vinc_mes.empty else 0
+            viagens_motoristas_cnt = df_vinc_mes["motorista"].nunique() if not df_vinc_mes.empty else 0
+            viagens_fabricas_cnt = df_vinc_mes["fabrica"].nunique() if not df_vinc_mes.empty else 0
+            viagens_transportadoras_cnt = df_vinc_mes["transportadora"].nunique() if not df_vinc_mes.empty else 0
+
+            st.markdown(f"##### 📊 Resumo Executivo - {meses_nomes_gm[mes_gm-1]}/{ano_gm}")
+
+            with st.expander(f"📦 1. Viagens no Mês ({total_viagens} Viagens realizadas) - CLIQUE PARA ABRIR", expanded=True):
+                st.metric("Total de Viagens Registradas", f"{total_viagens} viagens")
+                if not df_vinc_mes.empty:
+                    st.dataframe(df_vinc_mes, use_container_width=True)
+                    render_botoes_download(df_vinc_mes, f"Viagens_Mes_{mes_gm:02d}_{ano_gm}_{unidade}")
+                else:
+                    st.info("Nenhuma viagem registrada para este mês.")
+
+            with st.expander(f"🚛 2. Viagens por Carretas ({viagens_carretas_cnt} Carretas ativas) - CLIQUE PARA ABRIR"):
+                if not df_vinc_mes.empty:
+                    df_car_grp = df_vinc_mes.groupby("placa").size().reset_index(name="Quantidade de Viagens")
+                    st.dataframe(df_car_grp, use_container_width=True)
+                    render_botoes_download(df_car_grp, f"Viagens_Por_Carreta_{mes_gm:02d}_{ano_gm}")
+                else:
+                    st.info("Sem dados para agrupar.")
+
+            with st.expander(f"👤 3. Viagens por Motoristas ({viagens_motoristas_cnt} Motoristas) - CLIQUE PARA ABRIR"):
+                if not df_vinc_mes.empty:
+                    df_mot_grp = df_vinc_mes.groupby("motorista").size().reset_index(name="Quantidade de Viagens")
+                    st.dataframe(df_mot_grp, use_container_width=True)
+                    render_botoes_download(df_mot_grp, f"Viagens_Por_Motorista_{mes_gm:02d}_{ano_gm}")
+                else:
+                    st.info("Sem dados para agrupar.")
+
+            with st.expander(f"🏭 4. Viagens por Fábrica ({viagens_fabricas_cnt} Fábricas) - CLIQUE PARA ABRIR"):
+                if not df_vinc_mes.empty:
+                    df_fab_grp = df_vinc_mes.groupby("fabrica").size().reset_index(name="Quantidade de Viagens")
+                    st.dataframe(df_fab_grp, use_container_width=True)
+                    render_botoes_download(df_fab_grp, f"Viagens_Por_Fabrica_{mes_gm:02d}_{ano_gm}")
+                else:
+                    st.info("Sem dados para agrupar.")
+
+            with st.expander(f"🏢 5. Viagens por Transportadora ({viagens_transportadoras_cnt} Transportadoras) - CLIQUE PARA ABRIR"):
+                if not df_vinc_mes.empty:
+                    df_trans_grp = df_vinc_mes.groupby("transportadora").size().reset_index(name="Quantidade de Viagens")
+                    st.dataframe(df_trans_grp, use_container_width=True)
+                    render_botoes_download(df_trans_grp, f"Viagens_Por_Transportadora_{mes_gm:02d}_{ano_gm}")
+                else:
+                    st.info("Sem dados para agrupar.")
+
+        with sub_pux[7]:
+            st.subheader("🔗 Vincular Pedido & Edição (✏️)")
             st.caption(
-                "Vincule manualmente um pedido de puxada selecionando os cadastros prévios de carretas, fábricas, transportadoras e motoristas."
+                "Vincule ou edite manualmente um pedido de puxada selecionando carretas, fábricas, transportadoras e motoristas."
             )
 
             conn = sqlite3.connect("puxada_ambev.db")
@@ -2760,49 +2948,66 @@ else:
             motoristas_list = pd.read_sql_query(f"SELECT nome FROM motoristas WHERE operacao='{unidade}'", conn)["nome"].tolist()
             conn.close()
 
-            with st.form("form_vincular_pedido"):
-                pedido_input = st.text_input("Número do Pedido (Entrada Manual):", placeholder="Ex: PED-987654")
-                data_puxada_sel = st.date_input("Data da Puxada (Calendário):", value=datetime.now().date())
+            modo_vinc = st.radio("Ação Vínculo:", ["➕ Novo Vínculo", "✏️ Editar Vínculo Existente"], horizontal=True, key="modo_vinc_radio")
 
-                c_v1, c_v2 = st.columns(2)
-                placa_sel = c_v1.selectbox("Selecionar Placa (Carreta):", carretas_list if carretas_list else ["Nenhuma carreta cadastrada"])
-                fabrica_sel = c_v2.selectbox("Selecionar Fábrica:", fabricas_list if fabricas_list else ["Nenhuma fábrica cadastrada"])
+            if "Novo" in modo_vinc:
+                with st.form("form_vincular_pedido"):
+                    pedido_input = st.text_input("Número do Pedido:", placeholder="Ex: PED-987654")
+                    data_puxada_sel = st.date_input("Data da Puxada:", value=datetime.now().date())
 
-                c_v3, c_v4 = st.columns(2)
-                transp_sel = c_v3.selectbox("Selecionar Transportadora:", transp_list if transp_list else ["Nenhuma transportadora cadastrada"])
-                motorista_sel = c_v4.selectbox("Selecionar Motorista:", motoristas_list if motoristas_list else ["Nenhum motorista cadastrado"])
+                    c_v1, c_v2 = st.columns(2)
+                    placa_sel = c_v1.selectbox("Placa (Carreta):", carretas_list if carretas_list else ["Nenhuma cadastrada"])
+                    fabrica_sel = c_v2.selectbox("Fábrica:", fabricas_list if fabricas_list else ["Nenhuma cadastrada"])
 
-                btn_vincular = st.form_submit_button("🔗 Salvar e Vincular Pedido")
+                    c_v3, c_v4 = st.columns(2)
+                    transp_sel = c_v3.selectbox("Transportadora:", transp_list if transp_list else ["Nenhuma cadastrada"])
+                    motorista_sel = c_v4.selectbox("Motorista:", motoristas_list if motoristas_list else ["Nenhum cadastrado"])
 
-                if btn_vincular:
-                    if not pedido_input.strip():
-                        st.error("Por favor, preencha o número do pedido.")
-                    elif not carretas_list or not fabricas_list or not transp_list or not motoristas_list:
-                        st.error("Certifique-se de ter cadastrado carretas, fábricas, transportadoras e motoristas na aba 'Gestão Puxada & Cadastros'.")
-                    else:
-                        conn = sqlite3.connect("puxada_ambev.db")
-                        cursor = conn.cursor()
-                        dt_now = datetime.now().strftime("%d/%m/%Y %H:%M")
-                        cursor.execute(
-                            """
-                            INSERT INTO vinculos_pedidos (operacao, numero_pedido, data_puxada, placa, fabrica, transportadora, motorista, dt_atualizacao)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                            """,
-                            (
-                                unidade,
-                                pedido_input.strip(),
-                                str(data_puxada_sel),
-                                placa_sel,
-                                fabrica_sel,
-                                transp_sel,
-                                motorista_sel,
-                                dt_now,
-                            ),
-                        )
-                        conn.commit()
-                        conn.close()
-                        st.success(f"Pedido **{pedido_input.strip()}** vinculado com sucesso para a data **{data_puxada_sel.strftime('%d/%m/%Y')}**!")
-                        st.rerun()
+                    if st.form_submit_button("🔗 Salvar e Vincular Pedido"):
+                        if not pedido_input.strip():
+                            st.error("Informe o número do pedido.")
+                        else:
+                            conn = sqlite3.connect("puxada_ambev.db")
+                            cursor = conn.cursor()
+                            dt_now = datetime.now().strftime("%d/%m/%Y %H:%M")
+                            cursor.execute(
+                                """
+                                INSERT INTO vinculos_pedidos (operacao, numero_pedido, data_puxada, placa, fabrica, transportadora, motorista, dt_atualizacao)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                """,
+                                (unidade, pedido_input.strip(), str(data_puxada_sel), placa_sel, fabrica_sel, transp_sel, motorista_sel, dt_now),
+                            )
+                            conn.commit()
+                            conn.close()
+                            st.success(f"Pedido **{pedido_input.strip()}** vinculado com sucesso!")
+                            st.rerun()
+            else:
+                conn = sqlite3.connect("puxada_ambev.db")
+                df_vinc_all = pd.read_sql_query(f"SELECT * FROM vinculos_pedidos WHERE operacao='{unidade}'", conn)
+                conn.close()
+                if not df_vinc_all.empty:
+                    vinc_sel_id = st.selectbox("Selecione o Vínculo para Editar:", df_vinc_all.apply(lambda r: f"#{r['id']} - Pedido: {r['numero_pedido']} ({r['data_puxada']})", axis=1).tolist())
+                    real_id_vinc = int(vinc_sel_id.split("-")[0].replace("#", "").strip())
+                    r_vinc = df_vinc_all[df_vinc_all["id"] == real_id_vinc].iloc[0]
+                    with st.form("form_edit_vinc"):
+                        np_e = st.text_input("Número do Pedido:", value=r_vinc["numero_pedido"])
+                        dp_e = st.date_input("Data da Puxada:", value=datetime.strptime(r_vinc["data_puxada"], "%Y-%m-%d").date() if len(r_vinc["data_puxada"])>=10 else datetime.now().date())
+                        
+                        pl_e = st.selectbox("Placa:", carretas_list, index=carretas_list.index(r_vinc["placa"]) if r_vinc["placa"] in carretas_list else 0)
+                        fa_e = st.selectbox("Fábrica:", fabricas_list, index=fabricas_list.index(r_vinc["fabrica"]) if r_vinc["fabrica"] in fabricas_list else 0)
+                        tr_e = st.selectbox("Transportadora:", transp_list, index=transp_list.index(r_vinc["transportadora"]) if r_vinc["transportadora"] in transp_list else 0)
+                        mo_e = st.selectbox("Motorista:", motoristas_list, index=motoristas_list.index(r_vinc["motorista"]) if r_vinc["motorista"] in motoristas_list else 0)
+
+                        if st.form_submit_button("✏️ Atualizar Vínculo"):
+                            conn = sqlite3.connect("puxada_ambev.db")
+                            cursor = conn.cursor()
+                            cursor.execute("UPDATE vinculos_pedidos SET numero_pedido=?, data_puxada=?, placa=?, fabrica=?, transportadora=?, motorista=? WHERE id=?", (np_e, str(dp_e), pl_e, fa_e, tr_e, mo_e, real_id_vinc))
+                            conn.commit()
+                            conn.close()
+                            st.success("Vínculo atualizado com sucesso!")
+                            st.rerun()
+                else:
+                    st.info("Nenhum vínculo cadastrado.")
 
             st.divider()
             st.markdown("##### 📜 Pedidos Vinculados Cadastrados")
@@ -2829,7 +3034,6 @@ else:
             else:
                 st.info("Nenhum pedido vinculado cadastrado para esta unidade.")
 
-    # MÓDULO RESSUPRIMENTO
     elif "Ressuprimento" in dept_atual:
         sub_ress = st.tabs([
             "📁 Cadastros & Atualização de Bases",
@@ -3076,17 +3280,13 @@ else:
         with sub_ress[3]:
             render_gestao_ressuprimento(unidade)
 
-    # MÓDULO VENDAS
     elif "Vendas" in dept_atual:
         sub_vendas = st.tabs(["Estoque Dia", "Metas de Vendas & PNR"])
-
         with sub_vendas[0]:
             render_estoque_dia(unidade)
-
         with sub_vendas[1]:
             st.subheader("Acompanhamento de Metas de Vendas")
 
-    # MÓDULO ARMAZÉM REVENDA (DPO)
     elif "Armazém" in dept_atual:
         st.subheader("4 - ARMAZÉM REVENDA - GESTÃO & BOOK DPO AMBEV")
 
@@ -3244,10 +3444,6 @@ else:
 
         with tab_descarga_arm:
             st.markdown("### 🚚 Controle de Pátio e Agendamentos de Descarga")
-            st.caption(
-                "Visualização em tempo real dos caminhões agendados para descarga nesta unidade."
-            )
-
             conn = sqlite3.connect("puxada_ambev.db")
             df_arm_desc = pd.read_sql_query(
                 f"SELECT id, placa, slot, data_descarga, tipo_carga, observacao, dt_atualizacao FROM agendamentos_descarga WHERE operacao='{unidade}' ORDER BY data_descarga ASC",
@@ -3259,14 +3455,10 @@ else:
                 st.dataframe(df_arm_desc, use_container_width=True)
                 render_botoes_download(df_arm_desc, f"Controle_Patio_Descarga_{unidade}")
             else:
-                st.info(
-                    "ℹ️ Nenhum agendamento de descarga pendente no momento para esta unidade."
-                )
+                st.info("ℹ️ Nenhum agendamento pendente.")
 
-    # MÓDULO 6 - ENTREGA REVENDA (DISTRIBUIÇÃO)
     elif "Distribuição" in dept_atual:
         st.subheader("6 - ENTREGA REVENDA (BOOK DPO 2026)")
-
         tab_fund_dist, tab_manter_dist, tab_melhorar_dist = st.tabs([
             "📘 FUNDAMENTOS",
             "🔄 GERENCIAR PARA MANTER",
@@ -3283,145 +3475,26 @@ else:
                     "4 - SATISFAÇÃO DO CLIENTE 2026",
                 ],
             )
-
             if "1 - PROCESSO" in sec_dist:
-                sub_p1 = st.tabs([
-                    "1.1 - Pré-rota",
-                    "1.2 - Entrega em Rota",
-                    "1.3 - Pós-rota",
-                    "1.4 - Jornada",
-                ])
+                sub_p1 = st.tabs(["1.1 - Pré-rota", "1.2 - Entrega em Rota", "1.3 - Pós-rota", "1.4 - Jornada"])
                 with sub_p1[0]:
-                    render_gerenciador_padroes_dpo(
-                        unidade, "Entrega", "1.1 - Pré-rota"
-                    )
+                    render_gerenciador_padroes_dpo(unidade, "Entrega", "1.1 - Pré-rota")
                 with sub_p1[1]:
-                    render_gerenciador_padroes_dpo(
-                        unidade, "Entrega", "1.2 - Entrega em Rota"
-                    )
+                    render_gerenciador_padroes_dpo(unidade, "Entrega", "1.2 - Entrega em Rota")
                 with sub_p1[2]:
-                    render_gerenciador_padroes_dpo(
-                        unidade, "Entrega", "1.3 - Pós-rota"
-                    )
+                    render_gerenciador_padroes_dpo(unidade, "Entrega", "1.3 - Pós-rota")
                 with sub_p1[3]:
-                    render_gerenciador_padroes_dpo(
-                        unidade, "Entrega", "1.4 - Jornada"
-                    )
-
-            elif "2 - QUALIDADE" in sec_dist:
-                sub_p2 = st.tabs([
-                    "2.1 - Treinamentos e Padrões de Qualidade",
-                    "2.2 - Reposições e Trocas",
-                    "2.3 - Delivery Quality Index",
-                ])
-                with sub_p2[0]:
-                    render_gerenciador_padroes_dpo(
-                        unidade,
-                        "Entrega",
-                        "2.1 - Treinamentos e Padrões de Qualidade",
-                    )
-                with sub_p2[1]:
-                    render_gerenciador_padroes_dpo(
-                        unidade, "Entrega", "2.2 - Reposições e Trocas"
-                    )
-                with sub_p2[2]:
-                    st.markdown("#### 2.3 - Delivery Quality Index (DQI)")
-                    st.metric("Índice DQI Corrente", "96,5%", "Meta DPO ≥ 95%")
-                    render_gerenciador_padroes_dpo(
-                        unidade, "Entrega", "2.3 - Delivery Quality Index"
-                    )
-
-            elif "3 - EQUIPES" in sec_dist:
-                sub_p3 = st.tabs([
-                    "3.1 - Visibilidade de Resultados",
-                    "3.2 - Processo de Feedback",
-                ])
-                with sub_p3[0]:
-                    render_gerenciador_padroes_dpo(
-                        unidade, "Entrega", "3.1 - Visibilidade de Resultados"
-                    )
-                with sub_p3[1]:
-                    render_gerenciador_padroes_dpo(
-                        unidade, "Entrega", "3.2 - Processo de Feedback"
-                    )
-
-            elif "4 - SATISFAÇÃO" in sec_dist:
-                sub_p4 = st.tabs(
-                    ["4.1 - In Full", "4.2 - On Time", "4.3 - Devolução"]
-                )
-                with sub_p4[0]:
-                    st.metric("OTIF / In Full", "98,2%", "Meta ≥ 98,0%")
-                    render_gerenciador_padroes_dpo(
-                        unidade, "Entrega", "4.1 - In Full"
-                    )
-                with sub_p4[1]:
-                    st.metric(
-                        "On Time (Janela do Cliente)", "95,1%", "Meta ≥ 95,0%"
-                    )
-                    render_gerenciador_padroes_dpo(
-                        unidade, "Entrega", "4.2 - On Time"
-                    )
-                with sub_p4[2]:
-                    st.metric("Taxa de Devolução Rota", "1,1%", "Meta ≤ 1,5%")
-                    render_gerenciador_padroes_dpo(
-                        unidade, "Entrega", "4.3 - Devolução"
-                    )
+                    render_gerenciador_padroes_dpo(unidade, "Entrega", "1.4 - Jornada")
 
         with tab_manter_dist:
-            sec_manter = st.selectbox(
-                "Selecione o Pilar para Manter:",
-                ["5 - NÍVEL DE SERVIÇO 2026"],
-            )
-            sub_p5 = st.tabs([
-                "5.1 - SAC/SAV",
-                "5.2 - Feedback do Motorista",
-                "5.3 - Flexible Delivery",
-            ])
-            with sub_p5[0]:
-                render_gerenciador_padroes_dpo(
-                    unidade, "Entrega", "5.1 - SAC/SAV"
-                )
-            with sub_p5[1]:
-                render_gerenciador_padroes_dpo(
-                    unidade, "Entrega", "5.2 - Feedback do Motorista"
-                )
-            with sub_p5[2]:
-                render_gerenciador_padroes_dpo(
-                    unidade, "Entrega", "5.3 - Flexible Delivery"
-                )
+            render_gerenciador_padroes_dpo(unidade, "Entrega", "5.1 - SAC/SAV")
 
         with tab_melhorar_dist:
-            sec_melhorar = st.selectbox(
-                "Selecione o Pilar para Melhorar:",
-                ["6 - REPUTAÇÃO 2026"],
-            )
-            sub_p6 = st.tabs([
-                "6.1 - NPS",
-                "6.2 - NPS Entrega",
-                "6.3 - Rating",
-            ])
-            with sub_p6[0]:
-                st.metric("NPS Geral", "78", "+3 vs Mês Anterior")
-                render_gerenciador_padroes_dpo(unidade, "Entrega", "6.1 - NPS")
-            with sub_p6[1]:
-                st.metric("NPS Entrega", "84", "Zona de Excelência")
-                render_gerenciador_padroes_dpo(
-                    unidade, "Entrega", "6.2 - NPS Entrega"
-                )
-            with sub_p6[2]:
-                st.metric("Rating Clientes Bees", "4,8 / 5,0")
-                render_gerenciador_padroes_dpo(
-                    unidade, "Entrega", "6.3 - Rating"
-                )
+            render_gerenciador_padroes_dpo(unidade, "Entrega", "6.1 - NPS")
 
-    # MÓDULO EXCLUSIVO MASTER (GESTÃO DE USUÁRIOS E STATUS ATIVO/INATIVO)
     elif "Acesso Master" in dept_atual:
         st.subheader("🔑 Gestão de Usuários, Status e Permissões")
-
-        tab_usr1, tab_usr2 = st.tabs([
-            "➕ Cadastrar / Alterar Usuário",
-            "📋 Ativar / Inativar Usuários",
-        ])
+        tab_usr1, tab_usr2 = st.tabs(["➕ Cadastrar / Alterar Usuário", "📋 Ativar / Inativar Usuários"])
 
         with tab_usr1:
             with st.form("form_cad_usuario_master"):
@@ -3431,114 +3504,56 @@ else:
 
                 c_u3, c_u4 = st.columns(2)
                 novo_email = c_u3.text_input("E-mail:")
-                novo_cargo = c_u4.text_input(
-                    "Cargo (Ex: Gerente de Armazém, Analista):"
-                )
+                novo_cargo = c_u4.text_input("Cargo:")
 
                 c_u5, c_u6 = st.columns(2)
-                novo_perfil = c_u5.selectbox(
-                    "Perfil de Acesso:", ["Operacional", "Master"]
-                )
-                e_aprov = c_u6.selectbox(
-                    "É Aprovador de Fretes?", ["Não", "Sim"]
-                )
+                novo_perfil = c_u5.selectbox("Perfil de Acesso:", ["Operacional", "Master"])
+                e_aprov = c_u6.selectbox("É Aprovador de Fretes?", ["Não", "Sim"])
 
-                st.divider()
-                st.markdown("##### 🔒 Permissões de Operação e Módulos")
-
-                sel_ops = st.multiselect(
-                    "Selecione as Unidades Operacionais Permitidas:",
-                    OPERACOES_DISPONIVEIS,
-                    default=OPERACOES_DISPONIVEIS,
-                )
-                sel_deps = st.multiselect(
-                    "Selecione os Departamentos Permitidos:",
-                    DEPARTAMENTOS_DISPONIVEIS,
-                    default=DEPARTAMENTOS_DISPONIVEIS,
-                )
+                sel_ops = st.multiselect("Unidades Operacionais Permitidas:", OPERACOES_DISPONIVEIS, default=OPERACOES_DISPONIVEIS)
+                sel_deps = st.multiselect("Departamentos Permitidos:", DEPARTAMENTOS_DISPONIVEIS, default=DEPARTAMENTOS_DISPONIVEIS)
 
                 if st.form_submit_button("Criar / Atualizar Usuário"):
                     if novo_nome and nova_senha:
-                        ops_str = (
-                            "TODAS"
-                            if len(sel_ops) == len(OPERACOES_DISPONIVEIS)
-                            else ",".join(sel_ops)
-                        )
-                        deps_str = (
-                            "TODOS"
-                            if len(sel_deps) == len(DEPARTAMENTOS_DISPONIVEIS)
-                            else ",".join(sel_deps)
-                        )
+                        ops_str = "TODAS" if len(sel_ops) == len(OPERACOES_DISPONIVEIS) else ",".join(sel_ops)
+                        deps_str = "TODOS" if len(sel_deps) == len(DEPARTAMENTOS_DISPONIVEIS) else ",".join(sel_deps)
 
                         conn = sqlite3.connect("puxada_ambev.db")
                         cursor = conn.cursor()
-                        try:
-                            cursor.execute(
-                                """
+                        cursor.execute(
+                            """
                             INSERT INTO usuarios (nome, senha, email, cargo, perfil, e_aprovador, permissoes_operacoes, permissoes_deptos, status)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Ativo')
                             ON CONFLICT(nome) DO UPDATE SET 
-                                senha=excluded.senha, 
-                                email=excluded.email, 
-                                cargo=excluded.cargo, 
-                                perfil=excluded.perfil,
-                                e_aprovador=excluded.e_aprovador,
-                                permissoes_operacoes=excluded.permissoes_operacoes,
-                                permissoes_deptos=excluded.permissoes_deptos
+                                senha=excluded.senha, email=excluded.email, cargo=excluded.cargo, 
+                                perfil=excluded.perfil, e_aprovador=excluded.e_aprovador,
+                                permissoes_operacoes=excluded.permissoes_operacoes, permissoes_deptos=excluded.permissoes_deptos
                             """,
-                                (
-                                    novo_nome,
-                                    nova_senha,
-                                    novo_email,
-                                    novo_cargo,
-                                    novo_perfil,
-                                    e_aprov,
-                                    ops_str,
-                                    deps_str,
-                                ),
-                            )
-                            conn.commit()
-                            st.success(
-                                f"Usuário **{novo_nome}** salvo/atualizado com sucesso!"
-                            )
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Erro: {e}")
-                        finally:
-                            conn.close()
+                            (novo_nome, nova_senha, novo_email, novo_cargo, novo_perfil, e_aprov, ops_str, deps_str),
+                        )
+                        conn.commit()
+                        conn.close()
+                        st.success(f"Usuário **{novo_nome}** salvo com sucesso!")
+                        st.rerun()
 
         with tab_usr2:
             conn = sqlite3.connect("puxada_ambev.db")
-            df_usrs = pd.read_sql_query(
-                "SELECT id, nome, email, cargo, perfil, status FROM usuarios",
-                conn,
-            )
+            df_usrs = pd.read_sql_query("SELECT id, nome, email, cargo, perfil, status FROM usuarios", conn)
             conn.close()
-
             st.dataframe(df_usrs, use_container_width=True)
             render_botoes_download(df_usrs, "Usuarios_Sistema")
 
             with st.form("form_alt_status_master"):
-                alvo_user = st.selectbox(
-                    "Selecionar Usuário:",
-                    df_usrs["nome"].tolist() if not df_usrs.empty else [],
-                )
-                novo_status_alvo = st.selectbox(
-                    "Alterar Status:", ["Ativo", "Inativo"]
-                )
-                if st.form_submit_button("Atualizar Status do Usuário"):
+                alvo_user = st.selectbox("Selecionar Usuário:", df_usrs["nome"].tolist() if not df_usrs.empty else [])
+                novo_status_alvo = st.selectbox("Alterar Status:", ["Ativo", "Inativo"])
+                if st.form_submit_button("Atualizar Status"):
                     if alvo_user:
                         conn = sqlite3.connect("puxada_ambev.db")
                         cursor = conn.cursor()
-                        cursor.execute(
-                            "UPDATE usuarios SET status = ? WHERE nome = ?",
-                            (novo_status_alvo, alvo_user),
-                        )
+                        cursor.execute("UPDATE usuarios SET status = ? WHERE nome = ?", (novo_status_alvo, alvo_user))
                         conn.commit()
                         conn.close()
-                        st.success(
-                            f"Status do usuário **{alvo_user}** alterado para **{novo_status_alvo}** com sucesso!"
-                        )
+                        st.success(f"Status atualizado para **{novo_status_alvo}**!")
                         st.rerun()
 
     elif "Relatórios" in dept_atual:
@@ -3546,31 +3561,17 @@ else:
         tabela = st.selectbox(
             "Escolha a tabela:",
             [
-                "base_01_11",
-                "base_linear",
-                "base_estoque_02",
-                "pedidos_marcados",
-                "cotacoes_frete",
-                "historico_curva_abc",
-                "padroes_dpo",
-                "layout_armazem",
-                "gestao_ressuprimento_diario",
-                "metas_ressuprimento_mensal",
-                "agendamentos_descarga",
-                "cadastro_trechos_frete",
-                "politica_estoque_base",
-                "carretas",
-                "transportadoras_gestao",
-                "fabricas",
-                "motoristas",
-                "vinculos_pedidos",
+                "base_01_11", "base_linear", "base_estoque_02", "pedidos_marcados",
+                "cotacoes_frete", "historico_curva_abc", "padroes_dpo", "layout_armazem",
+                "gestao_ressuprimento_diario", "metas_ressuprimento_mensal", "agendamentos_descarga",
+                "cadastro_trechos_frete", "politica_estoque_base", "carretas",
+                "transportadoras_gestao", "fabricas", "motoristas", "vinculos_pedidos",
             ],
         )
         conn = sqlite3.connect("puxada_ambev.db")
         df = pd.read_sql_query(f"SELECT * FROM {tabela}", conn)
         conn.close()
         st.dataframe(df, use_container_width=True)
-        st.markdown("##### 📥 Opções de Download da Base Completa")
         render_botoes_download(df, f"Tabela_{tabela}")
 
     else:
