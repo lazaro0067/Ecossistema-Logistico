@@ -432,18 +432,6 @@ def init_db():
     except Exception:
         pass
 
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS fluxo_caixa_config (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        operacao TEXT,
-        data_registro TEXT,
-        saldo_banco_atual REAL DEFAULT 0.0,
-        compras_ambev_manual REAL DEFAULT 0.0,
-        previsao_recebimento REAL DEFAULT 0.0,
-        dt_atualizacao TEXT,
-        UNIQUE(operacao, data_registro)
-    )""")
-
     empresas = [
         ("Lima Rio Verde", "12.345.678/0001-90", "Rio Verde", "GO"),
         ("Lima Barreiras", "98.765.432/0001-10", "Barreiras", "BA"),
@@ -1067,16 +1055,19 @@ def processar_financeiro_upload(f_fin, operacao):
     for _, r in df_raw.iterrows():
         try:
             pacote = str(r.get("Pacote", r.iloc[0] if len(r) > 0 else "")).strip()
-            nbz = str(r.get("NBZ", r.iloc[1] if len(r) > 1 else "")).strip()
-            dept = str(r.get("Departamento", r.iloc[2] if len(r) > 2 else "")).strip()
+            
+            # Fornecedor explicitamente da Coluna B (índice 1)
+            nome_forn = str(r.iloc[1] if len(r) > 1 else r.get("Fornecedor", "")).strip()
+            
+            nbz = str(r.get("NBZ", r.iloc[2] if len(r) > 2 else "")).strip()
+            dept = str(r.get("Departamento", r.iloc[3] if len(r) > 3 else "")).strip()
             
             raw_dt = r.iloc[10] if len(r) > 10 else r.get("Data", datetime.now())
             dt_parsed = pd.to_datetime(raw_dt, errors="coerce")
             data_venc = dt_parsed.strftime("%Y-%m-%d") if pd.notna(dt_parsed) else datetime.now().strftime("%Y-%m-%d")
 
             doc = str(r.get("Documento", r.iloc[4] if len(r) > 4 else "")).strip()
-            forn_id = str(r.get("Fornecedor", r.iloc[5] if len(r) > 5 else "")).strip()
-            nome_forn = str(r.get("Nome Fornecedor", r.iloc[6] if len(r) > 6 else "")).strip()
+            forn_id = str(r.get("Fornecedor ID", r.iloc[5] if len(r) > 5 else "")).strip()
             hist = str(r.get("Historico", r.iloc[7] if len(r) > 7 else "")).strip()
             conta_ger = str(r.get("Conta Gerencial", r.iloc[8] if len(r) > 8 else "")).strip()
             vbz = str(r.get("VBZ", r.iloc[9] if len(r) > 9 else "")).strip()
@@ -1139,7 +1130,6 @@ def carregar_estoque_consolidado(operacao):
 
     df = pd.read_sql_query(query, conn, params=ops_filtro)
     
-    # Carrega marcações D0, D1 e D2
     query_marc = f"""
     SELECT cod_clean, data_puxada, SUM(cx_marcadas) as cx_marcadas
     FROM pedidos_marcados
@@ -1154,15 +1144,12 @@ def carregar_estoque_consolidado(operacao):
 
     df.columns = [str(c).lower() for c in df.columns]
 
-    # Processa D0, D1, D2 se existirem
     df["d0"] = 0.0
     df["d1"] = 0.0
     df["d2"] = 0.0
 
     if not df_marc.empty:
-        # Tenta identificar as datas únicas de puxada ordenadas
         datas_pux = sorted(df_marc["data_puxada"].dropna().unique())
-        # Mapeia D0, D1, D2 com base nas datas ordenadas disponíveis
         if len(datas_pux) > 0:
             d0_date = datas_pux[0]
             df_d0 = df_marc[df_marc["data_puxada"] == d0_date].groupby("cod_clean")["cx_marcadas"].sum().reset_index()
@@ -2628,7 +2615,7 @@ else:
 
     if "Visão Geral" in dept_atual:
         st.subheader("Painel Geral de Desempenho Operacional")
-        st.caption("Visão macro de todos os departamentos integrados da unidade. Clique em qualquer card abaixo para acessar diretamente o departamento:")
+        st.caption("Visão macro de todos los departamentos integrados da unidade. Clique em qualquer card abaixo para acessar diretamente o departamento:")
 
         dept_info_dict = {
             "Puxada": ("🚛", "Controle de solicitações, aprovações, CT-e, NFs e pátio."),
@@ -3888,7 +3875,7 @@ else:
         st.caption(f"Unidade Operacional Ativa: **{unidade}**. Gestão completa com filtros por período/fornecedor, calendário de vencimentos, IA e Fluxo de Caixa Diário com compras Ambev e recebimentos automáticos.")
 
         sub_fin = st.tabs([
-            "📂 Upload & Sobrescrita Relatório Diário",
+            "📂 Relatório Diário",
             "💳 Contas a Pagar (Filtros & Visão Fornecedor)",
             "⏳ Gestão de Vencimentos (Calendário)",
             "🤖 Análise de Saúde Financeira (IA)",
@@ -3897,7 +3884,7 @@ else:
 
         with sub_fin[0]:
             st.markdown("### 📂 Anexar Relatório Diário de Pagamentos (Sobrescrita Automática)")
-            st.caption("Faça o upload do relatório em Excel (.xls, .xlsx) ou CSV. O sistema lerá a **Data na Coluna K** e o **Valor na Coluna N**, sobrescrevendo os dados da operação **" + unidade + "**.")
+            st.caption("Faça o upload do relatório em Excel (.xls, .xlsx) ou CSV. O sistema lerá a **Data na Coluna K**, o **Fornecedor na Coluna B** e o **Valor na Coluna N**, sobrescrevendo os dados da operação **" + unidade + "**.")
 
             with st.form("form_upload_financeiro"):
                 f_fin_up = st.file_uploader(
@@ -3937,7 +3924,6 @@ else:
                 df_cp["data_venc_dt"] = pd.to_datetime(df_cp["data_vencimento"], errors="coerce").dt.date
                 df_cp["Valor Pendente"] = df_cp["comprometido"] - df_cp["realizado"]
 
-                # Filtros superiores solicitados: Período, Fornecedor e Data
                 st.markdown("##### 🔍 Filtros Avançados")
                 fc1, fc2, fc3 = st.columns(3)
                 
@@ -3994,7 +3980,7 @@ else:
             else:
                 st.info("ℹ️ Nenhum registro de contas a pagar encontrado. Faça o upload na primeira aba.")
 
-        with tab_fin[2]:
+        with sub_fin[2]:
             st.markdown("### ⏳ Gestão de Vencimentos por Calendário")
             st.caption("Selecione um dia específico no calendário para visualizar detalhadamente por fornecedor os valores pendentes de pagamento daquela data.")
 
@@ -4006,7 +3992,7 @@ else:
                 df_venc_cal["data_venc_dt"] = pd.to_datetime(df_venc_cal["data_vencimento"], errors="coerce").dt.date
                 df_venc_cal["Valor Pendente"] = df_venc_cal["comprometido"] - df_venc_cal["realizado"]
 
-                dia_selecionado = st.date_input("📅 Selecione o Dia para Analisar os Vencimentos:", value=datetime.now().date())
+                dia_selecionado = st.date_input("📅 Selecione o Dia para Analisar os Vencimentos:", value=datetime.now().date(), key="calendario_vencimentos_input")
 
                 df_dia_filtro = df_venc_cal[df_venc_cal["data_venc_dt"] == dia_selecionado]
 
@@ -4032,7 +4018,7 @@ else:
             else:
                 st.info("ℹ️ Nenhum dado financeiro disponível.")
 
-        with tab_fin[3]:
+        with sub_fin[3]:
             st.markdown("### 🤖 Análise de Saúde Financeira com IA")
             st.caption("Visão geral completa da saúde financeira da operação integrada com o contas a pagar.")
 
@@ -4050,7 +4036,7 @@ else:
             else:
                 st.info("ℹ️ Sem dados financeiros suficientes para gerar a análise.")
 
-        with tab_fin[4]:
+        with sub_fin[4]:
             st.markdown("### 📊 Fluxo de Caixa Diário Avançado (Próximos 15 Dias)")
             st.caption("Projeção diária desconsiderando pagamentos Ambev do contas a pagar padrão, permitindo preencher compras Ambev manuais, prever recebimentos via anexo/histórico e gerenciar o Saldo Bancário Atual.")
 
@@ -4058,7 +4044,6 @@ else:
             df_fc_base = pd.read_sql_query(f"SELECT * FROM financeiro_contas_pagar WHERE operacao = '{unidade}'", conn)
             conn.close()
 
-            # Anexo de histórico para previsão de recebimentos automática
             st.markdown("##### 📁 Anexar Histórico para Previsão de Recebimentos Automática")
             f_rec_hist = st.file_uploader("Upload de Histórico de Vendas/Recebimentos (.xlsx, .xls, .csv):", type=["xlsx", "xls", "csv"], key="up_rec_hist")
             
@@ -4066,7 +4051,6 @@ else:
             if f_rec_hist is not None:
                 try:
                     df_hist_rec = robust_read_file(f_rec_hist)
-                    # Tenta somar valores numéricos do histórico para estimar média diária ou total
                     num_cols = df_hist_rec.select_dtypes(include=["number"]).columns
                     if len(num_cols) > 0:
                         val_rec_auto = float(df_hist_rec[num_cols[0]].mean())
@@ -4079,14 +4063,9 @@ else:
 
             st.markdown("##### ⚙️ Configurações Diárias e Inserção Manual (Compras Ambev & Saldo Banco)")
             
-            # Tabela iterativa para os próximos 15 dias
-            dados_tabela_fc = []
-            
-            # Filtra contas a pagar excluindo Ambev (ex: fornecedores Ambev)
             if not df_fc_base.empty:
                 df_fc_base["data_venc_dt"] = pd.to_datetime(df_fc_base["data_vencimento"], errors="coerce").dt.date
                 df_fc_base["Pendente"] = df_fc_base["comprometido"] - df_fc_base["realizado"]
-                # Exclui itens da Ambev do contas a pagar padrão conforme solicitado
                 df_Sem_Ambev = df_fc_base[~df_fc_base["nome_fornecedor"].str.upper().str.contains("AMBEV", na=False)]
             else:
                 df_Sem_Ambev = pd.DataFrame()
@@ -4096,14 +4075,12 @@ else:
             st.markdown("---")
             st.markdown("##### 📋 Tabela de Projeção Diária (Próximos 15 Dias)")
 
-            # Campos editáveis simplificados por dia
             tabela_resultados_fc = []
             saldo_corr = saldo_anterior_acumulado
 
             for d_item in dias_proj_lista:
                 d_str = d_item.strftime("%Y-%m-%d")
                 
-                # Contas a pagar do dia (sem Ambev)
                 cp_dia = 0.0
                 if not df_Sem_Ambev.empty:
                     cp_dia = df_Sem_Ambev[df_Sem_Ambev["data_venc_dt"] == d_item]["Pendente"].sum()
@@ -4111,16 +4088,10 @@ else:
                 cols_d = st.columns(5)
                 cols_d[0].markdown(f"**{d_item.strftime('%d/%m/%Y')}**")
                 
-                # Input Saldo Banco Atual (se preenchido, recalcula a partir dele)
                 sb_atual = cols_d[1].number_input(f"Saldo Banco #{d_str}", value=0.0, step=1000.0, key=f"sb_{d_str}", label_visibility="collapsed")
-                # Input Compras Ambev Manual
                 cp_ambev_man = cols_d[2].number_input(f"Comp Ambev #{d_str}", value=0.0, step=500.0, key=f"ambev_{d_str}", label_visibility="collapsed")
-                # Input Previsão Recebimento (pode editar na mão)
                 prev_rec = cols_d[3].number_input(f"Prev Rec #{d_str}", value=val_rec_auto, step=500.0, key=f"rec_{d_str}", label_visibility="collapsed")
 
-                # Regra solicitada:
-                # Nos dias que não for atualizado o saldo banco (sb_atual == 0), a conta será: saldo dia anterior + previsao entrada - contas a pagar - pagamento ambev
-                # Se atualizado (sb_atual > 0): saldo banco + previsao entrada - contas a pagar - pagamento ambev
                 if sb_atual > 0:
                     saldo_corr = sb_atual + prev_rec - cp_dia - cp_ambev_man
                 else:
