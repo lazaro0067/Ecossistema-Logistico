@@ -139,7 +139,7 @@ def init_db():
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS base_01_11 (
-        cod_clean TEXT PRIMARY KEY,
+        cod_clean INTEGER PRIMARY KEY,
         descricao TEXT,
         fator_hl REAL,
         cx_pallet REAL
@@ -147,7 +147,7 @@ def init_db():
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS base_linear (
-        cod_clean TEXT PRIMARY KEY,
+        cod_clean INTEGER PRIMARY KEY,
         tipo TEXT,
         categoria TEXT,
         linear_vendas REAL,
@@ -157,7 +157,7 @@ def init_db():
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS base_estoque_02 (
         operacao TEXT,
-        cod_clean TEXT,
+        cod_clean INTEGER,
         descricao TEXT,
         inicial REAL,
         entrada REAL,
@@ -172,7 +172,7 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         operacao TEXT,
         data_puxada TEXT,
-        cod_clean TEXT,
+        cod_clean INTEGER,
         descricao TEXT,
         cx_solicitadas REAL,
         cx_marcadas REAL,
@@ -309,7 +309,7 @@ def init_db():
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS metas_doi (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        operacao TEXT, cod_prod TEXT, doi_meta REAL DEFAULT 7.0,
+        operacao TEXT, cod_prod INTEGER, doi_meta REAL DEFAULT 7.0,
         UNIQUE(operacao, cod_prod)
     )""")
 
@@ -334,7 +334,7 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         operacao TEXT,
         mes_ano TEXT,
-        cod_clean TEXT,
+        cod_clean INTEGER,
         descricao TEXT,
         total_qtde REAL,
         pct_acumulado REAL,
@@ -385,7 +385,7 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         operacao TEXT,
         data_registro TEXT,
-        cod_clean TEXT,
+        cod_clean INTEGER,
         sku_original TEXT,
         tipo TEXT,
         categoria TEXT,
@@ -487,7 +487,7 @@ def robust_read_file(file_obj):
         for h in [0, 1, 2, 3, 4, 5]:
             try:
                 file_obj.seek(0)
-                df = pd.read_excel(file_obj, header=h, engine="xlrd", dtype=str)
+                df = pd.read_excel(file_obj, header=h, engine="xlrd")
                 if df is not None and not df.empty and len(df.columns) > 1:
                     df = df.dropna(how="all", axis=1)
                     return df
@@ -498,14 +498,14 @@ def robust_read_file(file_obj):
         for h in [0, 1, 2, 3, 4, 5]:
             try:
                 file_obj.seek(0)
-                df = pd.read_excel(file_obj, header=h, engine="openpyxl", dtype=str)
+                df = pd.read_excel(file_obj, header=h, engine="openpyxl")
                 if df is not None and not df.empty and len(df.columns) > 1:
                     df = df.dropna(how="all", axis=1)
                     return df
             except Exception:
                 try:
                     file_obj.seek(0)
-                    df = pd.read_excel(file_obj, header=h, dtype=str)
+                    df = pd.read_excel(file_obj, header=h)
                     if df is not None and not df.empty and len(df.columns) > 1:
                         df = df.dropna(how="all", axis=1)
                         return df
@@ -526,7 +526,6 @@ def robust_read_file(file_obj):
                 encoding="utf-8-sig",
                 engine="python",
                 on_bad_lines="skip",
-                dtype=str,
             )
             if df is not None and len(df.columns) > 1:
                 return df
@@ -539,7 +538,6 @@ def robust_read_file(file_obj):
                     encoding="latin1",
                     engine="python",
                     on_bad_lines="skip",
-                    dtype=str,
                 )
                 if df is not None and len(df.columns) > 1:
                     return df
@@ -547,7 +545,7 @@ def robust_read_file(file_obj):
                 continue
 
     file_obj.seek(0)
-    return pd.read_excel(file_obj, dtype=str)
+    return pd.read_excel(file_obj)
 
 
 def parse_br_float(val):
@@ -738,7 +736,7 @@ def salvar_base_01_11(f_01):
     col_cod = [
         c for c in df_01.columns if "Código" in str(c) or "Cod" in str(c)
     ][0]
-    df_01["cod_clean"] = df_01[col_cod].astype(str).str.strip()
+    df_01["cod_clean"] = pd.to_numeric(df_01[col_cod], errors="coerce")
 
     col_q = df_01.columns[16] if len(df_01.columns) > 16 else df_01.columns[-1]
     df_01["fator_hl"] = (
@@ -777,7 +775,7 @@ def salvar_base_01_11(f_01):
             descricao=excluded.descricao, fator_hl=excluded.fator_hl, cx_pallet=excluded.cx_pallet
         """,
             (
-                str(r["cod_clean"]),
+                int(r["cod_clean"]),
                 str(r[col_desc]),
                 float(r["fator_hl"]),
                 float(r["cx_pallet"]),
@@ -806,7 +804,7 @@ def salvar_base_linear(f_lin):
             df_lin.columns[1] if len(df_lin.columns) > 1 else df_lin.columns[0]
         )
 
-    df_lin["cod_clean"] = df_lin[col_cod].astype(str).str.strip()
+    df_lin["cod_clean"] = pd.to_numeric(df_lin[col_cod], errors="coerce")
     df_lin["linear_vendas"] = df_lin[col_vendas].apply(parse_br_float)
     df_lin["Tipo"] = df_lin.get("Tipo", df_lin.get("tipo", pd.Series())).fillna(
         "OUTROS"
@@ -829,7 +827,7 @@ def salvar_base_linear(f_lin):
             linear_vendas=excluded.linear_vendas, dt_atualizacao=excluded.dt_atualizacao
         """,
             (
-                str(r["cod_clean"]),
+                int(r["cod_clean"]),
                 str(r.get("Tipo", "OUTROS")),
                 str(r.get("Categoria", "OUTROS")),
                 float(r["linear_vendas"]),
@@ -854,7 +852,7 @@ def salvar_base_estoque_02(f_02, operacao):
     ][0]
     col_disp = [c for c in df_02.columns if "Disp" in str(c)][0]
 
-    df_02["cod_clean"] = df_02[col_cod].astype(str).str.strip()
+    df_02["cod_clean"] = pd.to_numeric(df_02[col_cod], errors="coerce")
     df_02["Inicial"] = pd.to_numeric(df_02[col_init], errors="coerce").fillna(0)
     df_02["Ent."] = pd.to_numeric(df_02[col_ent], errors="coerce").fillna(0)
     df_02["Saidas"] = pd.to_numeric(df_02[col_sai], errors="coerce").fillna(0)
@@ -875,7 +873,7 @@ def salvar_base_estoque_02(f_02, operacao):
         """,
             (
                 operacao,
-                str(r["cod_clean"]),
+                int(r["cod_clean"]),
                 str(r[col_desc]),
                 float(r["Inicial"]),
                 float(r["Ent."]),
@@ -932,7 +930,14 @@ def salvar_pedidos_marcados(f_pedidos, operacao):
     dt_now = datetime.now().strftime("%d/%m/%Y %H:%M")
     for _, r in df_pedidos.iterrows():
         cod_raw = str(r.get(col_cod_r, "")).strip()
-        if not cod_raw:
+
+        if len(cod_raw) > 1:
+            cod_clean_str = cod_raw[:-1]
+        else:
+            cod_clean_str = cod_raw
+
+        cod_clean = pd.to_numeric(cod_clean_str, errors="coerce")
+        if pd.isna(cod_clean):
             continue
 
         cx_marcadas_w = parse_br_float(r.get(col_marc_w))
@@ -945,7 +950,7 @@ def salvar_pedidos_marcados(f_pedidos, operacao):
             (
                 operacao,
                 str(r.get(col_dt)).strip(),
-                cod_raw,
+                int(cod_clean),
                 str(r.get(col_desc)).strip(),
                 parse_br_float(r.get(col_solic)),
                 cx_marcadas_w,
@@ -985,12 +990,12 @@ def processar_politica_estoque_upload(f_pol, operacao):
             if len(partes) >= 2:
                 sub_part = partes[1].strip()
                 cod_match = re.search(r"^\d+", sub_part)
-                cod_clean = cod_match.group() if cod_match else "0"
+                cod_clean = int(cod_match.group()) if cod_match else 0
             else:
                 cod_match = re.search(r"^\d+", sku_str)
-                cod_clean = cod_match.group() if cod_match else "0"
+                cod_clean = int(cod_match.group()) if cod_match else 0
 
-            if cod_clean == "0":
+            if cod_clean == 0:
                 continue
 
             tipo_classificado = classificar_tipo_sku(sku_str)
@@ -2483,7 +2488,7 @@ if modo_visualizacao_estatica:
     st.stop()
 
 
-# 7. Autenticação e Navegação do Sistema (Proteção contra deslogamento)
+# 7. Autenticação e Navegação do Sistema
 if "logado" not in st.session_state:
     st.session_state["logado"] = False
 
@@ -2503,10 +2508,10 @@ if not st.session_state["logado"]:
                 <h3 style="color: #0d2149; margin-top: 0; text-align: center;">🔐 Acesso Restrito</h3>
             """, unsafe_allow_html=True)
 
-            usuario = st.text_input("Usuário Corporativo", key="input_user_login")
-            senha = st.text_input("Senha", type="password", key="input_pass_login")
+            usuario = st.text_input("Usuário Corporativo")
+            senha = st.text_input("Senha", type="password")
 
-            if st.button("🚀 Entrar no Sistema", use_container_width=True, key="btn_login_submit"):
+            if st.button("🚀 Entrar no Sistema", use_container_width=True):
                 conn = sqlite3.connect("puxada_ambev.db")
                 cursor = conn.cursor()
                 cursor.execute(
@@ -2535,8 +2540,8 @@ if not st.session_state["logado"]:
             st.markdown("<hr style='margin: 20px 0;'>", unsafe_allow_html=True)
             
             with st.expander("✉️ Esqueci minha senha / Recuperação"):
-                email_rec = st.text_input("Digite o seu e-mail cadastrado para validação:", key="input_email_rec")
-                if st.button("Enviar E-mail de Recuperação", use_container_width=True, key="btn_email_rec"):
+                email_rec = st.text_input("Digite o seu e-mail cadastrado para validação:")
+                if st.button("Enviar E-mail de Recuperação", use_container_width=True):
                     if email_rec:
                         conn = sqlite3.connect("puxada_ambev.db")
                         cursor = conn.cursor()
@@ -2569,7 +2574,7 @@ else:
         else [o.strip() for o in perm_ops_raw.split(",") if o.strip()]
     )
 
-    unidade = st.sidebar.selectbox("Unidade / Operação", ops_disponiveis, key="sb_unidade_ativa")
+    unidade = st.sidebar.selectbox("Unidade / Operação", ops_disponiveis)
     st.sidebar.divider()
 
     perm_deps_raw = st.session_state.get("perm_deps", "TODOS")
@@ -2592,14 +2597,14 @@ else:
             st.rerun()
 
     st.sidebar.divider()
-    if st.sidebar.button("Sair do Sistema", use_container_width=True, key="btn_logout"):
+    if st.sidebar.button("Sair do Sistema", use_container_width=True):
         st.session_state["logado"] = False
         st.session_state["nav_stack"] = ["Visão Geral (Dashboard)"]
         st.rerun()
 
     c_back, c_title = st.columns([1, 8])
     if len(st.session_state["nav_stack"]) > 1:
-        if c_back.button("⬅️ Voltar", key="btn_voltar_hist"):
+        if c_back.button("⬅️ Voltar"):
             go_back()
             st.rerun()
 
@@ -2610,7 +2615,7 @@ else:
 
     if "Visão Geral" in dept_atual:
         st.subheader("Painel Geral de Desempenho Operacional")
-        st.caption("Visão macro de todos os departamentos integrados da unidade. Clique em qualquer card abaixo para acessar diretamente o departamento:")
+        st.caption("Visão macro de todos los departamentos integrados da unidade. Clique em qualquer card abaixo para acessar diretamente o departamento:")
 
         dept_info_dict = {
             "Puxada": ("🚛", "Controle de solicitações, aprovações, CT-e, NFs e pátio."),
@@ -2664,7 +2669,7 @@ else:
         with sub_pux[0]:
             st.markdown("### Cadastro de Trechos (Origem e Destino), Transportadoras e Aprovadores")
             
-            c_modo_tr = st.radio("Ação:", ["➕ Novo Trecho", "✏️ Editar Trecho Existente"], horizontal=True, key="radio_modo_trecho")
+            c_modo_tr = st.radio("Ação:", ["➕ Novo Trecho", "✏️ Editar Trecho Existente"], horizontal=True)
             
             if "Novo" in c_modo_tr:
                 with st.form("form_cad_trecho"):
@@ -2711,7 +2716,7 @@ else:
                 df_tr_ed = pd.read_sql_query("SELECT * FROM cadastro_trechos_frete", conn)
                 conn.close()
                 if not df_tr_ed.empty:
-                    trecho_sel_ed = st.selectbox("Selecione o Trecho para Editar:", df_tr_ed["trecho"].tolist(), key="sb_edit_trecho_sel")
+                    trecho_sel_ed = st.selectbox("Selecione o Trecho para Editar:", df_tr_ed["trecho"].tolist())
                     r_tr = df_tr_ed[df_tr_ed["trecho"] == trecho_sel_ed].iloc[0]
                     with st.form("form_edit_trecho"):
                         o_e = st.text_input("Origem:", value=str(r_tr["origem"] if pd.notna(r_tr["origem"]) else ""))
@@ -2764,7 +2769,7 @@ else:
 
                 if not df_tr.empty:
                     with st.form("form_solic_frete_novo"):
-                        sel_t = st.selectbox("Selecione o Trecho Cadastrado (Origem -> Destino):", df_tr["trecho"].tolist(), key="sb_trecho_sel_cotacao")
+                        sel_t = st.selectbox("Selecione o Trecho Cadastrado (Origem -> Destino):", df_tr["trecho"].tolist())
                         row = df_tr[df_tr["trecho"] == sel_t].iloc[0]
                         st.info(f"📍 Origem: **{row.get('origem', 'N/A')}** | 🎯 Destino: **{row.get('destino', 'N/A')}**\n\n🚚 Transportadora: **{row['transportadora']}** | Valor: **R$ {row['valor_frete']:,.2f}** | Aprovador: **{row['aprovador']}**")
 
@@ -2812,7 +2817,7 @@ else:
                     st.dataframe(df_pend[["id", "origem", "destino", "transportadora", "valor_negociado", "solicitante", "data_frete"]], use_container_width=True)
                     
                     id_aprov = st.number_input("Digite o ID do Frete para Aprovar:", min_value=1, step=1, key="id_aprov_input")
-                    if st.button("✔️ Aprovar Frete Selecionado", key="btn_aprov_frete_sel"):
+                    if st.button("✔️ Aprovar Frete Selecionado"):
                         conn = sqlite3.connect("puxada_ambev.db")
                         cursor = conn.cursor()
                         cursor.execute("UPDATE cotacoes_frete SET status='Aprovado' WHERE id=?", (id_aprov,))
@@ -2833,7 +2838,7 @@ else:
                     st.dataframe(df_aprovados[["id", "origem", "destino", "transportadora", "valor_negociado", "data_frete"]], use_container_width=True)
 
                     with st.form("form_finalizar_frete"):
-                        id_fin = st.number_input("Digite o ID do Frete Aprovado para Finalizar:", min_value=1, step=1, key="id_fin_input")
+                        id_fin = st.number_input("Digite o ID do Frete Aprovado para Finalizar:", min_value=1, step=1)
                         cte_info = st.text_input("Número / Chave do CT-e (Conhecimento de Transporte):")
                         nfs_info = st.text_area("Notas Fiscais (NFs) Transportadas:")
 
@@ -2940,7 +2945,7 @@ else:
                     step=1,
                     key="id_exc_desc_input",
                 )
-                if st.button("🗑️ Excluir Agendamento Selecionado", key="btn_del_agend_desc"):
+                if st.button("🗑️ Excluir Agendamento Selecionado"):
                     conn = sqlite3.connect("puxada_ambev.db")
                     cursor = conn.cursor()
                     cursor.execute("DELETE FROM agendamentos_descarga WHERE id=?", (id_exc_desc,))
@@ -3007,7 +3012,7 @@ else:
                     df_car_all = pd.read_sql_query(f"SELECT * FROM carretas WHERE operacao='{unidade}'", conn)
                     conn.close()
                     if not df_car_all.empty:
-                        car_id_sel = st.selectbox("Selecione o ID / Placa da Carreta para Editar:", df_car_all.apply(lambda r: f"#{r['id']} - {r['placa']}", axis=1).tolist(), key="sb_edit_carreta_sel")
+                        car_id_sel = st.selectbox("Selecione o ID / Placa da Carreta para Editar:", df_car_all.apply(lambda r: f"#{r['id']} - {r['placa']}", axis=1).tolist())
                         real_id = int(car_id_sel.split("-")[0].replace("#", "").strip())
                         r_car = df_car_all[df_car_all["id"] == real_id].iloc[0]
                         with st.form("form_edit_carreta"):
@@ -3073,7 +3078,7 @@ else:
                     df_tr_all = pd.read_sql_query(f"SELECT * FROM transportadoras_gestao WHERE operacao='{unidade}'", conn)
                     conn.close()
                     if not df_tr_all.empty:
-                        tr_id_sel = st.selectbox("Selecione a Transportadora para Editar:", df_tr_all.apply(lambda r: f"#{r['id']} - {r['nome']}", axis=1).tolist(), key="sb_edit_transp_sel")
+                        tr_id_sel = st.selectbox("Selecione a Transportadora para Editar:", df_tr_all.apply(lambda r: f"#{r['id']} - {r['nome']}", axis=1).tolist())
                         real_id_tr = int(tr_id_sel.split("-")[0].replace("#", "").strip())
                         r_trg = df_tr_all[df_tr_all["id"] == real_id_tr].iloc[0]
                         with st.form("form_edit_transp"):
@@ -3138,7 +3143,7 @@ else:
                     df_fb_all = pd.read_sql_query("SELECT * FROM fabricas", conn)
                     conn.close()
                     if not df_fb_all.empty:
-                        fb_id_sel = st.selectbox("Selecione a Fábrica para Editar:", df_fb_all.apply(lambda r: f"#{r['id']} - {r['nome']}", axis=1).tolist(), key="sb_edit_fabrica_sel")
+                        fb_id_sel = st.selectbox("Selecione a Fábrica para Editar:", df_fb_all.apply(lambda r: f"#{r['id']} - {r['nome']}", axis=1).tolist())
                         real_id_fb = int(fb_id_sel.split("-")[0].replace("#", "").strip())
                         r_fbg = df_fb_all[df_fb_all["id"] == real_id_fb].iloc[0]
                         with st.form("form_edit_fab"):
@@ -3197,7 +3202,7 @@ else:
                     df_mot_all = pd.read_sql_query(f"SELECT * FROM motoristas WHERE operacao='{unidade}'", conn)
                     conn.close()
                     if not df_mot_all.empty:
-                        mot_id_sel = st.selectbox("Selecione o Motorista para Editar:", df_mot_all.apply(lambda r: f"#{r['id']} - {r['nome']}", axis=1).tolist(), key="sb_edit_motorista_sel")
+                        mot_id_sel = st.selectbox("Selecione o Motorista para Editar:", df_mot_all.apply(lambda r: f"#{r['id']} - {r['nome']}", axis=1).tolist())
                         real_id_mot = int(mot_id_sel.split("-")[0].replace("#", "").strip())
                         r_motg = df_mot_all[df_mot_all["id"] == real_id_mot].iloc[0]
                         with st.form("form_edit_mot"):
@@ -3311,12 +3316,12 @@ else:
                     data_puxada_sel = st.date_input("Data da Puxada:", value=datetime.now().date())
 
                     c_v1, c_v2 = st.columns(2)
-                    placa_sel = c_v1.selectbox("Placa (Carreta):", carretas_list if carretas_list else ["Nenhuma cadastrada"], key="sb_vinc_carreta")
-                    fabrica_sel = c_v2.selectbox("Fábrica:", fabricas_list if fabricas_list else ["Nenhuma cadastrada"], key="sb_vinc_fabrica")
+                    placa_sel = c_v1.selectbox("Placa (Carreta):", carretas_list if carretas_list else ["Nenhuma cadastrada"])
+                    fabrica_sel = c_v2.selectbox("Fábrica:", fabricas_list if fabricas_list else ["Nenhuma cadastrada"])
 
                     c_v3, c_v4 = st.columns(2)
-                    transp_sel = c_v3.selectbox("Transportadora:", transp_list if transp_list else ["Nenhuma cadastrada"], key="sb_vinc_transp")
-                    motorista_sel = c_v4.selectbox("Motorista:", motoristas_list if motoristas_list else ["Nenhum cadastrado"], key="sb_vinc_motorista")
+                    transp_sel = c_v3.selectbox("Transportadora:", transp_list if transp_list else ["Nenhuma cadastrada"])
+                    motorista_sel = c_v4.selectbox("Motorista:", motoristas_list if motoristas_list else ["Nenhum cadastrado"])
 
                     st.markdown("---")
                     st.markdown("##### 📄 Anexar Notas Fiscais (NFs) do Carregamento")
@@ -3345,17 +3350,17 @@ else:
                 df_vinc_all = pd.read_sql_query(f"SELECT * FROM vinculos_pedidos WHERE operacao='{unidade}'", conn)
                 conn.close()
                 if not df_vinc_all.empty:
-                    vinc_sel_id = st.selectbox("Selecione o Vínculo para Editar:", df_vinc_all.apply(lambda r: f"#{r['id']} - Pedido: {r['numero_pedido']} ({r['data_puxada']})", axis=1).tolist(), key="sb_edit_vinc_sel")
+                    vinc_sel_id = st.selectbox("Selecione o Vínculo para Editar:", df_vinc_all.apply(lambda r: f"#{r['id']} - Pedido: {r['numero_pedido']} ({r['data_puxada']})", axis=1).tolist())
                     real_id_vinc = int(vinc_sel_id.split("-")[0].replace("#", "").strip())
                     r_vinc = df_vinc_all[df_vinc_all["id"] == real_id_vinc].iloc[0]
                     with st.form("form_edit_vinc"):
                         np_e = st.text_input("Número do Pedido:", value=r_vinc["numero_pedido"])
                         dp_e = st.date_input("Data da Puxada:", value=datetime.strptime(r_vinc["data_puxada"], "%Y-%m-%d").date() if len(str(r_vinc["data_puxada"]))>=10 else datetime.now().date())
                         
-                        pl_e = st.selectbox("Placa:", carretas_list, index=carretas_list.index(r_vinc["placa"]) if r_vinc["placa"] in carretas_list else 0, key="sb_edit_vinc_carreta")
-                        fa_e = st.selectbox("Fábrica:", fabricas_list, index=fabricas_list.index(r_vinc["fabrica"]) if r_vinc["fabrica"] in fabricas_list else 0, key="sb_edit_vinc_fabrica")
-                        tr_e = st.selectbox("Transportadora:", transp_list, index=transp_list.index(r_vinc["transportadora"]) if r_vinc["transportadora"] in transp_list else 0, key="sb_edit_vinc_transp")
-                        mo_e = st.selectbox("Motorista:", motoristas_list, index=motoristas_list.index(r_vinc["motorista"]) if r_vinc["motorista"] in motoristas_list else 0, key="sb_edit_vinc_motorista")
+                        pl_e = st.selectbox("Placa:", carretas_list, index=carretas_list.index(r_vinc["placa"]) if r_vinc["placa"] in carretas_list else 0)
+                        fa_e = st.selectbox("Fábrica:", fabricas_list, index=fabricas_list.index(r_vinc["fabrica"]) if r_vinc["fabrica"] in fabricas_list else 0)
+                        tr_e = st.selectbox("Transportadora:", transp_list, index=transp_list.index(r_vinc["transportadora"]) if r_vinc["transportadora"] in transp_list else 0)
+                        mo_e = st.selectbox("Motorista:", motoristas_list, index=motoristas_list.index(r_vinc["motorista"]) if r_vinc["motorista"] in motoristas_list else 0)
 
                         nfs_e = st.text_area("Notas Fiscais Vinculadas:", value=str(r_vinc["notas_fiscais"] if pd.notna(r_vinc["notas_fiscais"]) else ""))
 
@@ -3384,7 +3389,7 @@ else:
                 render_botoes_download(df_vinculos, f"Pedidos_Vinculados_NFs_{unidade}")
 
                 id_del_vinc = st.number_input("Digite o ID do vínculo para remover:", min_value=1, step=1, key="id_del_vinc_input")
-                if st.button("🗑️ Excluir Vínculo de Pedido", key="btn_del_vinc"):
+                if st.button("🗑️ Excluir Vínculo de Pedido"):
                     conn = sqlite3.connect("puxada_ambev.db")
                     cursor = conn.cursor()
                     cursor.execute("DELETE FROM vinculos_pedidos WHERE id=?", (id_del_vinc,))
@@ -3414,7 +3419,7 @@ else:
                     type=["xlsx", "xls", "docx", "csv"],
                     key="up_01",
                 )
-                if f_01 and st.button("Salvar 01.11", key="btn_salvar_01"):
+                if f_01 and st.button("Salvar 01.11"):
                     salvar_base_01_11(f_01)
                     st.success("Base 01.11 salva!")
 
@@ -3425,7 +3430,7 @@ else:
                     type=["xlsx", "xls", "docx", "csv"],
                     key="up_lin",
                 )
-                if f_lin and st.button("Salvar Linear", key="btn_salvar_lin"):
+                if f_lin and st.button("Salvar Linear"):
                     salvar_base_linear(f_lin)
                     st.success("Base Linear salva!")
 
@@ -3436,7 +3441,7 @@ else:
                     type=["xlsx", "xls", "docx", "csv"],
                     key="up_02",
                 )
-                if f_02 and st.button("Atualizar Estoque do Dia", key="btn_salvar_02"):
+                if f_02 and st.button("Atualizar Estoque do Dia"):
                     salvar_base_estoque_02(f_02, unidade)
                     st.success("Estoque Diário Atualizado!")
 
@@ -3447,7 +3452,7 @@ else:
                     type=["xlsx", "xls", "docx", "csv"],
                     key="up_ped_d012",
                 )
-                if f_ped and st.button("Salvar Pedidos Marcados", key="btn_salvar_ped"):
+                if f_ped and st.button("Salvar Pedidos Marcados"):
                     salvar_pedidos_marcados(f_ped, unidade)
                     st.success("Pedidos Marcados (D0, D1, D2) atualizados!")
 
@@ -3502,7 +3507,6 @@ else:
                     "Data de Puxada Alvo:",
                     value=min_data_permitida,
                     min_value=min_data_permitida,
-                    key="date_puxada_alvo_input"
                 )
                 meta_doi_marcacao = c_ag2.number_input(
                     "Meta DOI Desejada para Marcação (Dias):",
@@ -3694,7 +3698,6 @@ else:
                     "2 - QUALIDADE",
                     "3 - ACURACIDADE",
                 ],
-                key="sb_pilar_fundamentos"
             )
 
             if "1 - LAYOUT" in sec_fund:
@@ -3849,7 +3852,6 @@ else:
                     "3 - EQUIPES EMPODERADAS 2026",
                     "4 - SATISFAÇÃO DO CLIENTE 2026",
                 ],
-                key="sb_pilar_entrega"
             )
             if "1 - PROCESSO" in sec_dist:
                 sub_p1 = st.tabs(["1.1 - Pré-rota", "1.2 - Entrega em Rota", "1.3 - Pós-rota", "1.4 - Jornada"])
@@ -3912,7 +3914,7 @@ else:
                 st.info("ℹ️ Nenhum dado financeiro cadastrado para esta unidade. Utilize o formulário acima para anexar o relatório.")
 
         with sub_fin[1]:
-            st.markdown("### 💳 Contas a Pagar: Código/ID, Nome (Fornecedor), Título (Documento), Data Vencimento e Valor Pendente")
+            st.markdown("### 💳 Contas a Pagar: Nome (Fornecedor), Título (Documento), Data Vencimento e Valor Pendente")
             
             conn = sqlite3.connect("puxada_ambev.db")
             df_cp = pd.read_sql_query(f"SELECT * FROM financeiro_contas_pagar WHERE operacao = '{unidade}'", conn)
@@ -3926,17 +3928,17 @@ else:
                 fc1, fc2, fc3 = st.columns(3)
                 
                 fornecedores_disp = ["TODOS"] + sorted(df_cp["nome_fornecedor"].dropna().unique().tolist())
-                forn_sel = fc1.selectbox("Filtrar por Fornecedor:", fornecedores_disp, key="sb_filtro_forn_cp")
+                forn_sel = fc1.selectbox("Filtrar por Fornecedor:", fornecedores_disp)
 
                 min_dt = df_cp["data_venc_dt"].min() if not df_cp["data_venc_dt"].isna().all() else datetime.now().date()
                 max_dt = df_cp["data_venc_dt"].max() if not df_cp["data_venc_dt"].isna().all() else datetime.now().date()
                 
                 try:
-                    periodo_sel = fc2.date_input("Filtrar por Período (Intervalo):", value=(min_dt, max_dt), key="date_intervalo_cp")
+                    periodo_sel = fc2.date_input("Filtrar por Período (Intervalo):", value=(min_dt, max_dt))
                 except Exception:
                     periodo_sel = (min_dt, max_dt)
 
-                data_esp_sel = fc3.date_input("Filtrar por Data Específica (Opcional):", value=None, key="date_esp_cp")
+                data_esp_sel = fc3.date_input("Filtrar por Data Específica (Opcional):", value=None)
 
                 df_cp_filtrado = df_cp.copy()
                 if forn_sel != "TODOS":
@@ -3955,11 +3957,11 @@ else:
 
                 st.divider()
 
-                tab_cp_v1, tab_cp_v2 = st.tabs(["📋 Tabela de Contas (Código, Nome, Título, Vencimento, Valor)", "🏢 Visão Consolidada por Fornecedor"])
+                tab_cp_v1, tab_cp_v2 = st.tabs(["📋 Tabela de Contas (Nome, Título, Vencimento, Valor)", "🏢 Visão Consolidada por Fornecedor"])
 
                 with tab_cp_v1:
-                    df_view_cp = df_cp_filtrado[["fornecedor_id", "nome_fornecedor", "documento", "data_vencimento", "Valor Pendente", "departamento", "conta_gerencial"]].copy()
-                    df_view_cp.columns = ["Código / ID", "Nome (Fornecedor)", "Título (Documento)", "Data Vencimento", "Valor Pendente", "Departamento", "Conta Gerencial"]
+                    df_view_cp = df_cp_filtrado[["nome_fornecedor", "documento", "data_vencimento", "Valor Pendente", "departamento", "conta_gerencial"]].copy()
+                    df_view_cp.columns = ["Nome (Fornecedor)", "Título (Documento)", "Data Vencimento", "Valor Pendente", "Departamento", "Conta Gerencial"]
                     df_view_cp["Valor Pendente"] = df_view_cp["Valor Pendente"].apply(formatar_br)
 
                     st.dataframe(df_view_cp, use_container_width=True)
@@ -3967,8 +3969,8 @@ else:
 
                 with tab_cp_v2:
                     st.markdown("##### 🏢 Visão Consolidada de Valores Pendentes por Fornecedor")
-                    df_forn_cons = df_cp_filtrado.groupby(["fornecedor_id", "nome_fornecedor"])["Valor Pendente"].sum().reset_index().sort_values("Valor Pendente", ascending=False)
-                    df_forn_cons.columns = ["Código / ID", "Nome do Fornecedor", "Total Valor Pendente"]
+                    df_forn_cons = df_cp_filtrado.groupby("nome_fornecedor")["Valor Pendente"].sum().reset_index().sort_values("Valor Pendente", ascending=False)
+                    df_forn_cons.columns = ["Nome do Fornecedor", "Total Valor Pendente"]
                     
                     df_view_forn_cons = df_forn_cons.copy()
                     df_view_forn_cons["Total Valor Pendente"] = df_view_forn_cons["Total Valor Pendente"].apply(formatar_br)
@@ -3999,8 +4001,8 @@ else:
 
                 if not df_dia_filtro.empty:
                     st.markdown("##### 🏢 Valores Pendentes por Fornecedor nesta Data")
-                    df_dia_forn = df_dia_filtro.groupby(["fornecedor_id", "nome_fornecedor"])["Valor Pendente"].sum().reset_index().sort_values("Valor Pendente", ascending=False)
-                    df_dia_forn.columns = ["Código / ID", "Nome do Fornecedor", "Valor Pendente"]
+                    df_dia_forn = df_dia_filtro.groupby("nome_fornecedor")["Valor Pendente"].sum().reset_index().sort_values("Valor Pendente", ascending=False)
+                    df_dia_forn.columns = ["Nome do Fornecedor", "Valor Pendente"]
                     
                     df_view_df = df_dia_forn.copy()
                     df_view_df["Valor Pendente"] = df_view_df["Valor Pendente"].apply(formatar_br)
@@ -4008,8 +4010,7 @@ else:
                     st.dataframe(df_view_df, use_container_width=True)
 
                     st.markdown("##### 📋 Títulos Detalhados da Data")
-                    df_det_dia = df_dia_filtro[["fornecedor_id", "nome_fornecedor", "documento", "conta_gerencial", "Valor Pendente"]].copy()
-                    df_det_dia.columns = ["Código / ID", "Nome (Fornecedor)", "Título (Documento)", "Conta Gerencial", "Valor Pendente"]
+                    df_det_dia = df_dia_filtro[["nome_fornecedor", "documento", "conta_gerencial", "Valor Pendente"]].copy()
                     df_det_dia["Valor Pendente"] = df_det_dia["Valor Pendente"].apply(formatar_br)
                     st.dataframe(df_det_dia, use_container_width=True)
                 else:
@@ -4069,18 +4070,10 @@ else:
             else:
                 df_Sem_Ambev = pd.DataFrame()
 
-            saldo_anterior_acumulado = st.number_input("💵 Saldo Banco Inicial (Dia Base):", value=50000.0, step=1000.0, key="num_saldo_inicial_fc")
+            saldo_anterior_acumulado = st.number_input("💵 Saldo Banco Inicial (Dia Base):", value=50000.0, step=1000.0)
 
             st.markdown("---")
             st.markdown("##### 📋 Tabela de Projeção Diária (Próximos 15 Dias)")
-
-            # Cabeçalhos Claros e Descritivos para as Colunas da Tabela Diária
-            hc1, hc2, hc3, hc4, hc5 = st.columns(5)
-            hc1.markdown("**📅 Data Vencimento**")
-            hc2.markdown("**💵 Saldo Banco Atual (R$)**")
-            hc3.markdown("**🛒 Compra Ambev Manual (R$)**")
-            hc4.markdown("**📈 Previsão de Entrada (R$)**")
-            hc5.markdown("**💰 Saldo Projetado do Dia (R$)**")
 
             tabela_resultados_fc = []
             saldo_corr = saldo_anterior_acumulado
@@ -4150,8 +4143,8 @@ else:
                 novo_perfil = c_u5.selectbox("Perfil de Acesso:", ["Operacional", "Master"])
                 e_aprov = c_u6.selectbox("É Aprovador de Fretes?", ["Não", "Sim"])
 
-                sel_ops = st.multiselect("Unidades Operacionais Permitidas:", OPERACOES_DISPONIVEIS, default=OPERACOES_DISPONIVEIS, key="ms_ops_novo_user")
-                sel_deps = st.multiselect("Departamentos Permitidos:", DEPARTAMENTOS_DISPONIVEIS, default=DEPARTAMENTOS_DISPONIVEIS, key="ms_deps_novo_user")
+                sel_ops = st.multiselect("Unidades Operacionais Permitidas:", OPERACOES_DISPONIVEIS, default=OPERACOES_DISPONIVEIS)
+                sel_deps = st.multiselect("Departamentos Permitidos:", DEPARTAMENTOS_DISPONIVEIS, default=DEPARTAMENTOS_DISPONIVEIS)
 
                 if st.form_submit_button("Criar Novo Usuário"):
                     if novo_nome and nova_senha:
@@ -4182,7 +4175,7 @@ else:
             conn.close()
 
             if not df_usrs_ed.empty:
-                alvo_edit_usr = st.selectbox("Selecione o Usuário para Editar:", df_usrs_ed.apply(lambda r: f"#{r['id']} - {r['nome']} ({r['perfil']})", axis=1).tolist(), key="sb_edit_user_master")
+                alvo_edit_usr = st.selectbox("Selecione o Usuário para Editar:", df_usrs_ed.apply(lambda r: f"#{r['id']} - {r['nome']} ({r['perfil']})", axis=1).tolist())
                 real_id_usr = int(alvo_edit_usr.split("-")[0].replace("#", "").strip())
                 r_usr = df_usrs_ed[df_usrs_ed["id"] == real_id_usr].iloc[0]
 
@@ -4224,7 +4217,7 @@ else:
             st.markdown("---")
             st.markdown("##### 🗑️ Excluir Definitivamente um Usuário")
             id_del_usr = st.number_input("Digite o ID do usuário para excluir:", min_value=1, step=1, key="id_del_usr_input")
-            if st.button("🗑️ Excluir Usuário Selecionado", key="btn_del_usr_master"):
+            if st.button("🗑️ Excluir Usuário Selecionado"):
                 if id_del_usr == 1:
                     st.error("Não é permitido excluir o usuário Administrador principal (ID 1).")
                 else:
@@ -4248,7 +4241,6 @@ else:
                 "transportadoras_gestao", "fabricas", "motoristas", "vinculos_pedidos", "usuarios",
                 "financeiro_contas_pagar"
             ],
-            key="sb_tabela_global_export"
         )
         conn = sqlite3.connect("puxada_ambev.db")
         df = pd.read_sql_query(f"SELECT * FROM {tabela}", conn)
