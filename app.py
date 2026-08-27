@@ -406,7 +406,6 @@ def init_db():
     except Exception:
         pass
 
-    # Tabela para Gestão Financeira (Contas a Pagar / Pagamentos) por Operação ajustada para colunas K (data/vencimento) e N (valor)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS financeiro_contas_pagar (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -432,6 +431,18 @@ def init_db():
         cursor.execute("ALTER TABLE financeiro_contas_pagar ADD COLUMN valor_col_n REAL DEFAULT 0.0")
     except Exception:
         pass
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS fluxo_caixa_config (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        operacao TEXT,
+        data_registro TEXT,
+        saldo_banco_atual REAL DEFAULT 0.0,
+        compras_ambev_manual REAL DEFAULT 0.0,
+        previsao_recebimento REAL DEFAULT 0.0,
+        dt_atualizacao TEXT,
+        UNIQUE(operacao, data_registro)
+    )""")
 
     empresas = [
         ("Lima Rio Verde", "12.345.678/0001-90", "Rio Verde", "GO"),
@@ -1050,7 +1061,6 @@ def processar_financeiro_upload(f_fin, operacao):
     conn = sqlite3.connect("puxada_ambev.db")
     cursor = conn.cursor()
 
-    # Sobrescreve a base anterior da operação ao anexar o relatório diário
     cursor.execute("DELETE FROM financeiro_contas_pagar WHERE operacao = ?", (operacao,))
 
     count = 0
@@ -1060,7 +1070,6 @@ def processar_financeiro_upload(f_fin, operacao):
             nbz = str(r.get("NBZ", r.iloc[1] if len(r) > 1 else "")).strip()
             dept = str(r.get("Departamento", r.iloc[2] if len(r) > 2 else "")).strip()
             
-            # Data de Vencimento na Coluna K (índice 10)
             raw_dt = r.iloc[10] if len(r) > 10 else r.get("Data", datetime.now())
             dt_parsed = pd.to_datetime(raw_dt, errors="coerce")
             data_venc = dt_parsed.strftime("%Y-%m-%d") if pd.notna(dt_parsed) else datetime.now().strftime("%Y-%m-%d")
@@ -1075,7 +1084,6 @@ def processar_financeiro_upload(f_fin, operacao):
             comprometido = parse_br_float(r.get("Comprometido", r.iloc[10] if len(r) > 10 else 0))
             realizado = parse_br_float(r.get("Realizado", r.iloc[11] if len(r) > 11 else 0))
             
-            # Valor na Coluna N (índice 13 se existir, senão usa coluna Comprometido)
             val_n = parse_br_float(r.iloc[13]) if len(r) > 13 else comprometido
 
             usuario = str(r.get("Usuario", r.iloc[12] if len(r) > 12 else "Sistema")).strip()
@@ -1130,6 +1138,15 @@ def carregar_estoque_consolidado(operacao):
     """
 
     df = pd.read_sql_query(query, conn, params=ops_filtro)
+    
+    # Carrega marcações D0, D1 e D2
+    query_marc = f"""
+    SELECT cod_clean, data_puxada, SUM(cx_marcadas) as cx_marcadas
+    FROM pedidos_marcados
+    WHERE operacao IN ({placeholders})
+    GROUP BY cod_clean, data_puxada
+    """
+    df_marc = pd.read_sql_query(query_marc, conn, params=ops_filtro)
     conn.close()
 
     if df.empty:
@@ -1137,8 +1154,33 @@ def carregar_estoque_consolidado(operacao):
 
     df.columns = [str(c).lower() for c in df.columns]
 
+    # Processa D0, D1, D2 se existirem
+    df["d0"] = 0.0
+    df["d1"] = 0.0
+    df["d2"] = 0.0
+
+    if not df_marc.empty:
+        # Tenta identificar as datas únicas de puxada ordenadas
+        datas_pux = sorted(df_marc["data_puxada"].dropna().unique())
+        # Mapeia D0, D1, D2 com base nas datas ordenadas disponíveis
+        if len(datas_pux) > 0:
+            d0_date = datas_pux[0]
+            df_d0 = df_marc[df_marc["data_puxada"] == d0_date].groupby("cod_clean")["cx_marcadas"].sum().reset_index()
+            df = pd.merge(df, df_d0.rename(columns={"cx_marcadas": "d0"}), on="cod_clean", how="left")
+            df["d0"] = df["d0"].fillna(0)
+        if len(datas_pux) > 1:
+            d1_date = datas_pux[1]
+            df_d1 = df_marc[df_marc["data_puxada"] == d1_date].groupby("cod_clean")["cx_marcadas"].sum().reset_index()
+            df = pd.merge(df, df_d1.rename(columns={"cx_marcadas": "d1"}), on="cod_clean", how="left")
+            df["d1"] = df["d1"].fillna(0)
+        if len(datas_pux) > 2:
+            d2_date = datas_pux[2]
+            df_d2 = df_marc[df_marc["data_puxada"] == d2_date].groupby("cod_clean")["cx_marcadas"].sum().reset_index()
+            df = pd.merge(df, df_d2.rename(columns={"cx_marcadas": "d2"}), on="cod_clean", how="left")
+            df["d2"] = df["d2"].fillna(0)
+
     df["classe_abc"] = "C"
-    df["total_puxada"] = 0
+    df["total_puxada"] = df["d0"] + df["d1"] + df["d2"]
     df["estoque_projetado"] = df["disp"] + df["total_puxada"]
 
     df["doi_atual"] = df.apply(
@@ -1235,11 +1277,11 @@ def gerar_analise_ia_financeiro(df_fin):
     maior_conta = df_fin.groupby("conta_gerencial")["comprometido"].sum().idxmax() if not df_fin.empty else "N/A"
 
     analise = [
-        f"🤖 **Diagnóstico Inteligente de Contas a Pagar (IA)**:",
+        f"🤖 **Diagnóstico de Saúde Financeira e Contas a Pagar (IA)**:",
         f"- **Comprometido Total**: R$ {formatar_br(tot_comp)} | **Realizado**: R$ {formatar_br(tot_real)} | **Pendente**: R$ {formatar_br(pendente)}",
         f"- **Maior Fornecedor Comprometido**: {maior_forn}",
         f"- **Conta Gerencial de Maior Impacto**: {maior_conta}",
-        f"- **Recomendação de Caixa**: Monitore os vencimentos pendentes para evitar multas e otimizar o capital de giro da unidade."
+        f"- **Saúde de Caixa**: Unidade apresenta compromissos operacionais sob controle, recomenda-se monitorar os vencimentos diários para garantir capital de giro adequado."
     ]
     return "\n".join(analise)
 
@@ -2259,7 +2301,7 @@ if "visualizacao" in st.query_params:
 
 
 def render_estoque_dia(unidade):
-    st.subheader("Portal do RN - Consulta Comercial de Vendas")
+    st.subheader("Portal do RN - Consulta Comercial de Vendas (Com Marcações D0, D1 e D2)")
 
     df = carregar_estoque_consolidado(unidade)
 
@@ -2356,7 +2398,7 @@ def render_estoque_dia(unidade):
 
         modo_view = st.radio(
             "Formato de Visualização:",
-            ["📱 Cards com Cores Vivas (Kanban)", "📊 Tabela Comercial"],
+            ["📱 Cards com Cores Vivas (Kanban com D0, D1, D2)", "📊 Tabela Comercial"],
             horizontal=True,
         )
 
@@ -2373,7 +2415,9 @@ def render_estoque_dia(unidade):
                     b_color = "#0abde3"
 
                 disp_fmt = formatar_br(r["disp"])
-                pux_fmt = formatar_br(r["total_puxada"])
+                d0_fmt = formatar_br(r["d0"])
+                d1_fmt = formatar_br(r["d1"])
+                d2_fmt = formatar_br(r["d2"])
                 proj_fmt = formatar_br(r["estoque_projetado"])
 
                 st.markdown(
@@ -2385,11 +2429,13 @@ def render_estoque_dia(unidade):
                         </div>
                         <div style="font-size: 16px; font-weight: bold; color: #1e293b; margin: 8px 0;">{r['descricao']}</div>
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px; background-color: #f8fafc; padding: 10px; border-radius: 8px;">
-                            <div><b>Estoque Físico:</b> <span style="color: #0288d1; font-size: 15px; font-weight: bold;">{disp_fmt} cx</span></div>
-                            <div><b>A Caminho (Puxada):</b> <span style="color: #10ac84; font-size: 15px; font-weight: bold;">{pux_fmt} cx</span></div>
+                            <div><b>Estoque Físico:</b> <span style="color: #0288d1; font-size: 14px; font-weight: bold;">{disp_fmt} cx</span></div>
+                            <div><b>D0:</b> <span style="color: #10ac84; font-size: 14px; font-weight: bold;">{d0_fmt} cx</span></div>
+                            <div><b>D1:</b> <span style="color: #3b82f6; font-size: 14px; font-weight: bold;">{d1_fmt} cx</span></div>
+                            <div><b>D2:</b> <span style="color: #8b5cf6; font-size: 14px; font-weight: bold;">{d2_fmt} cx</span></div>
                         </div>
                         <div style="display: flex; justify-content: space-between; margin-top: 8px; font-size: 12px; color: #64748b;">
-                            <span>Estoque Projetado: <b>{proj_fmt} cx</b></span>
+                            <span>Estoque Projetado (Físico + Puxadas): <b>{proj_fmt} cx</b></span>
                             <span>Cobertura: <b>{r['doi_atual']:.1f} dias</b></span>
                         </div>
                     </div>
@@ -2403,12 +2449,18 @@ def render_estoque_dia(unidade):
                 "tipo",
                 "categoria_detalhada",
                 "disp",
+                "d0",
+                "d1",
+                "d2",
                 "linear_vendas",
                 "doi_atual",
                 "status",
             ]
             df_view_rn = df_filtrado[cols_rn].copy()
             df_view_rn["disp"] = df_view_rn["disp"].apply(formatar_br)
+            df_view_rn["d0"] = df_view_rn["d0"].apply(formatar_br)
+            df_view_rn["d1"] = df_view_rn["d1"].apply(formatar_br)
+            df_view_rn["d2"] = df_view_rn["d2"].apply(formatar_br)
             df_view_rn["linear_vendas"] = df_view_rn["linear_vendas"].apply(
                 formatar_br
             )
@@ -3832,15 +3884,15 @@ else:
             render_gerenciador_padroes_dpo(unidade, "Entrega", "6.1 - NPS")
 
     elif "Financeiro" in dept_atual:
-        st.subheader("💰 Gestão Financeira, Contas a Pagar, Vencimentos & Fluxo de Caixa")
-        st.caption(f"Unidade Operacional Ativa: **{unidade}**. Leitura dedicada da Data na Coluna K e Valor na Coluna N, com gestão de vencimentos e fluxo automático.")
+        st.subheader("💰 Gestão Financeira, Contas a Pagar, Vencimentos & Fluxo de Caixa Avançado")
+        st.caption(f"Unidade Operacional Ativa: **{unidade}**. Gestão completa com filtros por período/fornecedor, calendário de vencimentos, IA e Fluxo de Caixa Diário com compras Ambev e recebimentos automáticos.")
 
         sub_fin = st.tabs([
             "📂 Upload & Sobrescrita Relatório Diário",
-            "💳 Contas a Pagar (Mês, Ano & Fornecedores)",
-            "⏳ Gestão de Vencimentos (Alertas & Prazos)",
-            "🤖 Análise Inteligente de Contas (IA)",
-            "📊 Fluxo de Caixa Diário Automático"
+            "💳 Contas a Pagar (Filtros & Visão Fornecedor)",
+            "⏳ Gestão de Vencimentos (Calendário)",
+            "🤖 Análise de Saúde Financeira (IA)",
+            "📊 Fluxo de Caixa Diário Avançado"
         ])
 
         with sub_fin[0]:
@@ -3875,170 +3927,114 @@ else:
                 st.info("ℹ️ Nenhum dado financeiro cadastrado para esta unidade. Utilize o formulário acima para anexar o relatório.")
 
         with sub_fin[1]:
-            st.markdown("### 💳 Gestão de Contas a Pagar (Mês a Mês, Ano e Fornecedores)")
+            st.markdown("### 💳 Contas a Pagar: Nome (Fornecedor), Título (Documento), Data Vencimento e Valor Pendente")
+            
             conn = sqlite3.connect("puxada_ambev.db")
             df_cp = pd.read_sql_query(f"SELECT * FROM financeiro_contas_pagar WHERE operacao = '{unidade}'", conn)
             conn.close()
 
             if not df_cp.empty:
-                df_cp["data_dt"] = pd.to_datetime(df_cp["data_vencimento"], errors="coerce")
-                df_cp["Ano"] = df_cp["data_dt"].dt.year.fillna(datetime.now().year).astype(int)
-                df_cp["Mes"] = df_cp["data_dt"].dt.month.fillna(datetime.now().month).astype(int)
-                df_cp["Mes_Nome"] = df_cp["data_dt"].dt.strftime("%m/%Y")
-                df_cp["Pendente"] = df_cp["comprometido"] - df_cp["realizado"]
+                df_cp["data_venc_dt"] = pd.to_datetime(df_cp["data_vencimento"], errors="coerce").dt.date
+                df_cp["Valor Pendente"] = df_cp["comprometido"] - df_cp["realizado"]
 
-                anos_disp = sorted(df_cp["Ano"].unique().tolist())
-                c_f1, c_f2 = st.columns(2)
-                ano_sel_f = c_f1.selectbox("Filtrar por Ano:", ["TODOS"] + anos_disp)
+                # Filtros superiores solicitados: Período, Fornecedor e Data
+                st.markdown("##### 🔍 Filtros Avançados")
+                fc1, fc2, fc3 = st.columns(3)
                 
-                meses_nomes_lista = [
-                    "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
-                    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
-                ]
-                mes_sel_f = c_f2.selectbox("Filtrar por Mês:", ["TODOS"] + list(range(1, 13)), format_func=lambda x: "TODOS OS MESES" if x=="TODOS" else meses_nomes_lista[x-1])
+                fornecedores_disp = ["TODOS"] + sorted(df_cp["nome_fornecedor"].dropna().unique().tolist())
+                forn_sel = fc1.selectbox("Filtrar por Fornecedor:", fornecedores_disp)
+
+                min_dt = df_cp["data_venc_dt"].min() if not df_cp["data_venc_dt"].isna().all() else datetime.now().date()
+                max_dt = df_cp["data_venc_dt"].max() if not df_cp["data_venc_dt"].isna().all() else datetime.now().date()
+                
+                try:
+                    periodo_sel = fc2.date_input("Filtrar por Período (Intervalo):", value=(min_dt, max_dt))
+                except Exception:
+                    periodo_sel = (min_dt, max_dt)
+
+                data_esp_sel = fc3.date_input("Filtrar por Data Específica (Opcional):", value=None)
 
                 df_cp_filtrado = df_cp.copy()
-                if ano_sel_f != "TODOS":
-                    df_cp_filtrado = df_cp_filtrado[df_cp_filtrado["Ano"] == int(ano_sel_f)]
-                if mes_sel_f != "TODOS":
-                    df_cp_filtrado = df_cp_filtrado[df_cp_filtrado["Mes"] == int(mes_sel_f)]
+                if forn_sel != "TODOS":
+                    df_cp_filtrado = df_cp_filtrado[df_cp_filtrado["nome_fornecedor"] == forn_sel]
 
-                tot_comp = df_cp_filtrado["comprometido"].sum()
-                tot_real = df_cp_filtrado["realizado"].sum()
-                tot_pend = df_cp_filtrado["Pendente"].sum()
-                tot_n = df_cp_filtrado["valor_col_n"].sum()
+                if isinstance(periodo_sel, tuple) and len(periodo_sel) == 2:
+                    d_ini, d_fim = periodo_sel
+                    if d_ini and d_fim:
+                        df_cp_filtrado = df_cp_filtrado[(df_cp_filtrado["data_venc_dt"] >= d_ini) & (df_cp_filtrado["data_venc_dt"] <= d_fim)]
 
-                m1, m2, m3, m4 = st.columns(4)
-                m1.metric("📌 Comprometido", f"R$ {formatar_br(tot_comp)}")
-                m2.metric("✅ Realizado", f"R$ {formatar_br(tot_real)}")
-                m3.metric("⏳ Pendente Gestão", f"R$ {formatar_br(tot_pend)}")
-                m4.metric("💰 Valor Coluna N", f"R$ {formatar_br(tot_n)}")
+                if data_esp_sel:
+                    df_cp_filtrado = df_cp_filtrado[df_cp_filtrado["data_venc_dt"] == data_esp_sel]
+
+                tot_pend_filt = df_cp_filtrado["Valor Pendente"].sum()
+                st.metric("Total Pendente nos Filtros Selecionados", f"R$ {formatar_br(tot_pend_filt)}")
 
                 st.divider()
 
-                tab_sub_cp1, tab_sub_cp2, tab_sub_cp3 = st.tabs([
-                    "📊 Visão por Mês a Mês",
-                    "🏢 Visão por Fornecedores",
-                    "🔍 Detalhamento Analítico Completo"
-                ])
+                tab_cp_v1, tab_cp_v2 = st.tabs(["📋 Tabela de Contas (Nome, Título, Vencimento, Valor)", "🏢 Visão Consolidada por Fornecedor"])
 
-                with tab_sub_cp1:
-                    st.markdown("##### 📈 Consolidado Mês a Mês")
-                    df_mes_grp = df_cp_filtrado.groupby(["Mes_Nome", "Ano", "Mes"]).agg(
-                        Comprometido=("comprometido", "sum"),
-                        Realizado=("realizado", "sum"),
-                        Pendente=("Pendente", "sum"),
-                        Valor_N=("valor_col_n", "sum")
-                    ).reset_index().sort_values(["Ano", "Mes"])
+                with tab_cp_v1:
+                    df_view_cp = df_cp_filtrado[["nome_fornecedor", "documento", "data_vencimento", "Valor Pendente", "departamento", "conta_gerencial"]].copy()
+                    df_view_cp.columns = ["Nome (Fornecedor)", "Título (Documento)", "Data Vencimento", "Valor Pendente", "Departamento", "Conta Gerencial"]
+                    df_view_cp["Valor Pendente"] = df_view_cp["Valor Pendente"].apply(formatar_br)
 
-                    df_view_mes = df_mes_grp.copy()
-                    df_view_mes["Comprometido"] = df_view_mes["Comprometido"].apply(formatar_br)
-                    df_view_mes["Realizado"] = df_view_mes["Realizado"].apply(formatar_br)
-                    df_view_mes["Pendente"] = df_view_mes["Pendente"].apply(formatar_br)
-                    df_view_mes["Valor_N"] = df_view_mes["Valor_N"].apply(formatar_br)
+                    st.dataframe(df_view_cp, use_container_width=True)
+                    render_botoes_download(df_cp_filtrado, f"Contas_Pagar_Filtrado_{unidade}")
 
-                    st.dataframe(df_view_mes[["Mes_Nome", "Comprometido", "Realizado", "Pendente", "Valor_N"]], use_container_width=True)
-                    render_botoes_download(df_mes_grp, f"Contas_Pagar_Mes_a_Mes_{unidade}")
+                with tab_cp_v2:
+                    st.markdown("##### 🏢 Visão Consolidada de Valores Pendentes por Fornecedor")
+                    df_forn_cons = df_cp_filtrado.groupby("nome_fornecedor")["Valor Pendente"].sum().reset_index().sort_values("Valor Pendente", ascending=False)
+                    df_forn_cons.columns = ["Nome do Fornecedor", "Total Valor Pendente"]
+                    
+                    df_view_forn_cons = df_forn_cons.copy()
+                    df_view_forn_cons["Total Valor Pendente"] = df_view_forn_cons["Total Valor Pendente"].apply(formatar_br)
 
-                with tab_sub_cp2:
-                    st.markdown("##### 🏢 Consolidado por Fornecedor")
-                    df_forn_grp = df_cp_filtrado.groupby(["fornecedor_id", "nome_fornecedor"]).agg(
-                        Comprometido=("comprometido", "sum"),
-                        Realizado=("realizado", "sum"),
-                        Pendente=("Pendente", "sum"),
-                        Valor_N=("valor_col_n", "sum")
-                    ).reset_index().sort_values("Comprometido", ascending=False)
-
-                    df_view_forn = df_forn_grp.copy()
-                    df_view_forn["Comprometido"] = df_view_forn["Comprometido"].apply(formatar_br)
-                    df_view_forn["Realizado"] = df_view_forn["Realizado"].apply(formatar_br)
-                    df_view_forn["Pendente"] = df_view_forn["Pendente"].apply(formatar_br)
-                    df_view_forn["Valor_N"] = df_view_forn["Valor_N"].apply(formatar_br)
-
-                    st.dataframe(df_view_forn, use_container_width=True)
-                    render_botoes_download(df_forn_grp, f"Contas_Pagar_Fornecedores_{unidade}")
-
-                with tab_sub_cp3:
-                    st.markdown("##### 🔍 Registros Detalhados")
-                    cols_show_fin = [
-                        "pacote", "nbz", "departamento", "data_vencimento", "documento",
-                        "nome_fornecedor", "historico", "conta_gerencial", "comprometido", "realizado", "valor_col_n", "Pendente"
-                    ]
-                    df_view_det = df_cp_filtrado[cols_show_fin].copy()
-                    df_view_det["comprometido"] = df_view_det["comprometido"].apply(formatar_br)
-                    df_view_det["realizado"] = df_view_det["realizado"].apply(formatar_br)
-                    df_view_det["valor_col_n"] = df_view_det["valor_col_n"].apply(formatar_br)
-                    df_view_det["Pendente"] = df_view_det["Pendente"].apply(formatar_br)
-
-                    st.dataframe(df_view_det, use_container_width=True)
-                    render_botoes_download(df_cp_filtrado[cols_show_fin], f"Contas_Pagar_Detalhado_{unidade}")
+                    st.dataframe(df_view_forn_cons, use_container_width=True)
+                    render_botoes_download(df_forn_cons, f"Consolidado_Fornecedores_{unidade}")
             else:
-                st.info("ℹ️ Nenhum dado de contas a pagar encontrado. Realize o upload do relatório na primeira aba.")
+                st.info("ℹ️ Nenhum registro de contas a pagar encontrado. Faça o upload na primeira aba.")
 
         with tab_fin[2]:
-            st.markdown("### ⏳ Gestão de Vencimentos & Prazos (Baseado na Data da Coluna K)")
-            st.caption("Acompanhamento rigoroso dos títulos vencidos, vencimento hoje, próximos 7 dias e em dia.")
+            st.markdown("### ⏳ Gestão de Vencimentos por Calendário")
+            st.caption("Selecione um dia específico no calendário para visualizar detalhadamente por fornecedor os valores pendentes de pagamento daquela data.")
 
             conn = sqlite3.connect("puxada_ambev.db")
-            df_venc = pd.read_sql_query(f"SELECT * FROM financeiro_contas_pagar WHERE operacao = '{unidade}'", conn)
+            df_venc_cal = pd.read_sql_query(f"SELECT * FROM financeiro_contas_pagar WHERE operacao = '{unidade}'", conn)
             conn.close()
 
-            if not df_venc.empty:
-                hoje = datetime.now().date()
-                df_venc["data_venc_dt"] = pd.to_datetime(df_venc["data_vencimento"], errors="coerce").dt.date
+            if not df_venc_cal.empty:
+                df_venc_cal["data_venc_dt"] = pd.to_datetime(df_venc_cal["data_vencimento"], errors="coerce").dt.date
+                df_venc_cal["Valor Pendente"] = df_venc_cal["comprometido"] - df_venc_cal["realizado"]
 
-                def classificar_vencimento(row):
-                    dt = row["data_venc_dt"]
-                    realizado = row["realizado"]
-                    if pd.isna(dt):
-                        return "Sem Data"
-                    if realizado > 0 and realizado >= row["comprometido"]:
-                        return "🟢 Pago / Liquidado"
+                dia_selecionado = st.date_input("📅 Selecione o Dia para Analisar os Vencimentos:", value=datetime.now().date())
+
+                df_dia_filtro = df_venc_cal[df_venc_cal["data_venc_dt"] == dia_selecionado]
+
+                tot_dia = df_dia_filtro["Valor Pendente"].sum()
+                st.metric(f"Total Pendente para o dia {dia_selecionado.strftime('%d/%m/%Y')}", f"R$ {formatar_br(tot_dia)}")
+
+                if not df_dia_filtro.empty:
+                    st.markdown("##### 🏢 Valores Pendentes por Fornecedor nesta Data")
+                    df_dia_forn = df_dia_filtro.groupby("nome_fornecedor")["Valor Pendente"].sum().reset_index().sort_values("Valor Pendente", ascending=False)
+                    df_dia_forn.columns = ["Nome do Fornecedor", "Valor Pendente"]
                     
-                    delta = (dt - hoje).days
-                    if delta < 0:
-                        return "🔴 Vencido"
-                    elif delta == 0:
-                        return "🟡 Vence Hoje"
-                    elif delta <= 7:
-                        return "🟠 Vence em até 7 dias"
-                    else:
-                        return "🔵 Em Dia (> 7 dias)"
+                    df_view_df = df_dia_forn.copy()
+                    df_view_df["Valor Pendente"] = df_view_df["Valor Pendente"].apply(formatar_br)
 
-                df_venc["Status Vencimento"] = df_venc.apply(classificar_vencimento, axis=1)
+                    st.dataframe(df_view_df, use_container_width=True)
 
-                vencidos_val = df_venc[df_venc["Status Vencimento"] == "🔴 Vencido"]["comprometido"].sum()
-                hoje_val = df_venc[df_venc["Status Vencimento"] == "🟡 Vence Hoje"]["comprometido"].sum()
-                proximos_val = df_venc[df_venc["Status Vencimento"] == "🟠 Vence em até 7 dias"]["comprometido"].sum()
-
-                # Correção aplicada com aspas duplas externas para evitar conflito com aspas simples do emoji
-                vc1, vc2, vc3 = st.columns(3)
-                vc1.metric("🔴 Títulos Vencidos", f"R$ {formatar_br(vencidos_val)}", delta=f"{len(df_venc[df_venc['Status Vencimento'] == '🔴 Vencido'])} títulos")
-                vc2.metric("🟡 Vence Hoje", f"R$ {formatar_br(hoje_val)}", delta=f"{len(df_venc[df_venc['Status Vencimento'] == '🟡 Vence Hoje'])} títulos")
-                vc3.metric("🟠 Vence em até 7 dias", f"R$ {formatar_br(proximos_val)}", delta=f"{len(df_venc[df_venc['Status Vencimento'] == '🟠 Vence em até 7 dias'])} títulos")
-
-                st.divider()
-
-                filtro_status_venc = st.selectbox("Filtrar por Status de Vencimento:", ["TODOS", "🔴 Vencido", "🟡 Vence Hoje", "🟠 Vence em até 7 dias", "🔵 Em Dia (> 7 dias)", "🟢 Pago / Liquidado"])
-                
-                df_venc_filtro = df_venc.copy()
-                if filtro_status_venc != "TODOS":
-                    df_venc_filtro = df_venc_filtro[df_venc_filtro["Status Vencimento"] == filtro_status_venc]
-
-                cols_venc_show = ["data_vencimento", "documento", "nome_fornecedor", "conta_gerencial", "comprometido", "realizado", "valor_col_n", "Status Vencimento"]
-                df_venc_view = df_venc_filtro[cols_venc_show].copy()
-                df_venc_view["comprometido"] = df_venc_view["comprometido"].apply(formatar_br)
-                df_venc_view["realizado"] = df_venc_view["realizado"].apply(formatar_br)
-                df_venc_view["valor_col_n"] = df_venc_view["valor_col_n"].apply(formatar_br)
-
-                st.dataframe(df_venc_view, use_container_width=True)
-                render_botoes_download(df_venc_filtro[cols_venc_show], f"Gestao_Vencimentos_{unidade}")
+                    st.markdown("##### 📋 Títulos Detalhados da Data")
+                    df_det_dia = df_dia_filtro[["nome_fornecedor", "documento", "conta_gerencial", "Valor Pendente"]].copy()
+                    df_det_dia["Valor Pendente"] = df_det_dia["Valor Pendente"].apply(formatar_br)
+                    st.dataframe(df_det_dia, use_container_width=True)
+                else:
+                    st.info(f"Nenhum título pendente de vencimento para o dia {dia_selecionado.strftime('%d/%m/%Y')}.")
             else:
-                st.info("ℹ️ Nenhum dado financeiro encontrado para gestão de vencimentos.")
+                st.info("ℹ️ Nenhum dado financeiro disponível.")
 
         with tab_fin[3]:
-            st.markdown("### 🤖 Análise Inteligente de Contas e Gestão com IA")
-            st.caption("Utilize a inteligência artificial para diagnosticar desvios, gargalos e oportunidades de otimização no contas a pagar.")
+            st.markdown("### 🤖 Análise de Saúde Financeira com IA")
+            st.caption("Visão geral completa da saúde financeira da operação integrada com o contas a pagar.")
 
             conn = sqlite3.connect("puxada_ambev.db")
             df_ia_fin = pd.read_sql_query(f"SELECT * FROM financeiro_contas_pagar WHERE operacao = '{unidade}'", conn)
@@ -4048,43 +4044,102 @@ else:
                 diagnostico = gerar_analise_ia_financeiro(df_ia_fin)
                 st.info(diagnostico)
 
-                st.markdown("##### 📊 Top 5 Contas Gerenciais com Maior Comprometimento")
-                df_top_contas = df_ia_fin.groupby("conta_gerencial")["comprometido"].sum().reset_index().sort_values("comprometido", ascending=False).head(5)
-                st.bar_chart(df_top_contas.set_index("conta_gerencial"))
+                st.markdown("##### 📊 Top Contas com Maior Comprometimento")
+                df_top_c = df_ia_fin.groupby("conta_gerencial")["comprometido"].sum().reset_index().sort_values("comprometido", ascending=False).head(5)
+                st.bar_chart(df_top_c.set_index("conta_gerencial"))
             else:
-                st.info("ℹ️ Sem dados suficientes para gerar a análise da IA. Faça o upload do relatório diário.")
+                st.info("ℹ️ Sem dados financeiros suficientes para gerar a análise.")
 
         with tab_fin[4]:
-            st.markdown("### 📊 Fluxo de Caixa Diário Automático")
-            st.caption("O fluxo de caixa puxa automaticamente as contas a pagar dia a dia, consolidando entradas, saídas, comprometidos e pendências da operação **" + unidade + "**.")
+            st.markdown("### 📊 Fluxo de Caixa Diário Avançado (Próximos 15 Dias)")
+            st.caption("Projeção diária desconsiderando pagamentos Ambev do contas a pagar padrão, permitindo preencher compras Ambev manuais, prever recebimentos via anexo/histórico e gerenciar o Saldo Bancário Atual.")
 
             conn = sqlite3.connect("puxada_ambev.db")
-            df_fc = pd.read_sql_query(f"SELECT * FROM financeiro_contas_pagar WHERE operacao = '{unidade}'", conn)
+            df_fc_base = pd.read_sql_query(f"SELECT * FROM financeiro_contas_pagar WHERE operacao = '{unidade}'", conn)
             conn.close()
 
-            if not df_fc.empty:
-                df_fc["Pendente"] = df_fc["comprometido"] - df_fc["realizado"]
-                df_fluxo_diario = df_fc.groupby("data_vencimento").agg(
-                    Comprometido=("comprometido", "sum"),
-                    Realizado=("realizado", "sum"),
-                    Valor_N=("valor_col_n", "sum"),
-                    Pendente=("Pendente", "sum")
-                ).reset_index().sort_values("data_vencimento")
+            # Anexo de histórico para previsão de recebimentos automática
+            st.markdown("##### 📁 Anexar Histórico para Previsão de Recebimentos Automática")
+            f_rec_hist = st.file_uploader("Upload de Histórico de Vendas/Recebimentos (.xlsx, .xls, .csv):", type=["xlsx", "xls", "csv"], key="up_rec_hist")
+            
+            val_rec_auto = 0.0
+            if f_rec_hist is not None:
+                try:
+                    df_hist_rec = robust_read_file(f_rec_hist)
+                    # Tenta somar valores numéricos do histórico para estimar média diária ou total
+                    num_cols = df_hist_rec.select_dtypes(include=["number"]).columns
+                    if len(num_cols) > 0:
+                        val_rec_auto = float(df_hist_rec[num_cols[0]].mean())
+                        st.success(f"Previsão de recebimento média calculada automaticamente do histórico: R$ {formatar_br(val_rec_auto)}")
+                except Exception as e:
+                    st.warning(f"Não foi possível extrair automaticamente o histórico: {e}")
 
-                df_view_fc = df_fluxo_diario.copy()
-                df_view_fc["Comprometido"] = df_view_fc["Comprometido"].apply(formatar_br)
-                df_view_fc["Realizado"] = df_view_fc["Realizado"].apply(formatar_br)
-                df_view_fc["Valor_N"] = df_view_fc["Valor_N"].apply(formatar_br)
-                df_view_fc["Pendente"] = df_view_fc["Pendente"].apply(formatar_br)
+            hoje_dt = datetime.now().date()
+            dias_proj_lista = [hoje_dt + timedelta(days=i) for i in range(15)]
 
-                st.dataframe(df_view_fc, use_container_width=True)
-
-                st.markdown("##### 📈 Evolução Diária do Comprometido vs Realizado")
-                st.line_chart(df_fluxo_diario.set_index("data_vencimento")[["Comprometido", "Realizado"]])
-
-                render_botoes_download(df_fluxo_diario, f"Fluxo_de_Caixa_Diario_{unidade}")
+            st.markdown("##### ⚙️ Configurações Diárias e Inserção Manual (Compras Ambev & Saldo Banco)")
+            
+            # Tabela iterativa para os próximos 15 dias
+            dados_tabela_fc = []
+            
+            # Filtra contas a pagar excluindo Ambev (ex: fornecedores Ambev)
+            if not df_fc_base.empty:
+                df_fc_base["data_venc_dt"] = pd.to_datetime(df_fc_base["data_vencimento"], errors="coerce").dt.date
+                df_fc_base["Pendente"] = df_fc_base["comprometido"] - df_fc_base["realizado"]
+                # Exclui itens da Ambev do contas a pagar padrão conforme solicitado
+                df_Sem_Ambev = df_fc_base[~df_fc_base["nome_fornecedor"].str.upper().str.contains("AMBEV", na=False)]
             else:
-                st.info("ℹ️ Nenhum dado disponível para compor o fluxo de caixa automático. Importe o relatório na primeira aba.")
+                df_Sem_Ambev = pd.DataFrame()
+
+            saldo_anterior_acumulado = st.number_input("💵 Saldo Banco Inicial (Dia Base):", value=50000.0, step=1000.0)
+
+            st.markdown("---")
+            st.markdown("##### 📋 Tabela de Projeção Diária (Próximos 15 Dias)")
+
+            # Campos editáveis simplificados por dia
+            tabela_resultados_fc = []
+            saldo_corr = saldo_anterior_acumulado
+
+            for d_item in dias_proj_lista:
+                d_str = d_item.strftime("%Y-%m-%d")
+                
+                # Contas a pagar do dia (sem Ambev)
+                cp_dia = 0.0
+                if not df_Sem_Ambev.empty:
+                    cp_dia = df_Sem_Ambev[df_Sem_Ambev["data_venc_dt"] == d_item]["Pendente"].sum()
+
+                cols_d = st.columns(5)
+                cols_d[0].markdown(f"**{d_item.strftime('%d/%m/%Y')}**")
+                
+                # Input Saldo Banco Atual (se preenchido, recalcula a partir dele)
+                sb_atual = cols_d[1].number_input(f"Saldo Banco #{d_str}", value=0.0, step=1000.0, key=f"sb_{d_str}", label_visibility="collapsed")
+                # Input Compras Ambev Manual
+                cp_ambev_man = cols_d[2].number_input(f"Comp Ambev #{d_str}", value=0.0, step=500.0, key=f"ambev_{d_str}", label_visibility="collapsed")
+                # Input Previsão Recebimento (pode editar na mão)
+                prev_rec = cols_d[3].number_input(f"Prev Rec #{d_str}", value=val_rec_auto, step=500.0, key=f"rec_{d_str}", label_visibility="collapsed")
+
+                # Regra solicitada:
+                # Nos dias que não for atualizado o saldo banco (sb_atual == 0), a conta será: saldo dia anterior + previsao entrada - contas a pagar - pagamento ambev
+                # Se atualizado (sb_atual > 0): saldo banco + previsao entrada - contas a pagar - pagamento ambev
+                if sb_atual > 0:
+                    saldo_corr = sb_atual + prev_rec - cp_dia - cp_ambev_man
+                else:
+                    saldo_corr = saldo_corr + prev_rec - cp_dia - cp_ambev_man
+
+                cols_d[4].markdown(f"**R$ {formatar_br(saldo_corr)}**")
+
+                tabela_resultados_fc.append({
+                    "Data": d_item.strftime("%d/%m/%Y"),
+                    "Saldo Banco Atualizado": sb_atual,
+                    "Previsão Entrada": prev_rec,
+                    "Contas a Pagar (Sem Ambev)": cp_dia,
+                    "Pagamento Compra Ambev": cp_ambev_man,
+                    "Saldo do Dia Projetado": saldo_corr
+                })
+
+            df_res_fluxo = pd.DataFrame(tabela_resultados_fc)
+            st.divider()
+            render_botoes_download(df_res_fluxo, f"Fluxo_Caixa_Avancado_{unidade}")
 
     elif "Compras" in dept_atual:
         st.subheader("7 - GESTÃO DE COMPRAS E INSUMOS")
