@@ -1060,7 +1060,7 @@ def processar_financeiro_upload(f_fin, operacao):
             nbz = str(r.get("NBZ", r.iloc[1] if len(r) > 1 else "")).strip()
             dept = str(r.get("Departamento", r.iloc[2] if len(r) > 2 else "")).strip()
             
-            # Data de Vencimento priorizando a Coluna K (índice 10) ou coluna 'Data'
+            # Data de Vencimento na Coluna K (índice 10)
             raw_dt = r.iloc[10] if len(r) > 10 else r.get("Data", datetime.now())
             dt_parsed = pd.to_datetime(raw_dt, errors="coerce")
             data_venc = dt_parsed.strftime("%Y-%m-%d") if pd.notna(dt_parsed) else datetime.now().strftime("%Y-%m-%d")
@@ -1075,7 +1075,7 @@ def processar_financeiro_upload(f_fin, operacao):
             comprometido = parse_br_float(r.get("Comprometido", r.iloc[10] if len(r) > 10 else 0))
             realizado = parse_br_float(r.get("Realizado", r.iloc[11] if len(r) > 11 else 0))
             
-            # Leitura do valor na Coluna N (índice 13 se existir, senão usa coluna Comprometido)
+            # Valor na Coluna N (índice 13 se existir, senão usa coluna Comprometido)
             val_n = parse_br_float(r.iloc[13]) if len(r) > 13 else comprometido
 
             usuario = str(r.get("Usuario", r.iloc[12] if len(r) > 12 else "Sistema")).strip()
@@ -4011,10 +4011,11 @@ else:
                 hoje_val = df_venc[df_venc["Status Vencimento"] == "🟡 Vence Hoje"]["comprometido"].sum()
                 proximos_val = df_venc[df_venc["Status Vencimento"] == "🟠 Vence em até 7 dias"]["comprometido"].sum()
 
+                # Correção aplicada com aspas duplas externas para evitar conflito com aspas simples do emoji
                 vc1, vc2, vc3 = st.columns(3)
                 vc1.metric("🔴 Títulos Vencidos", f"R$ {formatar_br(vencidos_val)}", delta=f"{len(df_venc[df_venc['Status Vencimento'] == '🔴 Vencido'])} títulos")
-                vc2.metric("🟡 Vence Hoje", f"R$ {formatar_br(hoje_val)}", delta=f"{len(df_venc[df_venc['Status Vencimento'] == '🟡 Vence Hoje']} títulos")
-                vc3.metric("🟠 Vence em até 7 dias", f"R$ {formatar_br(proximos_val)}", delta=f"{len(df_venc[df_venc['Status Vencimento'] == '🟠 Vence em até 7 dias']} títulos")
+                vc2.metric("🟡 Vence Hoje", f"R$ {formatar_br(hoje_val)}", delta=f"{len(df_venc[df_venc['Status Vencimento'] == '🟡 Vence Hoje'])} títulos")
+                vc3.metric("🟠 Vence em até 7 dias", f"R$ {formatar_br(proximos_val)}", delta=f"{len(df_venc[df_venc['Status Vencimento'] == '🟠 Vence em até 7 dias'])} títulos")
 
                 st.divider()
 
