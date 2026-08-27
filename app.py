@@ -40,6 +40,26 @@ st.markdown("""
             color: #ffffff !important;
         }
 
+        /* Correção de Visibilidade dos Botões da Sidebar */
+        section[data-testid="stSidebar"] div.stButton > button {
+            background-color: #ffffff !important;
+            color: #0d2149 !important;
+            font-weight: 600 !important;
+            border: 1px solid #cbd5e1 !important;
+            border-radius: 8px !important;
+            transition: all 0.2s ease-in-out;
+        }
+        section[data-testid="stSidebar"] div.stButton > button:hover {
+            background-color: #f1f5f9 !important;
+            color: #1e293b !important;
+            border-color: #94a3b8 !important;
+        }
+        section[data-testid="stSidebar"] div.stButton > button[kind="primary"] {
+            background-color: #ff4757 !important;
+            color: #ffffff !important;
+            border: 1px solid #ff4757 !important;
+        }
+
         /* Cards Estilo Sênior Corporativo */
         .senior-card {
             background-color: #ffffff;
@@ -2197,7 +2217,7 @@ def render_estoque_dia(unidade):
 
         # Filtros Específicos para Cerveja, NAB, Ret, Desc
         c_f1, c_f2, c_f3 = st.columns([2, 1, 1])
-        busca = c_f1.text_input("🔍 Pesquisar por Código ou Nome do Produto:")
+        busca = c_f1.text_input("🔍 Pesquisar por Código Completo ou Nome do Produto:")
         
         tipo_filtro_sel = c_f2.selectbox(
             "Tipo (Cerveja / NAB):", ["TODOS", "CERVEJA", "NAB"]
@@ -2239,7 +2259,7 @@ def render_estoque_dia(unidade):
         )
 
         if "Cards" in modo_view:
-            st.markdown(f"Exibindo **{len(df_filtrado)}** produtos filtrados (Cerveja, NAB, Ret, Desc):")
+            st.markdown(f"Exibindo **{len(df_filtrado)}** produtos filtrados com código completo:")
             for _, r in df_filtrado.iterrows():
                 if "Stock Out" in r["status"]:
                     b_color = "#ee5253"
@@ -2258,7 +2278,7 @@ def render_estoque_dia(unidade):
                     f"""
                     <div class="senior-card" style="border-left: 6px solid {b_color};">
                         <div style="display: flex; justify-content: space-between; align-items: center;">
-                            <span style="font-size: 11px; color: #444; font-weight: bold;">CÓD: {r['cod_clean']} | TIPO: {r['tipo']} | CAT: {r['categoria_detalhada']}</span>
+                            <span style="font-size: 11px; color: #444; font-weight: bold;">CÓD COMPLETO: {r['cod_clean']} | TIPO: {r['tipo']} | CAT: {r['categoria_detalhada']}</span>
                             <span style="font-size: 11px; font-weight: bold; background-color: #ffffff; color: #222; padding: 4px 10px; border-radius: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">{r['status']}</span>
                         </div>
                         <div style="font-size: 16px; font-weight: bold; color: #1e293b; margin: 8px 0;">{r['descricao']}</div>
@@ -2670,7 +2690,7 @@ else:
                     st.info("Nenhum frete aprovado aguardando finalização.")
 
             st.divider()
-            st.markdown("##### 📋 Todos os Fretes Registrados")
+            st.markdown("##### 📋 Todos los Fretes Registrados")
             conn = sqlite3.connect("puxada_ambev.db")
             df_all_f = pd.read_sql_query(f"SELECT * FROM cotacoes_frete WHERE operacao = '{unidade}'", conn)
             conn.close()
