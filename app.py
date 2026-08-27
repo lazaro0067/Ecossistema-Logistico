@@ -39,6 +39,25 @@ st.markdown("""
             color: #ffffff !important;
         }
 
+        /* Correção de Contraste para os Botões da Sidebar (Fundo Branco com Texto Escuro Legível) */
+        section[data-testid="stSidebar"] button {
+            background-color: #ffffff !important;
+            color: #0d2149 !important;
+            font-weight: 600 !important;
+            border: 1px solid #cbd5e1 !important;
+            border-radius: 8px !important;
+        }
+        section[data-testid="stSidebar"] button:hover {
+            background-color: #e2e8f0 !important;
+            color: #000000 !important;
+        }
+        /* Botão ativo na sidebar com destaque visual */
+        section[data-testid="stSidebar"] button[kind="primary"] {
+            background-color: #3b82f6 !important;
+            color: #ffffff !important;
+            border: 1px solid #2563eb !important;
+        }
+
         /* Cartões Estilo Sênior Corporativo */
         .senior-card {
             background-color: #ffffff;
@@ -386,6 +405,27 @@ def init_db():
         cursor.execute("ALTER TABLE politica_estoque_base ADD COLUMN data_registro TEXT")
     except Exception:
         pass
+
+    # Tabela para Gestão Financeira (Contas a Pagar / Pagamentos) por Operação
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS financeiro_contas_pagar (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        operacao TEXT,
+        pacote TEXT,
+        nbz TEXT,
+        departamento TEXT,
+        data_vencimento TEXT,
+        documento TEXT,
+        fornecedor_id TEXT,
+        nome_fornecedor TEXT,
+        historico TEXT,
+        conta_gerencial TEXT,
+        vbz TEXT,
+        comprometido REAL DEFAULT 0.0,
+        realizado REAL DEFAULT 0.0,
+        usuario TEXT,
+        dt_atualizacao TEXT
+    )""")
 
     empresas = [
         ("Lima Rio Verde", "12.345.678/0001-90", "Rio Verde", "GO"),
@@ -998,6 +1038,53 @@ def processar_politica_estoque_upload(f_pol, operacao):
     return count
 
 
+def processar_financeiro_upload(f_fin, operacao):
+    df_raw = robust_read_file(f_fin)
+    dt_now = datetime.now().strftime("%d/%m/%Y %H:%M")
+    conn = sqlite3.connect("puxada_ambev.db")
+    cursor = conn.cursor()
+
+    # Sobrescreve (limpa) a base anterior da operação ao anexar um novo relatório diário conforme solicitado
+    cursor.execute("DELETE FROM financeiro_contas_pagar WHERE operacao = ?", (operacao,))
+
+    count = 0
+    for _, r in df_raw.iterrows():
+        try:
+            pacote = str(r.get("Pacote", r.iloc[0] if len(r) > 0 else "")).strip()
+            nbz = str(r.get("NBZ", r.iloc[1] if len(r) > 1 else "")).strip()
+            dept = str(r.get("Departamento", r.iloc[2] if len(r) > 2 else "")).strip()
+            
+            raw_dt = r.get("Data", r.iloc[3] if len(r) > 3 else datetime.now())
+            dt_parsed = pd.to_datetime(raw_dt, errors="coerce")
+            data_venc = dt_parsed.strftime("%Y-%m-%d") if pd.notna(dt_parsed) else datetime.now().strftime("%Y-%m-%d")
+
+            doc = str(r.get("Documento", r.iloc[4] if len(r) > 4 else "")).strip()
+            forn_id = str(r.get("Fornecedor", r.iloc[5] if len(r) > 5 else "")).strip()
+            nome_forn = str(r.get("Nome Fornecedor", r.iloc[6] if len(r) > 6 else "")).strip()
+            hist = str(r.get("Historico", r.iloc[7] if len(r) > 7 else "")).strip()
+            conta_ger = str(r.get("Conta Gerencial", r.iloc[8] if len(r) > 8 else "")).strip()
+            vbz = str(r.get("VBZ", r.iloc[9] if len(r) > 9 else "")).strip()
+            
+            comprometido = parse_br_float(r.get("Comprometido", r.iloc[10] if len(r) > 10 else 0))
+            realizado = parse_br_float(r.get("Realizado", r.iloc[11] if len(r) > 11 else 0))
+            usuario = str(r.get("Usuario", r.iloc[12] if len(r) > 12 else "Sistema")).strip()
+
+            cursor.execute(
+                """
+                INSERT INTO financeiro_contas_pagar (operacao, pacote, nbz, departamento, data_vencimento, documento, fornecedor_id, nome_fornecedor, historico, conta_gerencial, vbz, comprometido, realizado, usuario, dt_atualizacao)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (operacao, pacote, nbz, dept, data_venc, doc, forn_id, nome_forn, hist, conta_ger, vbz, comprometido, realizado, usuario, dt_now)
+            )
+            count += 1
+        except Exception:
+            continue
+
+    conn.commit()
+    conn.close()
+    return count
+
+
 def carregar_estoque_consolidado(operacao):
     conn = sqlite3.connect("puxada_ambev.db")
 
@@ -1123,6 +1210,27 @@ def gerar_sugestao_ia_dpo(modulo, subbloco, conteudo_atual):
             "⚠️ **Alerta DPO**: O texto atual está curto. Adicione detalhamento passo a passo para evitar falhas operacionais."
         )
     return "\n".join(recomendações)
+
+
+def gerar_analise_ia_financeiro(df_fin):
+    if df_fin is None or df_fin.empty:
+        return "Sem dados financeiros suficientes para análise da IA."
+    
+    tot_comp = df_fin["comprometido"].sum()
+    tot_real = df_fin["realizado"].sum()
+    pendente = tot_comp - tot_real
+    
+    maior_forn = df_fin.groupby("nome_fornecedor")["comprometido"].sum().idxmax() if not df_fin.empty else "N/A"
+    maior_conta = df_fin.groupby("conta_gerencial")["comprometido"].sum().idxmax() if not df_fin.empty else "N/A"
+
+    analise = [
+        f"🤖 **Diagnóstico Inteligente de Contas a Pagar (IA)**:",
+        f"- **Comprometido Total**: R$ {formatar_br(tot_comp)} | **Realizado**: R$ {formatar_br(tot_real)} | **Pendente**: R$ {formatar_br(pendente)}",
+        f"- **Maior Fornecedor Comprometido**: {maior_forn}",
+        f"- **Conta Gerencial de Maior Impacto**: {maior_conta}",
+        f"- **Recomendação de Caixa**: Monitore os vencimentos pendentes para evitar multas e otimizar o capital de giro da unidade."
+    ]
+    return "\n".join(analise)
 
 
 def render_gerenciador_padroes_dpo(operacao, modulo, subbloco):
@@ -2462,7 +2570,6 @@ else:
         st.subheader("Painel Geral de Desempenho Operacional")
         st.caption("Visão macro de todos os departamentos integrados da unidade. Clique em qualquer card abaixo para acessar diretamente o departamento:")
 
-        # Lista de ícones e descrições para os departamentos na Visão Geral em Cards
         dept_info_dict = {
             "Puxada": ("🚛", "Controle de solicitações, aprovações, CT-e, NFs e pátio."),
             "Ressuprimento": ("📈", "Gestão de ressuprimento, cestas e políticas de estoque."),
@@ -2470,16 +2577,14 @@ else:
             "Armazém & Estoque": ("📦", "Gestão de armazém, layouts e book DPO."),
             "Distribuição (Entrega)": ("🚚", "Logística de entrega, rotas e padrões DPO."),
             "Frota & Manutenção": ("🔧", "Controle de frotas, carretas e manutenções."),
-            "Financeiro & OBZ": ("💰", "Acompanhamento orçamentário e despesas OBZ."),
+            "Financeiro & OBZ": ("💰", "Gestão de pagamentos, contas a pagar, fluxo de caixa e OBZ."),
             "Compras & Insumos": ("🛒", "Gestão de insumos e cotações de compras."),
             "Gente & SSMA": ("👥", "Gestão de pessoas, segurança e meio ambiente."),
             "Relatórios & Bases Globais": ("📁", "Bases de dados completas, tabelas e exports.")
         }
 
-        # Filtrar apenas os departamentos válidos para exibição em cards (excluindo Visão Geral e Acesso Master)
         cards_a_exibir = [d for d in deps_disponiveis if d != "Visão Geral (Dashboard)" and d != "Acesso Master (Gestão de Usuários)"]
 
-        # Organizar em grid de 3 colunas
         cols_per_row = 3
         for i in range(0, len(cards_a_exibir), cols_per_row):
             row_cols = st.columns(cols_per_row)
@@ -2593,7 +2698,6 @@ else:
         with sub_pux[1]:
             st.markdown("### 🚀 Fluxo de Fretes: Solicitar ➔ Aprovar ➔ Finalizar (com CT-e e NFs)")
 
-            # Cards de Acompanhamento em Tempo Real
             conn = sqlite3.connect("puxada_ambev.db")
             df_fretes_all = pd.read_sql_query(f"SELECT * FROM cotacoes_frete WHERE operacao = '{unidade}'", conn)
             conn.close()
@@ -3496,7 +3600,6 @@ else:
             render_gestao_ressuprimento(unidade)
 
     elif "Vendas" in dept_atual:
-        # Botão / Link Direto para o Portal Comercial posicionado dentro da aba de Vendas
         st.markdown(
             """
             <div style="background-color: #e0f2fe; border-left: 6px solid #0288d1; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
@@ -3720,6 +3823,199 @@ else:
         with tab_melhorar_dist:
             render_gerenciador_padroes_dpo(unidade, "Entrega", "6.1 - NPS")
 
+    elif "Financeiro" in dept_atual:
+        st.subheader("💰 Gestão Financeira, Contas a Pagar & Fluxo de Caixa")
+        st.caption(f"Unidade Operacional Ativa: **{unidade}**. Gerencie pagamentos, acompanhe o financeiro mês a mês, ano, fornecedores e fluxo de caixa automático.")
+
+        sub_fin = st.tabs([
+            "📂 Upload & Sobrescrita Relatório Diário",
+            "💳 Contas a Pagar (Mês, Ano & Fornecedores)",
+            "🤖 Análise Inteligente de Contas (IA)",
+            "📊 Fluxo de Caixa Diário Automático"
+        ])
+
+        with sub_fin[0]:
+            st.markdown("### 📂 Anexar Relatório Diário de Pagamentos (Sobrescrita Automática)")
+            st.caption("Faça o upload do relatório em Excel (.xls, .xlsx) ou CSV. Ao enviar, o sistema atualizará e sobreporá automaticamente os dados da operação **" + unidade + "**.")
+
+            with st.form("form_upload_financeiro"):
+                f_fin_up = st.file_uploader(
+                    "Selecione o Relatório Financeiro Diário (.xls, .xlsx, .csv):",
+                    type=["xls", "xlsx", "csv"],
+                    key="up_fin_file"
+                )
+                btn_proc_fin = st.form_submit_button("🚀 Processar e Atualizar Base Financeira")
+                if btn_proc_fin:
+                    if f_fin_up is not None:
+                        cnt_fin = processar_financeiro_upload(f_fin_up, unidade)
+                        st.success(f"Sucesso! {cnt_fin} registros financeiros importados e sobrescritos para **{unidade}**.")
+                        st.rerun()
+                    else:
+                        st.error("Por favor, selecione um arquivo válido.")
+
+            st.divider()
+            st.markdown("##### 📋 Pré-visualização dos Dados Atuais da Operação")
+            conn = sqlite3.connect("puxada_ambev.db")
+            df_fin_base = pd.read_sql_query(f"SELECT * FROM financeiro_contas_pagar WHERE operacao = '{unidade}'", conn)
+            conn.close()
+
+            if not df_fin_base.empty:
+                st.dataframe(df_fin_base, use_container_width=True)
+                render_botoes_download(df_fin_base, f"Contas_Pagar_{unidade}")
+            else:
+                st.info("ℹ️ Nenhum dado financeiro cadastrado para esta unidade. Utilize o formulário acima para anexar o relatório.")
+
+        with sub_fin[1]:
+            st.markdown("### 💳 Gestão de Contas a Pagar (Mês a Mês, Ano e Fornecedores)")
+            conn = sqlite3.connect("puxada_ambev.db")
+            df_cp = pd.read_sql_query(f"SELECT * FROM financeiro_contas_pagar WHERE operacao = '{unidade}'", conn)
+            conn.close()
+
+            if not df_cp.empty:
+                df_cp["data_dt"] = pd.to_datetime(df_cp["data_vencimento"], errors="coerce")
+                df_cp["Ano"] = df_cp["data_dt"].dt.year.fillna(datetime.now().year).astype(int)
+                df_cp["Mes"] = df_cp["data_dt"].dt.month.fillna(datetime.now().month).astype(int)
+                df_cp["Mes_Nome"] = df_cp["data_dt"].dt.strftime("%m/%Y")
+                df_cp["Pendente"] = df_cp["comprometido"] - df_cp["realizado"]
+
+                # Filtros de Ano e Mês
+                anos_disp = sorted(df_cp["Ano"].unique().tolist())
+                c_f1, c_f2 = st.columns(2)
+                ano_sel_f = c_f1.selectbox("Filtrar por Ano:", ["TODOS"] + anos_disp)
+                
+                meses_nomes_lista = [
+                    "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+                    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
+                ]
+                mes_sel_f = c_f2.selectbox("Filtrar por Mês:", ["TODOS"] + list(range(1, 13)), format_func=lambda x: "TODOS OS MESES" if x=="TODOS" else meses_nomes_lista[x-1])
+
+                df_cp_filtrado = df_cp.copy()
+                if ano_sel_f != "TODOS":
+                    df_cp_filtrado = df_cp_filtrado[df_cp_filtrado["Ano"] == int(ano_sel_f)]
+                if mes_sel_f != "TODOS":
+                    df_cp_filtrado = df_cp_filtrado[df_cp_filtrado["Mes"] == int(mes_sel_f)]
+
+                tot_comp = df_cp_filtrado["comprometido"].sum()
+                tot_real = df_cp_filtrado["realizado"].sum()
+                tot_pend = df_cp_filtrado["Pendente"].sum()
+
+                m1, m2, m3 = st.columns(3)
+                m1.metric("📌 Total Comprometido", f"R$ {formatar_br(tot_comp)}")
+                m2.metric("✅ Total Realizado (Pago)", f"R$ {formatar_br(tot_real)}")
+                m3.metric("⏳ Valor Pendente Gestão", f"R$ {formatar_br(tot_pend)}")
+
+                st.divider()
+
+                tab_sub_cp1, tab_sub_cp2, tab_sub_cp3 = st.tabs([
+                    "📊 Visão por Mês a Mês",
+                    "🏢 Visão por Fornecedores",
+                    "🔍 Detalhamento Analítico Completo"
+                ])
+
+                with tab_sub_cp1:
+                    st.markdown("##### 📈 Consolidado Mês a Mês")
+                    df_mes_grp = df_cp_filtrado.groupby(["Mes_Nome", "Ano", "Mes"]).agg(
+                        Comprometido=("comprometido", "sum"),
+                        Realizado=("realizado", "sum"),
+                        Pendente=("Pendente", "sum")
+                    ).reset_index().sort_values(["Ano", "Mes"])
+
+                    df_view_mes = df_mes_grp.copy()
+                    df_view_mes["Comprometido"] = df_view_mes["Comprometido"].apply(formatar_br)
+                    df_view_mes["Realizado"] = df_view_mes["Realizado"].apply(formatar_br)
+                    df_view_mes["Pendente"] = df_view_mes["Pendente"].apply(formatar_br)
+
+                    st.dataframe(df_view_mes[["Mes_Nome", "Comprometido", "Realizado", "Pendente"]], use_container_width=True)
+                    render_botoes_download(df_mes_grp, f"Contas_Pagar_Mes_a_Mes_{unidade}")
+
+                with tab_sub_cp2:
+                    st.markdown("##### 🏢 Consolidado por Fornecedor")
+                    df_forn_grp = df_cp_filtrado.groupby(["fornecedor_id", "nome_fornecedor"]).agg(
+                        Comprometido=("comprometido", "sum"),
+                        Realizado=("realizado", "sum"),
+                        Pendente=("Pendente", "sum")
+                    ).reset_index().sort_values("Comprometido", ascending=False)
+
+                    df_view_forn = df_forn_grp.copy()
+                    df_view_forn["Comprometido"] = df_view_forn["Comprometido"].apply(formatar_br)
+                    df_view_forn["Realizado"] = df_view_forn["Realizado"].apply(formatar_br)
+                    df_view_forn["Pendente"] = df_view_forn["Pendente"].apply(formatar_br)
+
+                    st.dataframe(df_view_forn, use_container_width=True)
+                    render_botoes_download(df_forn_grp, f"Contas_Pagar_Fornecedores_{unidade}")
+
+                with tab_sub_cp3:
+                    st.markdown("##### 🔍 Registros Detalhados")
+                    cols_show_fin = [
+                        "pacote", "nbz", "departamento", "data_vencimento", "documento",
+                        "nome_fornecedor", "historico", "conta_gerencial", "comprometido", "realizado", "Pendente"
+                    ]
+                    df_view_det = df_cp_filtrado[cols_show_fin].copy()
+                    df_view_det["comprometido"] = df_view_det["comprometido"].apply(formatar_br)
+                    df_view_det["realizado"] = df_view_det["realizado"].apply(formatar_br)
+                    df_view_det["Pendente"] = df_view_det["Pendente"].apply(formatar_br)
+
+                    st.dataframe(df_view_det, use_container_width=True)
+                    render_botoes_download(df_cp_filtrado[cols_show_fin], f"Contas_Pagar_Detalhado_{unidade}")
+            else:
+                st.info("ℹ️ Nenhum dado de contas a pagar encontrado. Realize o upload do relatório na primeira aba.")
+
+        with tab_fin[2]:
+            st.markdown("### 🤖 Análise Inteligente de Contas e Gestão com IA")
+            st.caption("Utilize a inteligência artificial para diagnosticar desvios, gargalos e oportunidades de otimização no contas a pagar.")
+
+            conn = sqlite3.connect("puxada_ambev.db")
+            df_ia_fin = pd.read_sql_query(f"SELECT * FROM financeiro_contas_pagar WHERE operacao = '{unidade}'", conn)
+            conn.close()
+
+            if not df_ia_fin.empty:
+                diagnostico = gerar_analise_ia_financeiro(df_ia_fin)
+                st.info(diagnostico)
+
+                st.markdown("##### 📊 Top 5 Contas Gerenciais com Maior Comprometimento")
+                df_top_contas = df_ia_fin.groupby("conta_gerencial")["comprometido"].sum().reset_index().sort_values("comprometido", ascending=False).head(5)
+                st.bar_chart(df_top_contas.set_index("conta_gerencial"))
+            else:
+                st.info("ℹ️ Sem dados suficientes para gerar a análise da IA. Faça o upload do relatório diário.")
+
+        with tab_fin[3]:
+            st.markdown("### 📊 Fluxo de Caixa Diário Automático")
+            st.caption("O fluxo de caixa puxa automaticamente as contas a pagar dia a dia, consolidando entradas, saídas, comprometidos e pendências da operação **" + unidade + "**.")
+
+            conn = sqlite3.connect("puxada_ambev.db")
+            df_fc = pd.read_sql_query(f"SELECT * FROM financeiro_contas_pagar WHERE operacao = '{unidade}'", conn)
+            conn.close()
+
+            if not df_fc.empty:
+                df_fc["Pendente"] = df_fc["comprometido"] - df_fc["realizado"]
+                df_fluxo_diario = df_fc.groupby("data_vencimento").agg(
+                    Comprometido=("comprometido", "sum"),
+                    Realizado=("realizado", "sum"),
+                    Pendente=("Pendente", "sum")
+                ).reset_index().sort_values("data_vencimento")
+
+                df_view_fc = df_fluxo_diario.copy()
+                df_view_fc["Comprometido"] = df_view_fc["Comprometido"].apply(formatar_br)
+                df_view_fc["Realizado"] = df_view_fc["Realizado"].apply(formatar_br)
+                df_view_fc["Pendente"] = df_view_fc["Pendente"].apply(formatar_br)
+
+                st.dataframe(df_view_fc, use_container_width=True)
+
+                st.markdown("##### 📈 Evolução Diária do Comprometido vs Realizado")
+                st.line_chart(df_fluxo_diario.set_index("data_vencimento")[["Comprometido", "Realizado"]])
+
+                render_botoes_download(df_fluxo_diario, f"Fluxo_de_Caixa_Diario_{unidade}")
+            else:
+                st.info("ℹ️ Nenhum dado disponível para compor o fluxo de caixa automático. Importe o relatório na primeira aba.")
+
+    elif "Compras" in dept_atual:
+        st.subheader("7 - GESTÃO DE COMPRAS E INSUMOS")
+        st.info("Módulo integrado de compras e insumos operacionais.")
+
+    elif "Gente" in dept_atual:
+        st.subheader("8 - GENTE & SSMA (SEGURANÇA E MEIO AMBIENTE)")
+        st.info("Módulo integrado de Gente e SSMA.")
+
     elif "Acesso Master" in dept_atual:
         st.subheader("🔑 Gestão de Usuários, Edição (✏️) e Exclusão (🗑️)")
         
@@ -3767,7 +4063,6 @@ else:
                         except Exception as e:
                             st.error(f"Erro: {e}")
                         finally:
-                        
                             conn.close()
 
         with tab_usr2:
@@ -3839,7 +4134,8 @@ else:
                 "cotacoes_frete", "historico_curva_abc", "padroes_dpo", "layout_armazem",
                 "gestao_ressuprimento_diario", "metas_ressuprimento_mensal", "agendamentos_descarga",
                 "cadastro_trechos_frete", "politica_estoque_base", "carretas",
-                "transportadoras_gestao", "fabricas", "motoristas", "vinculos_pedidos", "usuarios"
+                "transportadoras_gestao", "fabricas", "motoristas", "vinculos_pedidos", "usuarios",
+                "financeiro_contas_pagar"
             ],
         )
         conn = sqlite3.connect("puxada_ambev.db")
