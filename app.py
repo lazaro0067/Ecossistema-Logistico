@@ -406,7 +406,7 @@ def init_db():
     except Exception:
         pass
 
-    # Tabela para Gestão Financeira (Contas a Pagar / Pagamentos) por Operação
+    # Tabela para Gestão Financeira (Contas a Pagar / Pagamentos) por Operação ajustada para colunas K (data/vencimento) e N (valor)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS financeiro_contas_pagar (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -423,9 +423,15 @@ def init_db():
         vbz TEXT,
         comprometido REAL DEFAULT 0.0,
         realizado REAL DEFAULT 0.0,
+        valor_col_n REAL DEFAULT 0.0,
         usuario TEXT,
         dt_atualizacao TEXT
     )""")
+
+    try:
+        cursor.execute("ALTER TABLE financeiro_contas_pagar ADD COLUMN valor_col_n REAL DEFAULT 0.0")
+    except Exception:
+        pass
 
     empresas = [
         ("Lima Rio Verde", "12.345.678/0001-90", "Rio Verde", "GO"),
@@ -1044,7 +1050,7 @@ def processar_financeiro_upload(f_fin, operacao):
     conn = sqlite3.connect("puxada_ambev.db")
     cursor = conn.cursor()
 
-    # Sobrescreve (limpa) a base anterior da operação ao anexar um novo relatório diário conforme solicitado
+    # Sobrescreve a base anterior da operação ao anexar o relatório diário
     cursor.execute("DELETE FROM financeiro_contas_pagar WHERE operacao = ?", (operacao,))
 
     count = 0
@@ -1054,7 +1060,8 @@ def processar_financeiro_upload(f_fin, operacao):
             nbz = str(r.get("NBZ", r.iloc[1] if len(r) > 1 else "")).strip()
             dept = str(r.get("Departamento", r.iloc[2] if len(r) > 2 else "")).strip()
             
-            raw_dt = r.get("Data", r.iloc[3] if len(r) > 3 else datetime.now())
+            # Data de Vencimento priorizando a Coluna K (índice 10) ou coluna 'Data'
+            raw_dt = r.iloc[10] if len(r) > 10 else r.get("Data", datetime.now())
             dt_parsed = pd.to_datetime(raw_dt, errors="coerce")
             data_venc = dt_parsed.strftime("%Y-%m-%d") if pd.notna(dt_parsed) else datetime.now().strftime("%Y-%m-%d")
 
@@ -1067,14 +1074,18 @@ def processar_financeiro_upload(f_fin, operacao):
             
             comprometido = parse_br_float(r.get("Comprometido", r.iloc[10] if len(r) > 10 else 0))
             realizado = parse_br_float(r.get("Realizado", r.iloc[11] if len(r) > 11 else 0))
+            
+            # Leitura do valor na Coluna N (índice 13 se existir, senão usa coluna Comprometido)
+            val_n = parse_br_float(r.iloc[13]) if len(r) > 13 else comprometido
+
             usuario = str(r.get("Usuario", r.iloc[12] if len(r) > 12 else "Sistema")).strip()
 
             cursor.execute(
                 """
-                INSERT INTO financeiro_contas_pagar (operacao, pacote, nbz, departamento, data_vencimento, documento, fornecedor_id, nome_fornecedor, historico, conta_gerencial, vbz, comprometido, realizado, usuario, dt_atualizacao)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO financeiro_contas_pagar (operacao, pacote, nbz, departamento, data_vencimento, documento, fornecedor_id, nome_fornecedor, historico, conta_gerencial, vbz, comprometido, realizado, valor_col_n, usuario, dt_atualizacao)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (operacao, pacote, nbz, dept, data_venc, doc, forn_id, nome_forn, hist, conta_ger, vbz, comprometido, realizado, usuario, dt_now)
+                (operacao, pacote, nbz, dept, data_venc, doc, forn_id, nome_forn, hist, conta_ger, vbz, comprometido, realizado, val_n, usuario, dt_now)
             )
             count += 1
         except Exception:
@@ -2283,7 +2294,6 @@ def render_estoque_dia(unidade):
         if "rn_filtro_status" not in st.session_state:
             st.session_state["rn_filtro_status"] = "TODOS"
 
-        # Cards Superiores com Cores Vivas e Percentual em cada card
         k1, k2, k3, k4 = st.columns(4)
 
         with k1:
@@ -2308,7 +2318,6 @@ def render_estoque_dia(unidade):
 
         st.divider()
 
-        # Filtros Específicos para Cerveja, NAB, Ret, Desc
         c_f1, c_f2, c_f3 = st.columns([2, 1, 1])
         busca = c_f1.text_input("🔍 Pesquisar por Código Completo ou Nome do Produto:")
         
@@ -2541,7 +2550,6 @@ else:
 
     st.sidebar.markdown("### Departamentos Integrados")
     
-    # Renderização via st.sidebar.button nativo para preservar 100% da sessão ativa do Streamlit
     for d_name in deps_disponiveis:
         is_active = (st.session_state["nav_stack"][-1] == d_name)
         tipo_botao = "primary" if is_active else "secondary"
@@ -3824,19 +3832,20 @@ else:
             render_gerenciador_padroes_dpo(unidade, "Entrega", "6.1 - NPS")
 
     elif "Financeiro" in dept_atual:
-        st.subheader("💰 Gestão Financeira, Contas a Pagar & Fluxo de Caixa")
-        st.caption(f"Unidade Operacional Ativa: **{unidade}**. Gerencie pagamentos, acompanhe o financeiro mês a mês, ano, fornecedores e fluxo de caixa automático.")
+        st.subheader("💰 Gestão Financeira, Contas a Pagar, Vencimentos & Fluxo de Caixa")
+        st.caption(f"Unidade Operacional Ativa: **{unidade}**. Leitura dedicada da Data na Coluna K e Valor na Coluna N, com gestão de vencimentos e fluxo automático.")
 
         sub_fin = st.tabs([
             "📂 Upload & Sobrescrita Relatório Diário",
             "💳 Contas a Pagar (Mês, Ano & Fornecedores)",
+            "⏳ Gestão de Vencimentos (Alertas & Prazos)",
             "🤖 Análise Inteligente de Contas (IA)",
             "📊 Fluxo de Caixa Diário Automático"
         ])
 
         with sub_fin[0]:
             st.markdown("### 📂 Anexar Relatório Diário de Pagamentos (Sobrescrita Automática)")
-            st.caption("Faça o upload do relatório em Excel (.xls, .xlsx) ou CSV. Ao enviar, o sistema atualizará e sobreporá automaticamente os dados da operação **" + unidade + "**.")
+            st.caption("Faça o upload do relatório em Excel (.xls, .xlsx) ou CSV. O sistema lerá a **Data na Coluna K** e o **Valor na Coluna N**, sobrescrevendo os dados da operação **" + unidade + "**.")
 
             with st.form("form_upload_financeiro"):
                 f_fin_up = st.file_uploader(
@@ -3878,7 +3887,6 @@ else:
                 df_cp["Mes_Nome"] = df_cp["data_dt"].dt.strftime("%m/%Y")
                 df_cp["Pendente"] = df_cp["comprometido"] - df_cp["realizado"]
 
-                # Filtros de Ano e Mês
                 anos_disp = sorted(df_cp["Ano"].unique().tolist())
                 c_f1, c_f2 = st.columns(2)
                 ano_sel_f = c_f1.selectbox("Filtrar por Ano:", ["TODOS"] + anos_disp)
@@ -3898,11 +3906,13 @@ else:
                 tot_comp = df_cp_filtrado["comprometido"].sum()
                 tot_real = df_cp_filtrado["realizado"].sum()
                 tot_pend = df_cp_filtrado["Pendente"].sum()
+                tot_n = df_cp_filtrado["valor_col_n"].sum()
 
-                m1, m2, m3 = st.columns(3)
-                m1.metric("📌 Total Comprometido", f"R$ {formatar_br(tot_comp)}")
-                m2.metric("✅ Total Realizado (Pago)", f"R$ {formatar_br(tot_real)}")
-                m3.metric("⏳ Valor Pendente Gestão", f"R$ {formatar_br(tot_pend)}")
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("📌 Comprometido", f"R$ {formatar_br(tot_comp)}")
+                m2.metric("✅ Realizado", f"R$ {formatar_br(tot_real)}")
+                m3.metric("⏳ Pendente Gestão", f"R$ {formatar_br(tot_pend)}")
+                m4.metric("💰 Valor Coluna N", f"R$ {formatar_br(tot_n)}")
 
                 st.divider()
 
@@ -3917,15 +3927,17 @@ else:
                     df_mes_grp = df_cp_filtrado.groupby(["Mes_Nome", "Ano", "Mes"]).agg(
                         Comprometido=("comprometido", "sum"),
                         Realizado=("realizado", "sum"),
-                        Pendente=("Pendente", "sum")
+                        Pendente=("Pendente", "sum"),
+                        Valor_N=("valor_col_n", "sum")
                     ).reset_index().sort_values(["Ano", "Mes"])
 
                     df_view_mes = df_mes_grp.copy()
                     df_view_mes["Comprometido"] = df_view_mes["Comprometido"].apply(formatar_br)
                     df_view_mes["Realizado"] = df_view_mes["Realizado"].apply(formatar_br)
                     df_view_mes["Pendente"] = df_view_mes["Pendente"].apply(formatar_br)
+                    df_view_mes["Valor_N"] = df_view_mes["Valor_N"].apply(formatar_br)
 
-                    st.dataframe(df_view_mes[["Mes_Nome", "Comprometido", "Realizado", "Pendente"]], use_container_width=True)
+                    st.dataframe(df_view_mes[["Mes_Nome", "Comprometido", "Realizado", "Pendente", "Valor_N"]], use_container_width=True)
                     render_botoes_download(df_mes_grp, f"Contas_Pagar_Mes_a_Mes_{unidade}")
 
                 with tab_sub_cp2:
@@ -3933,13 +3945,15 @@ else:
                     df_forn_grp = df_cp_filtrado.groupby(["fornecedor_id", "nome_fornecedor"]).agg(
                         Comprometido=("comprometido", "sum"),
                         Realizado=("realizado", "sum"),
-                        Pendente=("Pendente", "sum")
+                        Pendente=("Pendente", "sum"),
+                        Valor_N=("valor_col_n", "sum")
                     ).reset_index().sort_values("Comprometido", ascending=False)
 
                     df_view_forn = df_forn_grp.copy()
                     df_view_forn["Comprometido"] = df_view_forn["Comprometido"].apply(formatar_br)
                     df_view_forn["Realizado"] = df_view_forn["Realizado"].apply(formatar_br)
                     df_view_forn["Pendente"] = df_view_forn["Pendente"].apply(formatar_br)
+                    df_view_forn["Valor_N"] = df_view_forn["Valor_N"].apply(formatar_br)
 
                     st.dataframe(df_view_forn, use_container_width=True)
                     render_botoes_download(df_forn_grp, f"Contas_Pagar_Fornecedores_{unidade}")
@@ -3948,11 +3962,12 @@ else:
                     st.markdown("##### 🔍 Registros Detalhados")
                     cols_show_fin = [
                         "pacote", "nbz", "departamento", "data_vencimento", "documento",
-                        "nome_fornecedor", "historico", "conta_gerencial", "comprometido", "realizado", "Pendente"
+                        "nome_fornecedor", "historico", "conta_gerencial", "comprometido", "realizado", "valor_col_n", "Pendente"
                     ]
                     df_view_det = df_cp_filtrado[cols_show_fin].copy()
                     df_view_det["comprometido"] = df_view_det["comprometido"].apply(formatar_br)
                     df_view_det["realizado"] = df_view_det["realizado"].apply(formatar_br)
+                    df_view_det["valor_col_n"] = df_view_det["valor_col_n"].apply(formatar_br)
                     df_view_det["Pendente"] = df_view_det["Pendente"].apply(formatar_br)
 
                     st.dataframe(df_view_det, use_container_width=True)
@@ -3961,6 +3976,66 @@ else:
                 st.info("ℹ️ Nenhum dado de contas a pagar encontrado. Realize o upload do relatório na primeira aba.")
 
         with tab_fin[2]:
+            st.markdown("### ⏳ Gestão de Vencimentos & Prazos (Baseado na Data da Coluna K)")
+            st.caption("Acompanhamento rigoroso dos títulos vencidos, vencimento hoje, próximos 7 dias e em dia.")
+
+            conn = sqlite3.connect("puxada_ambev.db")
+            df_venc = pd.read_sql_query(f"SELECT * FROM financeiro_contas_pagar WHERE operacao = '{unidade}'", conn)
+            conn.close()
+
+            if not df_venc.empty:
+                hoje = datetime.now().date()
+                df_venc["data_venc_dt"] = pd.to_datetime(df_venc["data_vencimento"], errors="coerce").dt.date
+
+                def classificar_vencimento(row):
+                    dt = row["data_venc_dt"]
+                    realizado = row["realizado"]
+                    if pd.isna(dt):
+                        return "Sem Data"
+                    if realizado > 0 and realizado >= row["comprometido"]:
+                        return "🟢 Pago / Liquidado"
+                    
+                    delta = (dt - hoje).days
+                    if delta < 0:
+                        return "🔴 Vencido"
+                    elif delta == 0:
+                        return "🟡 Vence Hoje"
+                    elif delta <= 7:
+                        return "🟠 Vence em até 7 dias"
+                    else:
+                        return "🔵 Em Dia (> 7 dias)"
+
+                df_venc["Status Vencimento"] = df_venc.apply(classificar_vencimento, axis=1)
+
+                vencidos_val = df_venc[df_venc["Status Vencimento"] == "🔴 Vencido"]["comprometido"].sum()
+                hoje_val = df_venc[df_venc["Status Vencimento"] == "🟡 Vence Hoje"]["comprometido"].sum()
+                proximos_val = df_venc[df_venc["Status Vencimento"] == "🟠 Vence em até 7 dias"]["comprometido"].sum()
+
+                vc1, vc2, vc3 = st.columns(3)
+                vc1.metric("🔴 Títulos Vencidos", f"R$ {formatar_br(vencidos_val)}", delta=f"{len(df_venc[df_venc['Status Vencimento'] == '🔴 Vencido'])} títulos")
+                vc2.metric("🟡 Vence Hoje", f"R$ {formatar_br(hoje_val)}", delta=f"{len(df_venc[df_venc['Status Vencimento'] == '🟡 Vence Hoje']} títulos")
+                vc3.metric("🟠 Vence em até 7 dias", f"R$ {formatar_br(proximos_val)}", delta=f"{len(df_venc[df_venc['Status Vencimento'] == '🟠 Vence em até 7 dias']} títulos")
+
+                st.divider()
+
+                filtro_status_venc = st.selectbox("Filtrar por Status de Vencimento:", ["TODOS", "🔴 Vencido", "🟡 Vence Hoje", "🟠 Vence em até 7 dias", "🔵 Em Dia (> 7 dias)", "🟢 Pago / Liquidado"])
+                
+                df_venc_filtro = df_venc.copy()
+                if filtro_status_venc != "TODOS":
+                    df_venc_filtro = df_venc_filtro[df_venc_filtro["Status Vencimento"] == filtro_status_venc]
+
+                cols_venc_show = ["data_vencimento", "documento", "nome_fornecedor", "conta_gerencial", "comprometido", "realizado", "valor_col_n", "Status Vencimento"]
+                df_venc_view = df_venc_filtro[cols_venc_show].copy()
+                df_venc_view["comprometido"] = df_venc_view["comprometido"].apply(formatar_br)
+                df_venc_view["realizado"] = df_venc_view["realizado"].apply(formatar_br)
+                df_venc_view["valor_col_n"] = df_venc_view["valor_col_n"].apply(formatar_br)
+
+                st.dataframe(df_venc_view, use_container_width=True)
+                render_botoes_download(df_venc_filtro[cols_venc_show], f"Gestao_Vencimentos_{unidade}")
+            else:
+                st.info("ℹ️ Nenhum dado financeiro encontrado para gestão de vencimentos.")
+
+        with tab_fin[3]:
             st.markdown("### 🤖 Análise Inteligente de Contas e Gestão com IA")
             st.caption("Utilize a inteligência artificial para diagnosticar desvios, gargalos e oportunidades de otimização no contas a pagar.")
 
@@ -3978,7 +4053,7 @@ else:
             else:
                 st.info("ℹ️ Sem dados suficientes para gerar a análise da IA. Faça o upload do relatório diário.")
 
-        with tab_fin[3]:
+        with tab_fin[4]:
             st.markdown("### 📊 Fluxo de Caixa Diário Automático")
             st.caption("O fluxo de caixa puxa automaticamente as contas a pagar dia a dia, consolidando entradas, saídas, comprometidos e pendências da operação **" + unidade + "**.")
 
@@ -3991,12 +4066,14 @@ else:
                 df_fluxo_diario = df_fc.groupby("data_vencimento").agg(
                     Comprometido=("comprometido", "sum"),
                     Realizado=("realizado", "sum"),
+                    Valor_N=("valor_col_n", "sum"),
                     Pendente=("Pendente", "sum")
                 ).reset_index().sort_values("data_vencimento")
 
                 df_view_fc = df_fluxo_diario.copy()
                 df_view_fc["Comprometido"] = df_view_fc["Comprometido"].apply(formatar_br)
                 df_view_fc["Realizado"] = df_view_fc["Realizado"].apply(formatar_br)
+                df_view_fc["Valor_N"] = df_view_fc["Valor_N"].apply(formatar_br)
                 df_view_fc["Pendente"] = df_view_fc["Pendente"].apply(formatar_br)
 
                 st.dataframe(df_view_fc, use_container_width=True)
