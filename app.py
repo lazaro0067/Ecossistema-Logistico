@@ -40,18 +40,18 @@ st.markdown("""
             color: #ffffff !important;
         }
 
-        /* Correção de Visibilidade dos Botões da Sidebar */
+        /* Correção Definitiva de Visibilidade: Texto Preto Visível nos Botões Inativos da Sidebar */
         section[data-testid="stSidebar"] div.stButton > button {
             background-color: #ffffff !important;
-            color: #0d2149 !important;
-            font-weight: 600 !important;
+            color: #0f172a !important;
+            font-weight: 700 !important;
             border: 1px solid #cbd5e1 !important;
             border-radius: 8px !important;
             transition: all 0.2s ease-in-out;
         }
         section[data-testid="stSidebar"] div.stButton > button:hover {
             background-color: #f1f5f9 !important;
-            color: #1e293b !important;
+            color: #000000 !important;
             border-color: #94a3b8 !important;
         }
         section[data-testid="stSidebar"] div.stButton > button[kind="primary"] {
@@ -2155,7 +2155,7 @@ if "visualizacao" in st.query_params:
 
 
 def render_estoque_dia(unidade):
-    st.subheader("📱 Portal do RN - Consulta Comercial de Vendas (Cerveja, NAB, Ret, Desc)")
+    st.subheader("📱 Portal do RN - Consulta Comercial de Vendas")
 
     df = carregar_estoque_consolidado(unidade)
 
@@ -2436,6 +2436,11 @@ else:
     unidade = st.sidebar.selectbox("Unidade / Operação", ops_disponiveis)
     st.sidebar.divider()
 
+    # Link Direto para Disponibilizar ao Time Comercial
+    st.sidebar.markdown("### 📱 Link Time Comercial")
+    st.sidebar.link_button("🔗 Abrir Portal Comercial", "?modo=comercial", use_container_width=True)
+    st.sidebar.divider()
+
     perm_deps_raw = st.session_state.get("perm_deps", "TODOS")
     deps_disponiveis = (
         DEPARTAMENTOS_DISPONIVEIS.copy()
@@ -2690,7 +2695,7 @@ else:
                     st.info("Nenhum frete aprovado aguardando finalização.")
 
             st.divider()
-            st.markdown("##### 📋 Todos los Fretes Registrados")
+            st.markdown("##### 📋 Todos os Fretes Registrados")
             conn = sqlite3.connect("puxada_ambev.db")
             df_all_f = pd.read_sql_query(f"SELECT * FROM cotacoes_frete WHERE operacao = '{unidade}'", conn)
             conn.close()
