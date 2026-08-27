@@ -2,7 +2,6 @@ from datetime import datetime, timedelta
 import io
 import re
 import sqlite3
-import urllib.parse
 import xml.etree.ElementTree as ET
 import zipfile
 import pandas as pd
@@ -40,42 +39,7 @@ st.markdown("""
             color: #ffffff !important;
         }
 
-        /* Estilo para Links de Navegação Customizados na Sidebar */
-        .sidebar-nav-link {
-            display: block;
-            background-color: #ffffff;
-            color: #0f172a !important;
-            font-weight: 800 !important;
-            text-align: center;
-            padding: 10px 14px;
-            margin-bottom: 8px;
-            border-radius: 8px;
-            border: 2px solid #cbd5e1;
-            text-decoration: none !important;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-            transition: all 0.2s ease-in-out;
-        }
-        .sidebar-nav-link:hover {
-            background-color: #f1f5f9;
-            color: #000000 !important;
-            border-color: #3b82f6;
-            transform: translateY(-1px);
-        }
-        .sidebar-nav-link-ativo {
-            display: block;
-            background-color: #ff4757 !important;
-            color: #ffffff !important;
-            font-weight: 800 !important;
-            text-align: center;
-            padding: 10px 14px;
-            margin-bottom: 8px;
-            border-radius: 8px;
-            border: 2px solid #ff4757;
-            text-decoration: none !important;
-            box-shadow: 0 4px 6px rgba(255, 71, 87, 0.3);
-        }
-
-        /* Cards Estilo Sênior Corporativo */
+        /* Cartões Estilo Sênior Corporativo */
         .senior-card {
             background-color: #ffffff;
             border: 1px solid #e2e8f0;
@@ -2155,15 +2119,6 @@ modo_comercial = False
 modo_visualizacao_estatica = False
 op_estatica = None
 
-# Tratamento robusto para parâmetros de navegação por query string
-if "nav" in st.query_params:
-    val_nav = st.query_params["nav"]
-    if isinstance(val_nav, list):
-        val_nav = val_nav[0]
-    if val_nav in DEPARTAMENTOS_DISPONIVEIS or val_nav == "Acesso Master (Gestão de Usuários)":
-        if st.session_state["nav_stack"][-1] != val_nav:
-            st.session_state["nav_stack"].append(val_nav)
-
 if "modo" in st.query_params:
     val_modo = st.query_params["modo"]
     if isinstance(val_modo, list):
@@ -2478,15 +2433,13 @@ else:
 
     st.sidebar.markdown("### Departamentos Integrados")
     
-    # Renderização via Links HTML Customizados na Sidebar (Garante Visibilidade Absoluta e Sem Fundo Vazio)
+    # Renderização via st.sidebar.button nativo para preservar 100% da sessão ativa do Streamlit
     for d_name in deps_disponiveis:
         is_active = (st.session_state["nav_stack"][-1] == d_name)
-        css_classe = "sidebar-nav-link-ativo" if is_active else "sidebar-nav-link"
-        d_encoded = urllib.parse.quote(d_name)
-        st.sidebar.markdown(
-            f'<a href="?nav={d_encoded}" class="{css_classe}">{d_name}</a>',
-            unsafe_allow_html=True
-        )
+        tipo_botao = "primary" if is_active else "secondary"
+        if st.sidebar.button(d_name, key=f"sidebar_btn_{d_name}", use_container_width=True, type=tipo_botao):
+            navigate_to(d_name)
+            st.rerun()
 
     st.sidebar.divider()
     if st.sidebar.button("Sair do Sistema", use_container_width=True):
