@@ -40,24 +40,24 @@ st.markdown("""
             color: #ffffff !important;
         }
 
-        /* Correção Definitiva de Visibilidade: Texto Preto Visível nos Botões Inativos da Sidebar */
+        /* Correção Definitiva de Visibilidade: Texto Preto Escuro Visível nos Botões da Sidebar */
         section[data-testid="stSidebar"] div.stButton > button {
             background-color: #ffffff !important;
             color: #0f172a !important;
-            font-weight: 700 !important;
-            border: 1px solid #cbd5e1 !important;
+            font-weight: 800 !important;
+            border: 2px solid #94a3b8 !important;
             border-radius: 8px !important;
             transition: all 0.2s ease-in-out;
         }
         section[data-testid="stSidebar"] div.stButton > button:hover {
             background-color: #f1f5f9 !important;
             color: #000000 !important;
-            border-color: #94a3b8 !important;
+            border-color: #3b82f6 !important;
         }
         section[data-testid="stSidebar"] div.stButton > button[kind="primary"] {
             background-color: #ff4757 !important;
             color: #ffffff !important;
-            border: 1px solid #ff4757 !important;
+            border: 2px solid #ff4757 !important;
         }
 
         /* Cards Estilo Sênior Corporativo */
@@ -2454,7 +2454,7 @@ else:
 
     st.sidebar.markdown("### Departamentos Integrados")
     
-    # Navegação limpa por botões sem radio buttons ou bolinhas
+    # Navegação limpa por botões com alta visibilidade e contraste
     for d_name in deps_disponiveis:
         is_active = (st.session_state["nav_stack"][-1] == d_name)
         btn_type = "primary" if is_active else "secondary"
@@ -2497,7 +2497,7 @@ else:
             "Relatórios & Bases Globais": ("📁", "Bases de dados completas, tabelas e exports.")
         }
 
-        # Filtrar apenas os departamentos válidos para exibição em cards (excluindo Visão Geral e Acesso Master se houver)
+        # Filtrar apenas os departamentos válidos para exibição em cards (excluindo Visão Geral e Acesso Master)
         cards_a_exibir = [d for d in deps_disponiveis if d != "Visão Geral (Dashboard)" and d != "Acesso Master (Gestão de Usuários)"]
 
         # Organizar em grid de 3 colunas
