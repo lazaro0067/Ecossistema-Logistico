@@ -30,13 +30,11 @@ st.markdown("""
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
         }
         
-        /* Estilização da Sidebar com Fundo Azul Sênior (Referência Foto Executiva) */
+        /* Estilização da Sidebar com Fundo Azul Sênior */
         section[data-testid="stSidebar"] {
             background-color: #0d2149;
             color: #ffffff;
         }
-        section[data-testid="stSidebar"] .stRadio label, 
-        section[data-testid="stSidebar"] .stSelectbox label, 
         section[data-testid="stSidebar"] p, 
         section[data-testid="stSidebar"] span {
             color: #ffffff !important;
@@ -258,10 +256,18 @@ def init_db():
     CREATE TABLE IF NOT EXISTS cadastro_trechos_frete (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         trecho TEXT UNIQUE NOT NULL,
+        origem TEXT,
+        destino TEXT,
         transportadora TEXT NOT NULL,
         valor_frete REAL NOT NULL,
         aprovador TEXT NOT NULL
     )""")
+
+    try:
+        cursor.execute("ALTER TABLE cadastro_trechos_frete ADD COLUMN origem TEXT")
+        cursor.execute("ALTER TABLE cadastro_trechos_frete ADD COLUMN destino TEXT")
+    except Exception:
+        pass
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS padroes_dpo (
@@ -289,8 +295,15 @@ def init_db():
         operacao TEXT, origem TEXT, destino TEXT, data_requisicao TEXT,
         data_frete TEXT, motivo TEXT, transportadora TEXT, valor_negociado REAL,
         centro_custo TEXT, solicitante TEXT, aprovador TEXT, observacao TEXT,
-        status TEXT DEFAULT 'Pendente Aprovação'
+        status TEXT DEFAULT 'Pendente Aprovação',
+        cte_anexado TEXT, notas_fiscais_anexadas TEXT
     )""")
+
+    try:
+        cursor.execute("ALTER TABLE cotacoes_frete ADD COLUMN cte_anexado TEXT")
+        cursor.execute("ALTER TABLE cotacoes_frete ADD COLUMN notas_fiscais_anexadas TEXT")
+    except Exception:
+        pass
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS historico_curva_abc (
@@ -2314,7 +2327,7 @@ if modo_visualizacao_estatica:
     st.stop()
 
 
-# 7. Autenticação e Navegação do Sistema (Com Login Vivo e Esqueci a Senha Abaixo)
+# 7. Autenticação e Navegação do Sistema
 if "logado" not in st.session_state:
     st.session_state["logado"] = False
 
@@ -2365,7 +2378,6 @@ if not st.session_state["logado"]:
 
             st.markdown("<hr style='margin: 20px 0;'>", unsafe_allow_html=True)
             
-            # Esqueci a senha com validação por e-mail logo abaixo do entrar
             with st.expander("✉️ Esqueci minha senha / Recuperação"):
                 email_rec = st.text_input("Digite o seu e-mail cadastrado para validação:")
                 if st.button("Enviar E-mail de Recuperação", use_container_width=True):
@@ -2414,17 +2426,15 @@ else:
     if st.session_state["perfil"] == "Master":
         deps_disponiveis.append("Acesso Master (Gestão de Usuários)")
 
-    curr_dept = st.session_state["nav_stack"][-1]
-    dept = st.sidebar.radio(
-        "Departamentos Integrados",
-        deps_disponiveis,
-        index=deps_disponiveis.index(curr_dept)
-        if curr_dept in deps_disponiveis
-        else 0,
-    )
-
-    if dept != st.session_state["nav_stack"][-1]:
-        navigate_to(dept)
+    st.sidebar.markdown("### Departamentos Integrados")
+    
+    # Navegação limpa por botões sem radio buttons ou bolinhas
+    for d_name in deps_disponiveis:
+        is_active = (st.session_state["nav_stack"][-1] == d_name)
+        btn_type = "primary" if is_active else "secondary"
+        if st.sidebar.button(d_name, key=f"nav_btn_{d_name}", use_container_width=True, type=btn_type):
+            navigate_to(d_name)
+            st.rerun()
 
     st.sidebar.divider()
     if st.sidebar.button("Sair do Sistema", use_container_width=True):
@@ -2445,21 +2455,19 @@ else:
 
     if "Visão Geral" in dept_atual:
         st.subheader("Painel Geral de Desempenho Operacional")
+        st.caption("Visão macro de todos os departamentos integrados da unidade.")
 
-        df_est_vg = carregar_estoque_consolidado(unidade)
-        p_saude, k_ok, k_rup, k_exc = calcular_saude_estoque_dpo(df_est_vg)
+        col_g1, col_g2, col_g3 = st.columns(3)
+        col_g1.markdown('<div class="senior-card"><h4>📊 Status de Operações</h4><p>Todas as unidades e centros de distribuição sincronizados em tempo real.</p></div>', unsafe_allow_html=True)
+        col_g2.markdown('<div class="senior-card"><h4>🚛 Gestão de Puxadas & Fretes</h4><p>Controle completo de solicitações, aprovações, CT-e e NFs.</p></div>', unsafe_allow_html=True)
+        col_g3.markdown('<div class="senior-card"><h4>📈 Indicadores DPO</h4><p>Acompanhamento de pilares, armazém e distribuição.</p></div>', unsafe_allow_html=True)
 
-        m1, m2, m3, m4 = st.columns(4)
-        m1.markdown(f'<div class="senior-card"><h4>🏥 Saúde do Estoque DPO</h4><h2 style="color:#10ac84; margin:0;">{p_saude}%</h2><span style="font-size:12px; color:#64748b;">Meta DPO ≥ 85%</span></div>', unsafe_allow_html=True)
-        m2.markdown(f'<div class="senior-card"><h4>🟢 SKUs Saudáveis</h4><h2 style="color:#2e86de; margin:0;">{k_ok}</h2><span style="font-size:12px; color:#64748b;">DOI entre 3 e 15 dias</span></div>', unsafe_allow_html=True)
-        m3.markdown(f'<div class="senior-card"><h4>🔴 SKUs Ruptura</h4><h2 style="color:#ee5253; margin:0;">{k_rup}</h2><span style="font-size:12px; color:#64748b;">DOI abaixo de 3 dias</span></div>', unsafe_allow_html=True)
-        m4.markdown(f'<div class="senior-card"><h4>🟡 SKUs Overstock</h4><h2 style="color:#ff9f43; margin:0;">{k_exc}</h2><span style="font-size:12px; color:#64748b;">DOI acima de 15 dias</span></div>', unsafe_allow_html=True)
+        st.info("💡 **Dica**: Utilize o menu lateral esquerdo para navegar diretamente para qualquer departamento clicando sobre o nome desejado.")
 
     elif "Puxada" in dept_atual:
         sub_pux = st.tabs([
             "📋 Cadastro de Trechos",
-            "🚀 Solicitação de Frete",
-            "📊 Aprovações de Frete",
+            "🚀 Solicitação & Gestão de Fretes",
             "📜 Histórico Geral",
             "🚚 Gestão de Descarga (Pátio)",
             "🚛 Gestão Puxada & Cadastros",
@@ -2468,42 +2476,50 @@ else:
         ])
 
         with sub_pux[0]:
-            st.markdown("### Cadastro de Trechos, Transportadoras e Aprovadores")
+            st.markdown("### Cadastro de Trechos (Origem e Destino), Transportadoras e Aprovadores")
             
             c_modo_tr = st.radio("Ação:", ["➕ Novo Trecho", "✏️ Editar Trecho Existente"], horizontal=True)
             
             if "Novo" in c_modo_tr:
                 with st.form("form_cad_trecho"):
                     c1, c2 = st.columns(2)
-                    t_in = c1.text_input("Trecho (Ex: Anápolis -> Rio Verde):")
-                    tr_in = c2.text_input("Transportadora:")
+                    origem_in = c1.text_input("Origem (Ex: Anápolis):")
+                    destino_in = c2.text_input("Destino (Ex: Rio Verde):")
+                    
                     c3, c4 = st.columns(2)
-                    v_in = c3.number_input("Valor do Frete (R$):", min_value=0.0, step=100.0)
-                    ap_in = c4.text_input("Aprovador:")
+                    tr_in = c3.text_input("Transportadora:")
+                    v_in = c4.number_input("Valor do Frete (R$):", min_value=0.0, step=100.0)
+                    
+                    ap_in = st.text_input("Aprovador Responsável:")
 
                     if st.form_submit_button("💾 Salvar Trecho Vinculado"):
-                        if t_in and tr_in:
+                        if origem_in and destino_in and tr_in:
+                            trecho_completo = f"{origem_in.strip()} -> {destino_in.strip()}"
                             conn = sqlite3.connect("puxada_ambev.db")
                             cursor = conn.cursor()
                             try:
                                 cursor.execute(
                                     """
-                                INSERT INTO cadastro_trechos_frete (trecho, transportadora, valor_frete, aprovador) 
-                                VALUES (?, ?, ?, ?)
+                                INSERT INTO cadastro_trechos_frete (trecho, origem, destino, transportadora, valor_frete, aprovador) 
+                                VALUES (?, ?, ?, ?, ?, ?)
                                 ON CONFLICT(trecho) DO UPDATE SET 
+                                    origem=excluded.origem,
+                                    destino=excluded.destino,
                                     transportadora=excluded.transportadora, 
                                     valor_frete=excluded.valor_frete, 
                                     aprovador=excluded.aprovador
                                 """,
-                                    (t_in.strip(), tr_in.strip(), v_in, ap_in.strip()),
+                                    (trecho_completo, origem_in.strip(), destino_in.strip(), tr_in.strip(), v_in, ap_in.strip()),
                                 )
                                 conn.commit()
-                                st.success(f"Trecho **{t_in}** cadastrado/atualizado com sucesso!")
+                                st.success(f"Trecho **{trecho_completo}** cadastrado/atualizado com sucesso!")
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"Erro: {e}")
                             finally:
                                 conn.close()
+                        else:
+                            st.error("Preencha Origem, Destino e Transportadora.")
             else:
                 conn = sqlite3.connect("puxada_ambev.db")
                 df_tr_ed = pd.read_sql_query("SELECT * FROM cadastro_trechos_frete", conn)
@@ -2512,15 +2528,17 @@ else:
                     trecho_sel_ed = st.selectbox("Selecione o Trecho para Editar:", df_tr_ed["trecho"].tolist())
                     r_tr = df_tr_ed[df_tr_ed["trecho"] == trecho_sel_ed].iloc[0]
                     with st.form("form_edit_trecho"):
-                        t_e = st.text_input("Trecho:", value=r_tr["trecho"])
+                        o_e = st.text_input("Origem:", value=str(r_tr["origem"] if pd.notna(r_tr["origem"]) else ""))
+                        d_e = st.text_input("Destino:", value=str(r_tr["destino"] if pd.notna(r_tr["destino"]) else ""))
                         tr_e = st.text_input("Transportadora:", value=r_tr["transportadora"])
                         v_e = st.number_input("Valor do Frete (R$):", min_value=0.0, value=float(r_tr["valor_frete"]), step=100.0)
                         ap_e = st.text_input("Aprovador:", value=r_tr["aprovador"])
                         
                         if st.form_submit_button("💾 Atualizar Trecho"):
+                            novo_nome_tr = f"{o_e.strip()} -> {d_e.strip()}"
                             conn = sqlite3.connect("puxada_ambev.db")
                             cursor = conn.cursor()
-                            cursor.execute("UPDATE cadastro_trechos_frete SET trecho=?, transportadora=?, valor_frete=?, aprovador=? WHERE id=?", (t_e, tr_e, v_e, ap_e, int(r_tr["id"])))
+                            cursor.execute("UPDATE cadastro_trechos_frete SET trecho=?, origem=?, destino=?, transportadora=?, valor_frete=?, aprovador=? WHERE id=?", (novo_nome_tr, o_e.strip(), d_e.strip(), tr_e, v_e, ap_e, int(r_tr["id"])))
                             conn.commit()
                             conn.close()
                             st.success("Trecho atualizado com sucesso!")
@@ -2531,79 +2549,135 @@ else:
             st.divider()
             df_trechos_geral = pd.read_sql_query("SELECT * FROM cadastro_trechos_frete", sqlite3.connect("puxada_ambev.db"))
             st.dataframe(df_trechos_geral, use_container_width=True)
-            st.markdown("##### 📥 Opções de Download de Trechos")
             render_botoes_download(df_trechos_geral, "Cadastro_Trechos_Frete")
 
         with sub_pux[1]:
-            st.markdown("### Solicitação de Frete Integrada")
+            st.markdown("### 🚀 Fluxo de Fretes: Solicitar ➔ Aprovar ➔ Finalizar (com CT-e e NFs)")
+
+            # Cards de Acompanhamento em Tempo Real
             conn = sqlite3.connect("puxada_ambev.db")
-            df_tr = pd.read_sql_query(
-                "SELECT * FROM cadastro_trechos_frete", conn
-            )
+            df_fretes_all = pd.read_sql_query(f"SELECT * FROM cotacoes_frete WHERE operacao = '{unidade}'", conn)
             conn.close()
 
-            if not df_tr.empty:
-                with st.form("form_solic_frete"):
-                    sel_t = st.selectbox(
-                        "Selecione o Trecho Cadastrado:",
-                        df_tr["trecho"].tolist(),
-                    )
-                    row = df_tr[df_tr["trecho"] == sel_t].iloc[0]
-                    st.info(
-                        f"🚚 Transportadora: **{row['transportadora']}** | Valor Vinculado: **R$ {row['valor_frete']:,.2f}** | Aprovador Responsável: **{row['aprovador']}**"
-                    )
+            pendentes_cnt = len(df_fretes_all[df_fretes_all["status"] == "Pendente Aprovação"]) if not df_fretes_all.empty else 0
+            solicitados_cnt = len(df_fretes_all[df_fretes_all["status"] == "Aprovado"]) if not df_fretes_all.empty else 0
+            executados_cnt = len(df_fretes_all[df_fretes_all["status"] == "Finalizado"]) if not df_fretes_all.empty else 0
 
-                    c1, c2 = st.columns(2)
-                    dt_f = c1.date_input("Data do Frete:")
-                    mot = c2.selectbox(
-                        "Motivo:",
-                        ["Regular", "Aumento de Demanda", "Emergencial"],
-                    )
-                    obs = st.text_area("Observações:")
+            kc1, kc2, kc3 = st.columns(3)
+            kc1.metric("⏳ Pendentes de Aprovação", f"{pendentes_cnt} fretes")
+            kc2.metric("📋 Fretes Solicitados / Aprovados", f"{solicitados_cnt} fretes")
+            kc3.metric("✅ Fretes Executados (Finalizados)", f"{executados_cnt} fretes")
 
-                    if st.form_submit_button("🚀 Enviar Solicitação de Frete"):
+            st.divider()
+
+            tab_f1, tab_f2, tab_f3 = st.tabs(["➕ 1. Solicitar Frete", "✍️ 2. Aprovar Frete", "🏁 3. Finalizar & Anexar CT-e/NFs"])
+
+            with tab_f1:
+                conn = sqlite3.connect("puxada_ambev.db")
+                df_tr = pd.read_sql_query("SELECT * FROM cadastro_trechos_frete", conn)
+                conn.close()
+
+                if not df_tr.empty:
+                    with st.form("form_solic_frete_novo"):
+                        sel_t = st.selectbox("Selecione o Trecho Cadastrado (Origem -> Destino):", df_tr["trecho"].tolist())
+                        row = df_tr[df_tr["trecho"] == sel_t].iloc[0]
+                        st.info(f"📍 Origem: **{row.get('origem', 'N/A')}** | 🎯 Destino: **{row.get('destino', 'N/A')}**\n\n🚚 Transportadora: **{row['transportadora']}** | Valor: **R$ {row['valor_frete']:,.2f}** | Aprovador: **{row['aprovador']}**")
+
+                        c1, c2 = st.columns(2)
+                        dt_f = c1.date_input("Data do Frete:")
+                        mot = c2.selectbox("Motivo:", ["Regular", "Aumento de Demanda", "Emergencial"])
+                        obs = st.text_area("Observações:")
+
+                        if st.form_submit_button("🚀 Enviar Solicitação de Frete"):
+                            conn = sqlite3.connect("puxada_ambev.db")
+                            cursor = conn.cursor()
+                            cursor.execute(
+                                """
+                                INSERT INTO cotacoes_frete (operacao, origem, destino, data_requisicao, data_frete, motivo, transportadora, valor_negociado, solicitante, aprovador, observacao, status)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pendente Aprovação')
+                                """,
+                                (
+                                    unidade,
+                                    str(row.get('origem', '')),
+                                    str(row.get('destino', '')),
+                                    datetime.now().strftime("%Y-%m-%d"),
+                                    str(dt_f),
+                                    mot,
+                                    row["transportadora"],
+                                    row["valor_frete"],
+                                    st.session_state["usuario"],
+                                    row["aprovador"],
+                                    obs,
+                                ),
+                            )
+                            conn.commit()
+                            conn.close()
+                            st.success("Solicitação de frete enviada com sucesso para aprovação!")
+                            st.rerun()
+                else:
+                    st.warning("Nenhum trecho cadastrado. Cadastre na aba 'Cadastro de Trechos'.")
+
+            with tab_f2:
+                st.markdown("##### Aprovação de Cotações de Frete Pendentes")
+                conn = sqlite3.connect("puxada_ambev.db")
+                df_pend = pd.read_sql_query(f"SELECT * FROM cotacoes_frete WHERE operacao = '{unidade}' AND status = 'Pendente Aprovação'", conn)
+                conn.close()
+
+                if not df_pend.empty:
+                    st.dataframe(df_pend[["id", "origem", "destino", "transportadora", "valor_negociado", "solicitante", "data_frete"]], use_container_width=True)
+                    
+                    id_aprov = st.number_input("Digite o ID do Frete para Aprovar:", min_value=1, step=1, key="id_aprov_input")
+                    if st.button("✔️ Aprovar Frete Selecionado"):
                         conn = sqlite3.connect("puxada_ambev.db")
                         cursor = conn.cursor()
-                        cursor.execute(
-                            """
-                            INSERT INTO cotacoes_frete (operacao, origem, destino, data_requisicao, data_frete, motivo, transportadora, valor_negociado, solicitante, aprovador, observacao)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """,
-                            (
-                                unidade,
-                                sel_t.split("->")[0].strip(),
-                                sel_t.split("->")[-1].strip(),
-                                datetime.now().strftime("%Y-%m-%d"),
-                                str(dt_f),
-                                mot,
-                                row["transportadora"],
-                                row["valor_frete"],
-                                st.session_state["usuario"],
-                                row["aprovador"],
-                                obs,
-                            ),
-                        )
+                        cursor.execute("UPDATE cotacoes_frete SET status='Aprovado' WHERE id=?", (id_aprov,))
                         conn.commit()
                         conn.close()
-                        st.success("Solicitação de frete enviada com sucesso!")
-            else:
-                st.warning(
-                    "Nenhum trecho cadastrado. Cadastre na aba 'Cadastro de Trechos'."
-                )
+                        st.success(f"Frete #{id_aprov} aprovado com sucesso!")
+                        st.rerun()
+                else:
+                    st.info("Nenhum frete pendente de aprovação no momento.")
+
+            with tab_f3:
+                st.markdown("##### Finalização de Frete (Obrigatório Anexo de CT-e e Notas Fiscais)")
+                conn = sqlite3.connect("puxada_ambev.db")
+                df_aprovados = pd.read_sql_query(f"SELECT * FROM cotacoes_frete WHERE operacao = '{unidade}' AND status = 'Aprovado'", conn)
+                conn.close()
+
+                if not df_aprovados.empty:
+                    st.dataframe(df_aprovados[["id", "origem", "destino", "transportadora", "valor_negociado", "data_frete"]], use_container_width=True)
+
+                    with st.form("form_finalizar_frete"):
+                        id_fin = st.number_input("Digite o ID do Frete Aprovado para Finalizar:", min_value=1, step=1)
+                        cte_info = st.text_input("Número / Chave do CT-e (Conhecimento de Transporte):")
+                        nfs_info = st.text_area("Notas Fiscais (NFs) Transportadas:")
+
+                        if st.form_submit_button("🏁 Finalizar Frete e Anexar Documentos"):
+                            if not cte_info.strip() or not nfs_info.strip():
+                                st.error("⚠️ Para finalizar o frete, é obrigatório preencher o CT-e e as Notas Fiscais.")
+                            else:
+                                conn = sqlite3.connect("puxada_ambev.db")
+                                cursor = conn.cursor()
+                                cursor.execute(
+                                    "UPDATE cotacoes_frete SET status='Finalizado', cte_anexado=?, notas_fiscais_anexadas=? WHERE id=?",
+                                    (cte_info.strip(), nfs_info.strip(), id_fin)
+                                )
+                                conn.commit()
+                                conn.close()
+                                st.success(f"Frete #{id_fin} finalizado com sucesso com CT-e e NFs anexados!")
+                                st.rerun()
+                else:
+                    st.info("Nenhum frete aprovado aguardando finalização.")
+
+            st.divider()
+            st.markdown("##### 📋 Todos os Fretes Registrados")
+            conn = sqlite3.connect("puxada_ambev.db")
+            df_all_f = pd.read_sql_query(f"SELECT * FROM cotacoes_frete WHERE operacao = '{unidade}'", conn)
+            conn.close()
+            st.dataframe(df_all_f, use_container_width=True)
+            render_botoes_download(df_all_f, f"Relatorio_Geral_Fretes_{unidade}")
 
         with sub_pux[2]:
-            st.markdown("### Gestão de Aprovações e Alçadas de Frete")
-            conn = sqlite3.connect("puxada_ambev.db")
-            df_p = pd.read_sql_query(
-                f"SELECT * FROM cotacoes_frete WHERE operacao = '{unidade}'",
-                conn,
-            )
-            conn.close()
-            st.dataframe(df_p, use_container_width=True)
-            st.markdown("##### 📥 Opções de Download de Aprovações")
-            render_botoes_download(df_p, f"Aprovacoes_Frete_{unidade}")
-
-        with sub_pux[3]:
             st.markdown("### Histórico Geral de Fretes e Puxadas")
             conn = sqlite3.connect("puxada_ambev.db")
             df_h = pd.read_sql_query(
@@ -2612,10 +2686,9 @@ else:
             )
             conn.close()
             st.dataframe(df_h, use_container_width=True)
-            st.markdown("##### 📥 Opções de Download do Histórico de Fretes")
             render_botoes_download(df_h, f"Historico_Fretes_{unidade}")
 
-        with sub_pux[4]:
+        with sub_pux[3]:
             st.subheader("📅 Agendamento e Gestão de Descarga (Pátio)")
             st.caption(
                 "Cadastre e gerencie os agendamentos de descarga informando Placa, Slot, Data e Tipo de Carga."
@@ -2674,7 +2747,6 @@ else:
 
             if not df_descargas.empty:
                 st.dataframe(df_descargas, use_container_width=True)
-                st.markdown("##### 📥 Opções de Download de Descargas")
                 render_botoes_download(df_descargas, f"Agendamentos_Descarga_{unidade}")
 
                 id_exc_desc = st.number_input(
@@ -2696,7 +2768,7 @@ else:
                     "Nenhum agendamento de descarga cadastrado para esta unidade."
                 )
 
-        with sub_pux[5]:
+        with sub_pux[4]:
             st.subheader("🚛 Sistema Gestão Puxada - Cadastros Centrais & Edição (✏️)")
             st.caption(
                 "Gerencie e edite os cadastros de Carretas, Transportadoras, Fábricas e Motoristas. Use o botão ✏️ para editar após salvar."
@@ -2966,7 +3038,7 @@ else:
                 st.dataframe(df_mot, use_container_width=True)
                 render_botoes_download(df_mot, f"Motoristas_{unidade}")
 
-        with sub_pux[6]:
+        with sub_pux[5]:
             st.subheader("📅 Gestão Mensal de Viagens & Informações Consolidadas")
             st.caption("Visualize o consolidado mensal de viagens, métricas agrupadas e notas fiscais vinculadas.")
 
@@ -3033,7 +3105,7 @@ else:
                 else:
                     st.info("Sem dados para agrupar.")
 
-        with sub_pux[7]:
+        with sub_pux[6]:
             st.subheader("🔗 Vincular Pedido, Anexar NFs (Múltiplas) & Edição (✏️)")
             st.caption(
                 "Após o pedido ser carregado, anexe uma ou mais Notas Fiscais (NFs) para tornar o relatório completo."
