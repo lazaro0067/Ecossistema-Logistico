@@ -68,6 +68,12 @@ st.markdown("""
             padding: 20px;
             box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
             margin-bottom: 16px;
+            transition: all 0.2s ease-in-out;
+        }
+        .senior-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            border-color: #3b82f6;
         }
         
         /* Cards com Cores Vivas */
@@ -2155,7 +2161,7 @@ if "visualizacao" in st.query_params:
 
 
 def render_estoque_dia(unidade):
-    st.subheader("📱 Portal do RN - Consulta Comercial de Vendas")
+    st.subheader("Portal do RN - Consulta Comercial de Vendas")
 
     df = carregar_estoque_consolidado(unidade)
 
@@ -2436,11 +2442,6 @@ else:
     unidade = st.sidebar.selectbox("Unidade / Operação", ops_disponiveis)
     st.sidebar.divider()
 
-    # Link Direto para Disponibilizar ao Time Comercial
-    st.sidebar.markdown("### 📱 Link Time Comercial")
-    st.sidebar.link_button("🔗 Abrir Portal Comercial", "?modo=comercial", use_container_width=True)
-    st.sidebar.divider()
-
     perm_deps_raw = st.session_state.get("perm_deps", "TODOS")
     deps_disponiveis = (
         DEPARTAMENTOS_DISPONIVEIS.copy()
@@ -2480,14 +2481,48 @@ else:
 
     if "Visão Geral" in dept_atual:
         st.subheader("Painel Geral de Desempenho Operacional")
-        st.caption("Visão macro de todos os departamentos integrados da unidade.")
+        st.caption("Visão macro de todos os departamentos integrados da unidade. Clique em qualquer card abaixo para acessar diretamente o departamento:")
 
-        col_g1, col_g2, col_g3 = st.columns(3)
-        col_g1.markdown('<div class="senior-card"><h4>📊 Status de Operações</h4><p>Todas as unidades e centros de distribuição sincronizados em tempo real.</p></div>', unsafe_allow_html=True)
-        col_g2.markdown('<div class="senior-card"><h4>🚛 Gestão de Puxadas & Fretes</h4><p>Controle completo de solicitações, aprovações, CT-e e NFs.</p></div>', unsafe_allow_html=True)
-        col_g3.markdown('<div class="senior-card"><h4>📈 Indicadores DPO</h4><p>Acompanhamento de pilares, armazém e distribuição.</p></div>', unsafe_allow_html=True)
+        # Lista de ícones e descrições para os departamentos na Visão Geral em Cards
+        dept_info_dict = {
+            "Puxada": ("🚛", "Controle de solicitações, aprovações, CT-e, NFs e pátio."),
+            "Ressuprimento": ("📈", "Gestão de ressuprimento, cestas e políticas de estoque."),
+            "Vendas": ("📊", "Consulta comercial de vendas, SKUs e metas."),
+            "Armazém & Estoque": ("📦", "Gestão de armazém, layouts e book DPO."),
+            "Distribuição (Entrega)": ("🚚", "Logística de entrega, rotas e padrões DPO."),
+            "Frota & Manutenção": ("🔧", "Controle de frotas, carretas e manutenções."),
+            "Financeiro & OBZ": ("💰", "Acompanhamento orçamentário e despesas OBZ."),
+            "Compras & Insumos": ("🛒", "Gestão de insumos e cotações de compras."),
+            "Gente & SSMA": ("👥", "Gestão de pessoas, segurança e meio ambiente."),
+            "Relatórios & Bases Globais": ("📁", "Bases de dados completas, tabelas e exports.")
+        }
 
-        st.info("💡 **Dica**: Utilize o menu lateral esquerdo para navegar diretamente para qualquer departamento clicando sobre o nome desejado.")
+        # Filtrar apenas os departamentos válidos para exibição em cards (excluindo Visão Geral e Acesso Master se houver)
+        cards_a_exibir = [d for d in deps_disponiveis if d != "Visão Geral (Dashboard)" and d != "Acesso Master (Gestão de Usuários)"]
+
+        # Organizar em grid de 3 colunas
+        cols_per_row = 3
+        for i in range(0, len(cards_a_exibir), cols_per_row):
+            row_cols = st.columns(cols_per_row)
+            for j in range(cols_per_row):
+                if i + j < len(cards_a_exibir):
+                    d_item = cards_a_exibir[i + j]
+                    icone, desc = dept_info_dict.get(d_item, ("📋", "Módulo integrado do sistema."))
+                    with row_cols[j]:
+                        st.markdown(
+                            f"""
+                            <div class="senior-card" style="min-height: 140px; display: flex; flex-direction: column; justify-content: space-between;">
+                                <div>
+                                    <h4 style="margin: 0 0 8px 0; color: #0d2149;">{icone} {d_item}</h4>
+                                    <p style="font-size: 13px; color: #64748b; margin: 0;">{desc}</p>
+                                </div>
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
+                        if st.button(f"Acessar {d_item}", key=f"card_btn_{d_item}", use_container_width=True, type="primary"):
+                            navigate_to(d_item)
+                            st.rerun()
 
     elif "Puxada" in dept_atual:
         sub_pux = st.tabs([
@@ -3482,6 +3517,19 @@ else:
             render_gestao_ressuprimento(unidade)
 
     elif "Vendas" in dept_atual:
+        # Botão / Link Direto para o Portal Comercial posicionado dentro da aba de Vendas
+        st.markdown(
+            """
+            <div style="background-color: #e0f2fe; border-left: 6px solid #0288d1; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                <h4 style="margin: 0 0 5px 0; color: #0d2149;">📱 Acesso Exclusivo - Portal Comercial</h4>
+                <p style="margin: 0; font-size: 14px; color: #334155;">Disponibilize e acesse o link de visualização direta para o time comercial clicando no botão abaixo:</p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+        st.link_button("🔗 Abrir Portal Comercial (Visão Vendas)", "?modo=comercial", use_container_width=True)
+        st.divider()
+
         sub_vendas = st.tabs(["Estoque Dia", "Metas de Vendas & PNR"])
         with sub_vendas[0]:
             render_estoque_dia(unidade)
