@@ -5,7 +5,7 @@ import sqlite3
 import pandas as pd
 import streamlit as st
 
-# Importação condicional do docx para evitar falhas no Streamlit Cloud
+# Importação condicional do docx para evitar falhas no Streamlit Cloud[cite: 2]
 try:
     import docx
     HAS_DOCX = True
