@@ -246,13 +246,11 @@ def parse_br_float(val):
     try: return float(s)
     except Exception: return 0.0
 
-def formatar_br(val):
+def formatar_inteiro_br(val):
     try:
-        if pd.isna(val): return "0,00"
-        val_float = float(val)
-        s_base = f"{val_float:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-        if s_base.endswith(",00"): s_base = s_base[:-3]
-        return s_base
+        if pd.isna(val): return "0"
+        val_int = int(round(float(val)))
+        return f"{val_int:,}".replace(",", ".")
     except Exception:
         return str(val)
 
@@ -315,7 +313,7 @@ def carregar_estoque_consolidado(operacao):
     df["doi_atual"] = df.apply(lambda r: round(r["disp"] / r["linear_vendas"], 1) if r["linear_vendas"] > 0 else (999.0 if r["disp"] > 0 else 0.0), axis=1)
     return df
 
-# 4. Função de Gestão de Ressuprimento com Tratamento Seguro contra KeyError
+# 4. Função de Gestão de Ressuprimento com Formatação Inteira Ajustada
 def render_gestao_ressuprimento(operacao):
     st.subheader("📈 Gestão de Ressuprimento & Acompanhamento de Cestas (HL do Mês)")
 
@@ -378,8 +376,14 @@ def render_gestao_ressuprimento(operacao):
             df_comp["REAL"] = df_comp["volume_sellin_hl"] if "volume_sellin_hl" in df_comp.columns else 0.0
             df_comp["ATING. REAL"] = df_comp.apply(lambda r: (r["REAL"] / r["META"] * 100) if r["META"] > 0 else 0.0, axis=1)
 
+            # Criação da visualização formatada com números inteiros (ex: 25.913)
+            df_view = df_comp[["INDICADOR", "META", "REAL", "ATING. REAL"]].copy()
+            df_view["META"] = df_view["META"].apply(formatar_inteiro_br)
+            df_view["REAL"] = df_view["REAL"].apply(formatar_inteiro_br)
+            df_view["ATING. REAL"] = df_view["ATING. REAL"].apply(lambda x: f"{x:.1f}%".replace(".", ","))
+
             st.markdown(f"### 🔵 Acompanhamento - {nome_exibicao_op}")
-            st.dataframe(df_comp[["INDICADOR", "META", "REAL", "ATING. REAL"]], use_container_width=True)
+            st.dataframe(df_view, use_container_width=True)
             render_botoes_download(df_comp, f"Acompanhamento_Mensal_{operacao}")
         else:
             st.info(f"ℹ️ Nenhum dado diário encontrado para **{nome_exibicao_op}** em {ano_sel}. Utilize a aba de Upload para inserir os dados.")
