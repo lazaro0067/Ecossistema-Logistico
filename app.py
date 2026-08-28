@@ -81,7 +81,7 @@ OPERACOES_DISPONIVEIS = [
     "Bahia",
 ]
 
-# 2. Inicialização do Banco de Dados SQLite e Migrações Seguras
+# 2. Inicialização do Banco de Dados SQLite e Migrações Seguras (Evita OperationalError)
 def init_db():
     conn = sqlite3.connect("puxada_ambev.db")
     cursor = conn.cursor()
@@ -178,6 +178,7 @@ def init_db():
         dt_atualizacao TEXT
     )""")
 
+    # Tabela de Usuários com Garantia de Existência das Colunas
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS usuarios (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -192,6 +193,22 @@ def init_db():
         permissoes_deptos TEXT DEFAULT 'TODOS',
         status TEXT DEFAULT 'Ativo'
     )""")
+
+    # Migrações seguras caso a tabela já exista sem alguma coluna nova
+    colunas_para_verificar = [
+        ("perfil", "TEXT DEFAULT 'Operacional'"),
+        ("permissoes_operacoes", "TEXT DEFAULT 'TODAS'"),
+        ("permissoes_deptos", "TEXT DEFAULT 'TODOS'"),
+        ("status", "TEXT DEFAULT 'Ativo'"),
+        ("email", "TEXT"),
+        ("cargo", "TEXT"),
+        ("e_aprovador", "TEXT DEFAULT 'Não'"),
+    ]
+    for col_nome, col_tipo in colunas_para_verificar:
+        try:
+            cursor.execute(f"ALTER TABLE usuarios ADD COLUMN {col_nome} {col_tipo}")
+        except Exception:
+            pass
 
     cursor.execute("SELECT count(*) FROM usuarios WHERE nome = 'admin'")
     if cursor.fetchone()[0] == 0:
@@ -321,7 +338,7 @@ def carregar_estoque_consolidado(operacao):
     df["doi_atual"] = df.apply(lambda r: round(r["disp"] / r["linear_vendas"], 1) if r["linear_vendas"] > 0 else (999.0 if r["disp"] > 0 else 0.0), axis=1)
     return df
 
-# 4. Função de Gestão de Ressuprimento Completa
+# 4. Módulo de Gestão de Ressuprimento Completo
 def render_gestao_ressuprimento(operacao, modo_estatico=False):
     st.subheader("📈 Gestão de Ressuprimento & Acompanhamento de Cestas (HL do Mês)")
 
@@ -370,8 +387,7 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
             df_diario["data_dt"] = pd.to_datetime(df_diario["data_registro"], errors="coerce")
             if not meses_selecionados: meses_selecionados = list(range(1, 13))
             df_diario_filtrado = df_diario[df_diario["data_dt"].dt.month.isin(meses_selecionados)]
-            dias_preenchidos = df_diario_filtrado["data_dt"].dt.date.nunique()
-
+            
             df_res_mes = df_diario_filtrado.groupby("cesta")["volume_sellin_hl"].sum().reset_index()
             df_comp = pd.merge(pd.DataFrame({"cesta": cestas_ordenadas}), df_res_mes, on="cesta", how="left").fillna(0)
             df_metas_filtradas = df_metas[df_metas["mes"].isin(meses_selecionados)]
@@ -387,7 +403,7 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
             st.dataframe(df_comp[["INDICADOR", "META", "REAL", "ATING. REAL"]], use_container_width=True)
             render_botoes_download(df_comp, f"Acompanhamento_Mensal_{operacao}")
         else:
-            st.info(f"ℹ️ Nenhum dado diário encontrado para **{nome_exibicao_op}** em {ano_sel}. Utilize a aba de Upload para inserir os dados.")
+            st.info(f"ℹ️ Nenhum dado diário encontrado para **{nome_exibicao_op}** em {ano_sel}.")
 
     with tab_m2:
         st.markdown(f"### 📅 Carregamento Dia a Dia - {nome_exibicao_op}")
@@ -442,7 +458,7 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
             except Exception as e:
                 st.error(f"Erro ao processar o arquivo: {e}")
 
-# 5. Sistema de Navegação por Histórico (Botão Voltar)
+# 5. Navegação por Pilhas de Histórico (Botão Voltar)
 if "nav_stack" not in st.session_state:
     st.session_state["nav_stack"] = ["Visão Geral (Dashboard)"]
 
