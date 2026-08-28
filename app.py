@@ -220,7 +220,7 @@ def init_db():
 
 init_db()
 
-# 3. Funções Auxiliares
+# 3. Funções Auxiliares e de Salvamento de Bases
 def robust_read_file(file_obj):
     filename = str(file_obj.name).lower()
     if filename.endswith((".xlsx", ".xls")):
@@ -283,6 +283,100 @@ def render_botoes_download(df_export, nome_base):
         use_container_width=True,
     )
 
+def salvar_base_01_11(f_01):
+    df_01 = robust_read_file(f_01)
+    col_cod = [c for c in df_01.columns if "Código" in str(c) or "Cod" in str(c)][0]
+    df_01["cod_clean"] = pd.to_numeric(df_01[col_cod], errors="coerce")
+    col_q = df_01.columns[16] if len(df_01.columns) > 16 else df_01.columns[-1]
+    df_01["fator_hl"] = df_01[col_q].astype(str).str.replace(",", ".").astype(float)
+    col_cx = [c for c in df_01.columns if "Caixas Pallet" in str(c) or "Pallet" in str(c)]
+    df_01["cx_pallet"] = pd.to_numeric(df_01[col_cx[0]], errors="coerce").fillna(1) if col_cx else 1.0
+    col_desc = [c for c in df_01.columns if "Descrição" in str(c) or "Desc" in str(c)][0]
+    df_sub = df_01[["cod_clean", col_desc, "fator_hl", "cx_pallet"]].dropna(subset=["cod_clean"])
+
+    conn = sqlite3.connect("puxada_ambev.db")
+    cursor = conn.cursor()
+    for _, r in df_sub.iterrows():
+        cursor.execute("""
+            INSERT INTO base_01_11 (cod_clean, descricao, fator_hl, cx_pallet)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(cod_clean) DO UPDATE SET
+                descricao=excluded.descricao, fator_hl=excluded.fator_hl, cx_pallet=excluded.cx_pallet
+        """, (int(r["cod_clean"]), str(r[col_desc]), float(r["fator_hl"]), float(r["cx_pallet"])))
+    conn.commit()
+    conn.close()
+
+def salvar_base_linear(f_lin):
+    df_lin = robust_read_file(f_lin)
+    col_cod = df_lin.columns[0]
+    for i, c in enumerate(df_lin.columns):
+        if "cód" in str(c).lower() or "cod" in str(c).lower():
+            col_cod = df_lin.columns[i]
+            break
+    col_vendas = df_lin.columns[4] if len(df_lin.columns) > 4 else df_lin.columns[1]
+    df_lin["cod_clean"] = pd.to_numeric(df_lin[col_cod], errors="coerce")
+    df_lin["linear_vendas"] = df_lin[col_vendas].apply(parse_br_float)
+    dt_now = datetime.now().strftime("%d/%m/%Y %H:%M")
+
+    conn = sqlite3.connect("puxada_ambev.db")
+    cursor = conn.cursor()
+    for _, r in df_lin.dropna(subset=["cod_clean"]).iterrows():
+        cursor.execute("""
+            INSERT INTO base_linear (cod_clean, tipo, categoria, linear_vendas, dt_atualizacao)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(cod_clean) DO UPDATE SET
+                linear_vendas=excluded.linear_vendas, dt_atualizacao=excluded.dt_atualizacao
+        """, (int(r["cod_clean"]), "CERVEJA", "Geral", float(r["linear_vendas"]), dt_now))
+    conn.commit()
+    conn.close()
+
+def salvar_base_estoque_02(f_02, operacao):
+    df_02 = robust_read_file(f_02)
+    col_cod = [c for c in df_02.columns if "Cod" in str(c) or "COD" in str(c)][0]
+    col_desc = [c for c in df_02.columns if "Desc" in str(c)][0]
+    col_disp = [c for c in df_02.columns if "Disp" in str(c)][0]
+
+    df_02["cod_clean"] = pd.to_numeric(df_02[col_cod], errors="coerce")
+    df_02["Disp."] = pd.to_numeric(df_02[col_disp], errors="coerce").fillna(0)
+    dt_now = datetime.now().strftime("%d/%m/%Y %H:%M")
+
+    conn = sqlite3.connect("puxada_ambev.db")
+    cursor = conn.cursor()
+    for _, r in df_02.dropna(subset=["cod_clean"]).iterrows():
+        cursor.execute("""
+            INSERT INTO base_estoque_02 (operacao, cod_clean, descricao, inicial, entrada, saida, disponivel, dt_atualizacao)
+            VALUES (?, ?, ?, 0, 0, 0, ?, ?)
+            ON CONFLICT(operacao, cod_clean) DO UPDATE SET
+                descricao=excluded.descricao, disponivel=excluded.disponivel, dt_atualizacao=excluded.dt_atualizacao
+        """, (operacao, int(r["cod_clean"]), str(r[col_desc]), float(r["Disp."]), dt_now))
+    conn.commit()
+    conn.close()
+
+def salvar_pedidos_marcados(f_pedidos, operacao):
+    df_pedidos = robust_read_file(f_pedidos)
+    col_cod_r = df_pedidos.columns[17] if len(df_pedidos.columns) > 17 else df_pedidos.columns[0]
+    col_marc_w = df_pedidos.columns[22] if len(df_pedidos.columns) > 22 else df_pedidos.columns[1]
+    col_desc = df_pedidos.columns[1] if len(df_pedidos.columns) > 1 else df_pedidos.columns[0]
+    col_dt = df_pedidos.columns[0]
+
+    conn = sqlite3.connect("puxada_ambev.db")
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM pedidos_marcados WHERE operacao=?", (operacao,))
+    dt_now = datetime.now().strftime("%d/%m/%Y %H:%M")
+
+    for _, r in df_pedidos.iterrows():
+        cod_raw = str(r.get(col_cod_r, "")).strip()
+        cod_clean_str = cod_raw[:-1] if len(cod_raw) > 1 else cod_raw
+        cod_clean = pd.to_numeric(cod_clean_str, errors="coerce")
+        if pd.isna(cod_clean): continue
+
+        cursor.execute("""
+            INSERT INTO pedidos_marcados (operacao, data_puxada, cod_clean, descricao, cx_solicitadas, cx_marcadas, hl_marcado, status_item, numero_pedido, dt_atualizacao)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (operacao, str(r.get(col_dt)).strip(), int(cod_clean), str(r.get(col_desc)).strip(), 0.0, parse_br_float(r.get(col_marc_w)), 0.0, "", "", dt_now))
+    conn.commit()
+    conn.close()
+
 def carregar_estoque_consolidado(operacao):
     conn = sqlite3.connect("puxada_ambev.db")
     ops_filtro = [operacao]
@@ -313,7 +407,7 @@ def carregar_estoque_consolidado(operacao):
     df["doi_atual"] = df.apply(lambda r: round(r["disp"] / r["linear_vendas"], 1) if r["linear_vendas"] > 0 else (999.0 if r["disp"] > 0 else 0.0), axis=1)
     return df
 
-# 4. Módulo de Gestão de Ressuprimento Completo
+# 4. Módulo de Gestão de Ressuprimento Completo (Com a Aba de Atualização e Estoque Dia)
 def render_gestao_ressuprimento(operacao):
     st.subheader("📈 Gestão de Ressuprimento & Acompanhamento de Cestas (HL do Mês)")
 
@@ -327,12 +421,13 @@ def render_gestao_ressuprimento(operacao):
     nombres_filtro = mapa_op_sistema.get(operacao, [operacao])
     nome_exibicao_op = "Bahia (Barreiras + São Félix)" if operacao == "Bahia" else operacao.replace("Lima ", "")
 
-    tab_m1, tab_m2, tab_m3, tab_m4, tab_m5 = st.tabs([
+    tab_m1, tab_m2, tab_m3, tab_m4, tab_m5, tab_m6 = st.tabs([
         "📊 Acompanhamento Mensal & Volume Total",
         "📅 Carregamento Dia a Dia",
         "📦 Gestão de Política de Estoque",
         "⚙️ Configuração de Metas Mensais",
-        "📁 Upload & Atualização da Base Diária",
+        "📁 Cadastros & Atualização (Estoque Dia)",
+        "📁 Upload Base Diária",
     ])
 
     cestas_map = {
@@ -389,8 +484,6 @@ def render_gestao_ressuprimento(operacao):
 
     with tab_m2:
         st.markdown(f"### 📅 Carregamento Dia a Dia - {nome_exibicao_op}")
-        st.caption("Selecione o ano e o mês para visualizar o volume diário detalhado por indicador (em HL).")
-
         c_d1, c_d2 = st.columns(2)
         ano_dia = c_d1.number_input("Ano de Análise:", min_value=2024, max_value=2030, value=datetime.now().year, key="ano_dia_a_dia")
         meses_nomes_lista = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
@@ -423,11 +516,10 @@ def render_gestao_ressuprimento(operacao):
             for col in cols_indicadores + ["Total Dia (HL)"]:
                 df_view_dia[col] = df_view_dia[col].apply(formatar_inteiro_br)
 
-            st.markdown(f"##### 📊 Detalhamento Diário - {meses_nomes_lista[mes_dia - 1]}/{ano_dia}")
             st.dataframe(df_view_dia, use_container_width=True)
             render_botoes_download(df_pivot, f"Carregamento_Dia_a_Dia_{mes_dia:02d}_{ano_dia}_{operacao}")
         else:
-            st.info(f"ℹ️ Nenhum registro diário encontrado para **{nome_exibicao_op}** em {meses_nomes_lista[mes_dia - 1]}/{ano_dia}.")
+            st.info("ℹ️ Nenhum registro diário encontrado.")
 
     with tab_m3:
         st.markdown("### 📦 Gestão de Política de Estoque")
@@ -441,8 +533,7 @@ def render_gestao_ressuprimento(operacao):
         st.markdown(f"### 🎯 Cadastrar / Ajustar Metas Mensais ({nome_exibicao_op})")
         c_m1, c_m2 = st.columns(2)
         ano_meta = c_m1.number_input("Ano da Meta:", min_value=2024, max_value=2030, value=datetime.now().year, key="ano_meta_key")
-        meses_nomes_lista = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
-        mes_meta = c_m2.selectbox("Mês da Meta:", list(range(1, 13)), format_func=lambda x: meses_nomes_lista[x - 1], index=datetime.now().month - 1, key="mes_meta_key")
+        mes_meta = c_m2.selectbox("Mês da Meta:", list(range(1, 13)), format_func=lambda x: meses_nomes[x - 1], index=datetime.now().month - 1, key="mes_meta_key")
 
         mes_ano_meta_str = f"{['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'][mes_meta-1]}/{ano_meta}"
 
@@ -474,10 +565,38 @@ def render_gestao_ressuprimento(operacao):
                     """, (op_para_salvar, ano_meta, mes_meta, mes_ano_meta_str, cst, m_val, dt_now))
                 conn.commit()
                 conn.close()
-                st.success(f"Metas de {mes_ano_meta_str} salvas com sucesso para {nome_exibicao_op}!")
+                st.success(f"Metas de {mes_ano_meta_str} salvas com sucesso!")
                 st.rerun()
 
     with tab_m5:
+        st.markdown("### 📁 Cadastros & Atualização de Bases (Estoque do Dia)")
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.markdown("**1. Relatório 01.11**")
+            f_01 = st.file_uploader("Upload 01.11", type=["xlsx", "xls", "csv"], key="up_01")
+            if f_01 and st.button("Salvar 01.11"):
+                salvar_base_01_11(f_01)
+                st.success("Base 01.11 salva!")
+        with c2:
+            st.markdown("**2. Relatório Linear**")
+            f_lin = st.file_uploader("Upload Linear", type=["xlsx", "xls", "csv"], key="up_lin")
+            if f_lin and st.button("Salvar Linear"):
+                salvar_base_linear(f_lin)
+                st.success("Base Linear salva!")
+        with c3:
+            st.markdown("**3. Relatório 02.03.04**")
+            f_02 = st.file_uploader("Upload Estoque Dia", type=["xlsx", "xls", "csv"], key="up_02")
+            if f_02 and st.button("Atualizar Estoque"):
+                salvar_base_estoque_02(f_02, unidade)
+                st.success("Estoque Atualizado!")
+        with c4:
+            st.markdown("**4. Puxada Marcada**")
+            f_ped = st.file_uploader("Upload Puxadas", type=["xlsx", "xls", "csv"], key="up_ped")
+            if f_ped and st.button("Salvar Puxadas"):
+                salvar_pedidos_marcados(f_ped, unidade)
+                st.success("Puxadas Salvas!")
+
+    with tab_m6:
         st.markdown("### 📁 Upload do Relatório Diário de Ressuprimento")
         f_ress_daily = st.file_uploader("Selecione o arquivo de relatório diário (.xlsx, .xls, .csv):", type=["xlsx", "xls", "csv"])
         if f_ress_daily is not None and st.button("🚀 Processar e Atualizar Base"):
