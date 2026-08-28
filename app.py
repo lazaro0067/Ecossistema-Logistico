@@ -407,7 +407,7 @@ def carregar_estoque_consolidado(operacao):
     df["doi_atual"] = df.apply(lambda r: round(r["disp"] / r["linear_vendas"], 1) if r["linear_vendas"] > 0 else (999.0 if r["disp"] > 0 else 0.0), axis=1)
     return df
 
-# 4. Módulo de Gestão de Ressuprimento Completo (Com a Aba de Atualização e Estoque Dia)
+# 4. Módulo de Gestão de Ressuprimento Completo
 def render_gestao_ressuprimento(operacao):
     st.subheader("📈 Gestão de Ressuprimento & Acompanhamento de Cestas (HL do Mês)")
 
@@ -419,6 +419,7 @@ def render_gestao_ressuprimento(operacao):
     }
 
     nombres_filtro = mapa_op_sistema.get(operacao, [operacao])
+    placeholders = ",".join(["?"] * len(nombres_filtro))
     nome_exibicao_op = "Bahia (Barreiras + São Félix)" if operacao == "Bahia" else operacao.replace("Lima ", "")
 
     tab_m1, tab_m2, tab_m3, tab_m4, tab_m5, tab_m6 = st.tabs([
@@ -448,9 +449,8 @@ def render_gestao_ressuprimento(operacao):
         meses_selecionados = c_f2.multiselect("Selecione os Meses de Análise:", options=list(range(1, 13)), format_func=lambda x: meses_nomes[x - 1], default=[datetime.now().month], key="meses_acompanhamento")
 
         conn = sqlite3.connect("puxada_ambev.db")
-        placeholders_op = ",".join(["?"] * len(nombres_filtro))
-        df_diario = pd.read_sql_query(f"SELECT * FROM gestao_ressuprimento_diario WHERE operacao IN ({placeholders_op}) AND strftime('%Y', data_registro)='{ano_sel}'", conn, params=nombres_filtro)
-        df_metas = pd.read_sql_query(f"SELECT * FROM metas_ressuprimento_mensal WHERE operacao IN ({placeholders_op}) AND ano={ano_sel}", conn, params=nombres_filtro)
+        df_diario = pd.read_sql_query(f"SELECT * FROM gestao_ressuprimento_diario WHERE operacao IN ({placeholders}) AND strftime('%Y', data_registro)='{ano_sel}'", conn, params=nombres_filtro)
+        df_metas = pd.read_sql_query(f"SELECT * FROM metas_ressuprimento_mensal WHERE operacao IN ({placeholders}) AND ano={ano_sel}", conn, params=nombres_filtro)
         conn.close()
 
         if not df_diario.empty:
