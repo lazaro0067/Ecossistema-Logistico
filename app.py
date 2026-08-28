@@ -81,7 +81,7 @@ OPERACOES_DISPONIVEIS = [
     "Bahia",
 ]
 
-# 2. Inicialização do Banco de Dados SQLite e Migrações Seguras (Evita OperationalError)
+# 2. Inicialização do Banco de Dados SQLite e Migrações Seguras
 def init_db():
     conn = sqlite3.connect("puxada_ambev.db")
     cursor = conn.cursor()
@@ -178,7 +178,6 @@ def init_db():
         dt_atualizacao TEXT
     )""")
 
-    # Tabela de Usuários com Garantia de Existência das Colunas
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS usuarios (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -194,7 +193,6 @@ def init_db():
         status TEXT DEFAULT 'Ativo'
     )""")
 
-    # Migrações seguras caso a tabela já exista sem alguma coluna nova
     colunas_para_verificar = [
         ("perfil", "TEXT DEFAULT 'Operacional'"),
         ("permissoes_operacoes", "TEXT DEFAULT 'TODAS'"),
@@ -222,7 +220,7 @@ def init_db():
 
 init_db()
 
-# 3. Funções Auxiliares de Leitura e Tratamento
+# 3. Funções Auxiliares
 def robust_read_file(file_obj):
     filename = str(file_obj.name).lower()
     if filename.endswith((".xlsx", ".xls")):
@@ -310,36 +308,15 @@ def carregar_estoque_consolidado(operacao):
     WHERE e.operacao IN ({placeholders})
     """
     df = pd.read_sql_query(query, conn, params=ops_filtro)
-    
-    query_marc = f"""
-    SELECT cod_clean, data_puxada, SUM(cx_marcadas) as cx_marcadas
-    FROM pedidos_marcados
-    WHERE operacao IN ({placeholders})
-    GROUP BY cod_clean, data_puxada
-    """
-    df_marc = pd.read_sql_query(query_marc, conn, params=ops_filtro)
     conn.close()
 
     if df.empty: return None
     df.columns = [str(c).lower() for c in df.columns]
-
-    df["d0"] = 0.0
-    df["d1"] = 0.0
-    df["d2"] = 0.0
-
-    if not df_marc.empty and "data_puxada" in df_marc.columns:
-        datas_pux = sorted(df_marc["data_puxada"].dropna().unique())
-        for idx_d, d_val in enumerate(datas_pux[:3]):
-            col_nome = f"d{idx_d}"
-            df_d = df_marc[df_marc["data_puxada"] == d_val].groupby("cod_clean")["cx_marcadas"].sum().reset_index()
-            df = pd.merge(df, df_d.rename(columns={"cx_marcadas": col_nome}), on="cod_clean", how="left")
-            df[col_nome] = df[col_nome].fillna(0)
-
     df["doi_atual"] = df.apply(lambda r: round(r["disp"] / r["linear_vendas"], 1) if r["linear_vendas"] > 0 else (999.0 if r["disp"] > 0 else 0.0), axis=1)
     return df
 
-# 4. Módulo de Gestão de Ressuprimento Completo
-def render_gestao_ressuprimento(operacao, modo_estatico=False):
+# 4. Função de Gestão de Ressuprimento com Tratamento Seguro contra KeyError
+def render_gestao_ressuprimento(operacao):
     st.subheader("📈 Gestão de Ressuprimento & Acompanhamento de Cestas (HL do Mês)")
 
     mapa_op_sistema = {
@@ -388,22 +365,24 @@ def render_gestao_ressuprimento(operacao, modo_estatico=False):
             if not meses_selecionados: meses_selecionados = list(range(1, 13))
             df_diario_filtrado = df_diario[df_diario["data_dt"].dt.month.isin(meses_selecionados)]
             
-            df_res_mes = df_diario_filtrado.groupby("cesta")["volume_sellin_hl"].sum().reset_index()
+            df_res_mes = df_diario_filtrado.groupby("cesta")["volume_sellin_hl"].sum().reset_index() if not df_diario_filtrado.empty else pd.DataFrame(columns=["cesta", "volume_sellin_hl"])
             df_comp = pd.merge(pd.DataFrame({"cesta": cestas_ordenadas}), df_res_mes, on="cesta", how="left").fillna(0)
-            df_metas_filtradas = df_metas[df_metas["mes"].isin(meses_selecionados)]
-            df_metas_grp = df_metas_filtradas.groupby("cesta")["meta_volume_hl"].sum().reset_index()
+            
+            df_metas_filtradas = df_metas[df_metas["mes"].isin(meses_selecionados)] if not df_metas.empty else pd.DataFrame(columns=["cesta", "meta_volume_hl"])
+            df_metas_grp = df_metas_filtradas.groupby("cesta")["meta_volume_hl"].sum().reset_index() if not df_metas_filtradas.empty else pd.DataFrame(columns=["cesta", "meta_volume_hl"])
+            
             df_comp = pd.merge(df_comp, df_metas_grp, on="cesta", how="left").fillna(0)
 
-            df_comp["INDICADOR"] = df_comp["cesta"].map(cestas_map)
-            df_comp["META"] = df_comp["meta_volume_hl"]
-            df_comp["REAL"] = df_comp["volume_sellin_hl"]
+            df_comp["INDICADOR"] = df_comp["cesta"].map(cestas_map).fillna(df_comp["cesta"])
+            df_comp["META"] = df_comp["meta_volume_hl"] if "meta_volume_hl" in df_comp.columns else 0.0
+            df_comp["REAL"] = df_comp["volume_sellin_hl"] if "volume_sellin_hl" in df_comp.columns else 0.0
             df_comp["ATING. REAL"] = df_comp.apply(lambda r: (r["REAL"] / r["META"] * 100) if r["META"] > 0 else 0.0, axis=1)
 
             st.markdown(f"### 🔵 Acompanhamento - {nome_exibicao_op}")
             st.dataframe(df_comp[["INDICADOR", "META", "REAL", "ATING. REAL"]], use_container_width=True)
             render_botoes_download(df_comp, f"Acompanhamento_Mensal_{operacao}")
         else:
-            st.info(f"ℹ️ Nenhum dado diário encontrado para **{nome_exibicao_op}** em {ano_sel}.")
+            st.info(f"ℹ️ Nenhum dado diário encontrado para **{nome_exibicao_op}** em {ano_sel}. Utilize a aba de Upload para inserir os dados.")
 
     with tab_m2:
         st.markdown(f"### 📅 Carregamento Dia a Dia - {nome_exibicao_op}")
