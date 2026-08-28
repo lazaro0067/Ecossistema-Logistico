@@ -313,7 +313,7 @@ def carregar_estoque_consolidado(operacao):
     df["doi_atual"] = df.apply(lambda r: round(r["disp"] / r["linear_vendas"], 1) if r["linear_vendas"] > 0 else (999.0 if r["disp"] > 0 else 0.0), axis=1)
     return df
 
-# 4. Função de Gestão de Ressuprimento com Formatação Inteira Ajustada
+# 4. Módulo de Gestão de Ressuprimento Completo
 def render_gestao_ressuprimento(operacao):
     st.subheader("📈 Gestão de Ressuprimento & Acompanhamento de Cestas (HL do Mês)")
 
@@ -376,7 +376,6 @@ def render_gestao_ressuprimento(operacao):
             df_comp["REAL"] = df_comp["volume_sellin_hl"] if "volume_sellin_hl" in df_comp.columns else 0.0
             df_comp["ATING. REAL"] = df_comp.apply(lambda r: (r["REAL"] / r["META"] * 100) if r["META"] > 0 else 0.0, axis=1)
 
-            # Criação da visualização formatada com números inteiros (ex: 25.913)
             df_view = df_comp[["INDICADOR", "META", "REAL", "ATING. REAL"]].copy()
             df_view["META"] = df_view["META"].apply(formatar_inteiro_br)
             df_view["REAL"] = df_view["REAL"].apply(formatar_inteiro_br)
@@ -390,7 +389,45 @@ def render_gestao_ressuprimento(operacao):
 
     with tab_m2:
         st.markdown(f"### 📅 Carregamento Dia a Dia - {nome_exibicao_op}")
-        st.info("Visualize os carregamentos diários detalhados por cesta/indicador.")
+        st.caption("Selecione o ano e o mês para visualizar o volume diário detalhado por indicador (em HL).")
+
+        c_d1, c_d2 = st.columns(2)
+        ano_dia = c_d1.number_input("Ano de Análise:", min_value=2024, max_value=2030, value=datetime.now().year, key="ano_dia_a_dia")
+        meses_nomes_lista = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
+        mes_dia = c_d2.selectbox("Mês de Análise:", list(range(1, 13)), format_func=lambda x: meses_nomes_lista[x - 1], index=datetime.now().month - 1, key="mes_dia_a_dia")
+
+        conn = sqlite3.connect("puxada_ambev.db")
+        query_dia = f"""
+            SELECT data_registro, cesta, SUM(volume_sellin_hl) as vol_hl
+            FROM gestao_ressuprimento_diario
+            WHERE operacao IN ({placeholders}) 
+              AND CAST(STRFTIME('%Y', data_registro) AS INTEGER) = ?
+              AND CAST(STRFTIME('%m', data_registro) AS INTEGER) = ?
+            GROUP BY data_registro, cesta
+        """
+        df_diario_bruto = pd.read_sql_query(query_dia, conn, params=nombres_filtro + [ano_dia, mes_dia])
+        conn.close()
+
+        if not df_diario_bruto.empty:
+            df_diario_bruto["data_dt"] = pd.to_datetime(df_diario_bruto["data_registro"], errors="coerce")
+            df_diario_bruto["Dia"] = df_diario_bruto["data_dt"].dt.strftime("%d/%m/%Y")
+            df_diario_bruto["Indicador"] = df_diario_bruto["cesta"].map(cestas_map).fillna("Outros")
+
+            df_pivot = df_diario_bruto.pivot_table(index=["data_dt", "Dia"], columns="Indicador", values="vol_hl", aggfunc="sum").reset_index()
+            df_pivot = df_pivot.sort_values("data_dt").drop(columns=["data_dt"]).fillna(0.0)
+
+            cols_indicadores = [c for c in df_pivot.columns if c != "Dia"]
+            df_pivot["Total Dia (HL)"] = df_pivot[cols_indicadores].sum(axis=1)
+
+            df_view_dia = df_pivot.copy()
+            for col in cols_indicadores + ["Total Dia (HL)"]:
+                df_view_dia[col] = df_view_dia[col].apply(formatar_inteiro_br)
+
+            st.markdown(f"##### 📊 Detalhamento Diário - {meses_nomes_lista[mes_dia - 1]}/{ano_dia}")
+            st.dataframe(df_view_dia, use_container_width=True)
+            render_botoes_download(df_pivot, f"Carregamento_Dia_a_Dia_{mes_dia:02d}_{ano_dia}_{operacao}")
+        else:
+            st.info(f"ℹ️ Nenhum registro diário encontrado para **{nome_exibicao_op}** em {meses_nomes_lista[mes_dia - 1]}/{ano_dia}.")
 
     with tab_m3:
         st.markdown("### 📦 Gestão de Política de Estoque")
@@ -401,12 +438,44 @@ def render_gestao_ressuprimento(operacao):
             st.info("Nenhum dado de política de estoque disponível.")
 
     with tab_m4:
-        st.markdown(f"### 🎯 Configuração de Metas Mensais ({nome_exibicao_op})")
+        st.markdown(f"### 🎯 Cadastrar / Ajustar Metas Mensais ({nome_exibicao_op})")
+        c_m1, c_m2 = st.columns(2)
+        ano_meta = c_m1.number_input("Ano da Meta:", min_value=2024, max_value=2030, value=datetime.now().year, key="ano_meta_key")
+        meses_nomes_lista = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
+        mes_meta = c_m2.selectbox("Mês da Meta:", list(range(1, 13)), format_func=lambda x: meses_nomes_lista[x - 1], index=datetime.now().month - 1, key="mes_meta_key")
+
+        mes_ano_meta_str = f"{['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'][mes_meta-1]}/{ano_meta}"
+
+        conn = sqlite3.connect("puxada_ambev.db")
+        df_exist_metas = pd.read_sql_query(f"SELECT cesta, meta_volume_hl FROM metas_ressuprimento_mensal WHERE operacao IN ({placeholders}) AND ano={ano_meta} AND mes={mes_meta}", conn, params=nombres_filtro)
+        conn.close()
+
+        dict_metas_exist = dict(zip(df_exist_metas["cesta"], df_exist_metas["meta_volume_hl"])) if not df_exist_metas.empty else {}
+
         with st.form("form_cad_metas"):
-            ano_meta = st.number_input("Ano da Meta:", min_value=2024, max_value=2030, value=datetime.now().year)
-            mes_meta = st.selectbox("Mês da Meta:", list(range(1, 13)), format_func=lambda x: meses_nomes[x - 1])
-            if st.form_submit_button("💾 Salvar Metas"):
-                st.success("Metas processadas com sucesso!")
+            st.markdown(f"**Metas em HL para {mes_ano_meta_str} - {nome_exibicao_op}:**")
+            input_metas = {}
+            for cst in cestas_ordenadas:
+                cst_nome_amigavel = cestas_map.get(cst, cst)
+                val_init = float(dict_metas_exist.get(cst, 0.0))
+                input_metas[cst] = st.number_input(f"Meta: {cst_nome_amigavel}", min_value=0.0, value=val_init, step=10.0)
+
+            if st.form_submit_button("💾 Salvar Metas Mensais"):
+                conn = sqlite3.connect("puxada_ambev.db")
+                cursor = conn.cursor()
+                dt_now = datetime.now().strftime("%d/%m/%Y %H:%M")
+                op_para_salvar = operacao if operacao != "Bahia" else "Lima Barreiras"
+                for cst, m_val in input_metas.items():
+                    cursor.execute("""
+                        INSERT INTO metas_ressuprimento_mensal (operacao, ano, mes, mes_ano, cesta, meta_volume_hl, dt_atualizacao)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(operacao, ano, mes, cesta) DO UPDATE SET
+                            meta_volume_hl=excluded.meta_volume_hl, dt_atualizacao=excluded.dt_atualizacao
+                    """, (op_para_salvar, ano_meta, mes_meta, mes_ano_meta_str, cst, m_val, dt_now))
+                conn.commit()
+                conn.close()
+                st.success(f"Metas de {mes_ano_meta_str} salvas com sucesso para {nome_exibicao_op}!")
+                st.rerun()
 
     with tab_m5:
         st.markdown("### 📁 Upload do Relatório Diário de Ressuprimento")
