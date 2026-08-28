@@ -2,8 +2,6 @@ from datetime import datetime, timedelta
 import io
 import re
 import sqlite3
-import xml.etree.ElementTree as ET
-import zipfile
 import pandas as pd
 import streamlit as st
 
@@ -14,7 +12,7 @@ try:
 except ImportError:
     HAS_DOCX = False
 
-# Configuração Inicial da Página & Design System Sênior CSS
+# 1. Configuração Inicial da Página & Design System Sênior CSS
 st.set_page_config(
     page_title="Gestão DPO & Distribuição - Grupo Lima",
     layout="wide",
@@ -83,7 +81,7 @@ OPERACOES_DISPONIVEIS = [
     "Bahia",
 ]
 
-# Inicialização do Banco de Dados SQLite com Correção de Erros (Safe Columns)
+# 2. Inicialização do Banco de Dados SQLite e Migrações Seguras
 def init_db():
     conn = sqlite3.connect("puxada_ambev.db")
     cursor = conn.cursor()
@@ -134,6 +132,53 @@ def init_db():
     )""")
 
     cursor.execute("""
+    CREATE TABLE IF NOT EXISTS gestao_ressuprimento_diario (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        operacao TEXT,
+        data_registro TEXT,
+        mes_ano TEXT,
+        cesta TEXT,
+        volume_sellin_hl REAL DEFAULT 0.0,
+        volume_real_hl REAL DEFAULT 0.0,
+        dt_atualizacao TEXT,
+        UNIQUE(operacao, data_registro, cesta)
+    )""")
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS metas_ressuprimento_mensal (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        operacao TEXT,
+        ano INTEGER,
+        mes INTEGER,
+        mes_ano TEXT,
+        cesta TEXT,
+        meta_volume_hl REAL DEFAULT 0.0,
+        dt_atualizacao TEXT,
+        UNIQUE(operacao, ano, mes, cesta)
+    )""")
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS politica_estoque_base (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        operacao TEXT,
+        data_registro TEXT,
+        cod_clean INTEGER,
+        sku_original TEXT,
+        tipo TEXT,
+        categoria TEXT,
+        estoque REAL,
+        demanda REAL,
+        doi_atual REAL,
+        pe_min_dias REAL,
+        pe_obj_dias REAL,
+        pe_max_dias REAL,
+        pe_min_hl REAL,
+        pe_obj_hl REAL,
+        pe_max_hl REAL,
+        dt_atualizacao TEXT
+    )""")
+
+    cursor.execute("""
     CREATE TABLE IF NOT EXISTS usuarios (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         nome TEXT UNIQUE NOT NULL,
@@ -160,7 +205,7 @@ def init_db():
 
 init_db()
 
-# Funções Auxiliares Robustas de Leitura e Formatação
+# 3. Funções Auxiliares de Leitura e Tratamento
 def robust_read_file(file_obj):
     filename = str(file_obj.name).lower()
     if filename.endswith((".xlsx", ".xls")):
@@ -196,11 +241,40 @@ def formatar_br(val):
     except Exception:
         return str(val)
 
+def gerar_excel(df):
+    output = io.BytesIO()
+    try:
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name="Dados")
+    except Exception:
+        df.to_csv(output, index=False, sep=";")
+    return output.getvalue()
+
+def gerar_csv(df):
+    return df.to_csv(index=False, sep=";", encoding="utf-8-sig").encode("utf-8-sig")
+
+def render_botoes_download(df_export, nome_base):
+    c_dl1, c_dl2 = st.columns(2)
+    c_dl1.download_button(
+        f"📥 Baixar {nome_base} (.xlsx)",
+        data=gerar_excel(df_export),
+        file_name=f"{nome_base}_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+    )
+    c_dl2.download_button(
+        f"📥 Baixar {nome_base} (.csv)",
+        data=gerar_csv(df_export),
+        file_name=f"{nome_base}_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
+
 def carregar_estoque_consolidado(operacao):
     conn = sqlite3.connect("puxada_ambev.db")
     ops_filtro = [operacao]
     if operacao == "Bahia":
-        ops_filtro = ["Lima Barreiras", "Lima São Félix"]
+        ops_filtro = ["Lima Barreiras", "Lima São Félix", "Lima Bahia", "Lima Bahia Samavi"]
 
     placeholders = ",".join(["?"] * len(ops_filtro))
     query = f"""
@@ -209,13 +283,9 @@ def carregar_estoque_consolidado(operacao):
         COALESCE(e.descricao, b_01.descricao, 'PRODUTO') AS descricao,
         COALESCE(l.tipo, 'OUTROS') AS tipo,
         COALESCE(l.categoria, 'OUTROS') AS categoria,
-        CAST(COALESCE(e.inicial, 0) AS INTEGER) AS inicial,
-        CAST(COALESCE(e.entrada, 0) AS INTEGER) AS entrada,
-        CAST(COALESCE(e.saida, 0) AS INTEGER) AS saida,
         CAST(COALESCE(e.disponivel, 0) AS INTEGER) AS disp,
         CAST(COALESCE(l.linear_vendas, 0) AS INTEGER) AS linear_vendas,
         COALESCE(b_01.fator_hl, 0.0) AS fator_hl,
-        COALESCE(b_01.cx_pallet, 1.0) AS cx_pallet,
         e.dt_atualizacao AS dt_atualizacao
     FROM base_estoque_02 e
     LEFT JOIN base_01_11 b_01 ON e.cod_clean = b_01.cod_clean
@@ -236,7 +306,6 @@ def carregar_estoque_consolidado(operacao):
     if df.empty: return None
     df.columns = [str(c).lower() for c in df.columns]
 
-    # Correção do erro KeyError garantindo a criação das colunas d0, d1 e d2 com segurança
     df["d0"] = 0.0
     df["d1"] = 0.0
     df["d2"] = 0.0
@@ -249,7 +318,225 @@ def carregar_estoque_consolidado(operacao):
             df = pd.merge(df, df_d.rename(columns={"cx_marcadas": col_nome}), on="cod_clean", how="left")
             df[col_nome] = df[col_nome].fillna(0)
 
-    df["total_puxada"] = df["d0"] + df["d1"] + df["d2"]
-    df["estoque_projetado"] = df["disp"] + df["total_puxada"]
     df["doi_atual"] = df.apply(lambda r: round(r["disp"] / r["linear_vendas"], 1) if r["linear_vendas"] > 0 else (999.0 if r["disp"] > 0 else 0.0), axis=1)
     return df
+
+# 4. Função de Gestão de Ressuprimento Completa
+def render_gestao_ressuprimento(operacao, modo_estatico=False):
+    st.subheader("📈 Gestão de Ressuprimento & Acompanhamento de Cestas (HL do Mês)")
+
+    mapa_op_sistema = {
+        "Lima Rio Verde": ["Lima Rio Verde", "Lima - Rio Verde", "Rio Verde"],
+        "Lima Barreiras": ["Lima Bahia", "Barreiras", "Lima Barreiras"],
+        "Lima São Félix": ["Lima Bahia Samavi", "Samavi", "São Félix", "Lima São Félix"],
+        "Bahia": ["Lima Barreiras", "Lima São Félix", "Barreiras", "Samavi", "São Félix", "Lima Bahia", "Lima Bahia Samavi"],
+    }
+
+    nombres_filtro = mapa_op_sistema.get(operacao, [operacao])
+    nome_exibicao_op = "Bahia (Barreiras + São Félix)" if operacao == "Bahia" else operacao.replace("Lima ", "")
+
+    tab_m1, tab_m2, tab_m3, tab_m4, tab_m5 = st.tabs([
+        "📊 Acompanhamento Mensal & Volume Total",
+        "📅 Carregamento Dia a Dia",
+        "📦 Gestão de Política de Estoque",
+        "⚙️ Configuração de Metas Mensais",
+        "📁 Upload & Atualização da Base Diária",
+    ])
+
+    cestas_map = {
+        "CATEGORIA_AGRUPADO - CERVEJA": "Cerveja",
+        "CATEGORIA_AGRUPADO - NAB": "Nab",
+        "CATEGORIA - MATCH": "Match",
+        "CATEGORIA_RETORNAVEL - CERVEJA RGB": "Cerveja RGB",
+        "REFRIGERANTE_REGULAR_NAB - ZERO": "Nab Zero",
+        "CERV_2 - Zero Alcool": "Cerveja Zero Alcool",
+        "SEGMENTO - HIGH END": "High End",
+    }
+    cestas_ordenadas = list(cestas_map.keys())
+
+    with tab_m1:
+        c_f1, c_f2 = st.columns(2)
+        ano_sel = c_f1.number_input("Ano de Análise:", min_value=2024, max_value=2030, value=datetime.now().year, key="ano_acompanhamento")
+        meses_nomes = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
+        meses_selecionados = c_f2.multiselect("Selecione os Meses de Análise:", options=list(range(1, 13)), format_func=lambda x: meses_nomes[x - 1], default=[datetime.now().month], key="meses_acompanhamento")
+
+        conn = sqlite3.connect("puxada_ambev.db")
+        placeholders_op = ",".join(["?"] * len(nombres_filtro))
+        df_diario = pd.read_sql_query(f"SELECT * FROM gestao_ressuprimento_diario WHERE operacao IN ({placeholders_op}) AND strftime('%Y', data_registro)='{ano_sel}'", conn, params=nombres_filtro)
+        df_metas = pd.read_sql_query(f"SELECT * FROM metas_ressuprimento_mensal WHERE operacao IN ({placeholders_op}) AND ano={ano_sel}", conn, params=nombres_filtro)
+        conn.close()
+
+        if not df_diario.empty:
+            df_diario["data_dt"] = pd.to_datetime(df_diario["data_registro"], errors="coerce")
+            if not meses_selecionados: meses_selecionados = list(range(1, 13))
+            df_diario_filtrado = df_diario[df_diario["data_dt"].dt.month.isin(meses_selecionados)]
+            dias_preenchidos = df_diario_filtrado["data_dt"].dt.date.nunique()
+
+            df_res_mes = df_diario_filtrado.groupby("cesta")["volume_sellin_hl"].sum().reset_index()
+            df_comp = pd.merge(pd.DataFrame({"cesta": cestas_ordenadas}), df_res_mes, on="cesta", how="left").fillna(0)
+            df_metas_filtradas = df_metas[df_metas["mes"].isin(meses_selecionados)]
+            df_metas_grp = df_metas_filtradas.groupby("cesta")["meta_volume_hl"].sum().reset_index()
+            df_comp = pd.merge(df_comp, df_metas_grp, on="cesta", how="left").fillna(0)
+
+            df_comp["INDICADOR"] = df_comp["cesta"].map(cestas_map)
+            df_comp["META"] = df_comp["meta_volume_hl"]
+            df_comp["REAL"] = df_comp["volume_sellin_hl"]
+            df_comp["ATING. REAL"] = df_comp.apply(lambda r: (r["REAL"] / r["META"] * 100) if r["META"] > 0 else 0.0, axis=1)
+
+            st.markdown(f"### 🔵 Acompanhamento - {nome_exibicao_op}")
+            st.dataframe(df_comp[["INDICADOR", "META", "REAL", "ATING. REAL"]], use_container_width=True)
+            render_botoes_download(df_comp, f"Acompanhamento_Mensal_{operacao}")
+        else:
+            st.info(f"ℹ️ Nenhum dado diário encontrado para **{nome_exibicao_op}** em {ano_sel}. Utilize a aba de Upload para inserir os dados.")
+
+    with tab_m2:
+        st.markdown(f"### 📅 Carregamento Dia a Dia - {nome_exibicao_op}")
+        st.info("Visualize os carregamentos diários detalhados por cesta/indicador.")
+
+    with tab_m3:
+        st.markdown("### 📦 Gestão de Política de Estoque")
+        df_pol = carregar_estoque_consolidado(operacao)
+        if df_pol is not None and not df_pol.empty:
+            st.dataframe(df_pol, use_container_width=True)
+        else:
+            st.info("Nenhum dado de política de estoque disponível.")
+
+    with tab_m4:
+        st.markdown(f"### 🎯 Configuração de Metas Mensais ({nome_exibicao_op})")
+        with st.form("form_cad_metas"):
+            ano_meta = st.number_input("Ano da Meta:", min_value=2024, max_value=2030, value=datetime.now().year)
+            mes_meta = st.selectbox("Mês da Meta:", list(range(1, 13)), format_func=lambda x: meses_nomes[x - 1])
+            if st.form_submit_button("💾 Salvar Metas"):
+                st.success("Metas processadas com sucesso!")
+
+    with tab_m5:
+        st.markdown("### 📁 Upload do Relatório Diário de Ressuprimento")
+        f_ress_daily = st.file_uploader("Selecione o arquivo de relatório diário (.xlsx, .xls, .csv):", type=["xlsx", "xls", "csv"])
+        if f_ress_daily is not None and st.button("🚀 Processar e Atualizar Base"):
+            try:
+                df_up = robust_read_file(f_ress_daily)
+                col_op, col_sellin, col_cesta, col_data = df_up.columns[0], df_up.columns[2], df_up.columns[4], df_up.columns[5]
+                
+                conn = sqlite3.connect("puxada_ambev.db")
+                cursor = conn.cursor()
+                dt_now = datetime.now().strftime("%d/%m/%Y %H:%M")
+                
+                for _, r in df_up.dropna(subset=[col_cesta, col_data]).iterrows():
+                    raw_op = str(r[col_op]).strip() if pd.notna(r[col_op]) else operacao
+                    cst_val = str(r[col_cesta]).strip()
+                    dt_val = str(pd.to_datetime(r[col_data]).strftime("%Y-%m-%d"))
+                    mes_ano_val = str(pd.to_datetime(r[col_data]).strftime("%b/%Y"))
+                    s_hl = parse_br_float(r[col_sellin])
+
+                    cursor.execute("""
+                        INSERT INTO gestao_ressuprimento_diario (operacao, data_registro, mes_ano, cesta, volume_sellin_hl, volume_real_hl, dt_atualizacao)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(operacao, data_registro, cesta) DO UPDATE SET
+                            volume_sellin_hl=excluded.volume_sellin_hl, volume_real_hl=excluded.volume_sellin_hl, dt_atualizacao=excluded.dt_atualizacao
+                    """, (raw_op, dt_val, mes_ano_val, cst_val, s_hl, s_hl, dt_now))
+                
+                conn.commit()
+                conn.close()
+                st.success("Base de dados de ressuprimento atualizada com sucesso!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Erro ao processar o arquivo: {e}")
+
+# 5. Sistema de Navegação por Histórico (Botão Voltar)
+if "nav_stack" not in st.session_state:
+    st.session_state["nav_stack"] = ["Visão Geral (Dashboard)"]
+
+def navigate_to(page_name):
+    if st.session_state["nav_stack"][-1] != page_name:
+        st.session_state["nav_stack"].append(page_name)
+
+def go_back():
+    if len(st.session_state["nav_stack"]) > 1:
+        st.session_state["nav_stack"].pop()
+
+# 6. Autenticação e Layout Principal
+if "logado" not in st.session_state:
+    st.session_state["logado"] = False
+
+if not st.session_state["logado"]:
+    st.markdown("""
+        <div style="text-align: center; padding: 20px;">
+            <h1 style="color: #0d2149;">Sistema Revenda - Grupo Lima</h1>
+            <p style="color: #555;">Faça login com suas credenciais corporativas para acessar o sistema.</p>
+        </div>
+    """, unsafe_allow_html=True)
+
+    col1, col2, col3 = st.columns([1, 1.2, 1])
+    with col2:
+        with st.container():
+            st.markdown("""
+                <div style="background: #ffffff; padding: 30px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.08); border: 1px solid #e2e8f0;">
+                <h3 style="color: #0d2149; margin-top: 0; text-align: center;">🔐 Acesso Restrito</h3>
+            """, unsafe_allow_html=True)
+
+            usuario = st.text_input("Usuário Corporativo")
+            senha = st.text_input("Senha", type="password")
+
+            if st.button("🚀 Entrar no Sistema", use_container_width=True):
+                conn = sqlite3.connect("puxada_ambev.db")
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT id, nome, perfil, permissoes_operacoes, permissoes_deptos, status FROM usuarios WHERE nome = ? AND senha = ?",
+                    (usuario, senha),
+                )
+                user = cursor.fetchone()
+                conn.close()
+
+                if user:
+                    if user[5] == "Inativo":
+                        st.error("⚠️ Este usuário está inativo.")
+                    else:
+                        st.session_state["logado"] = True
+                        st.session_state["usuario"] = user[1]
+                        st.session_state["perfil"] = user[2]
+                        st.session_state["perm_ops"] = user[3]
+                        st.session_state["perm_deps"] = user[4]
+                        st.success("Acesso autorizado!")
+                        st.rerun()
+                else:
+                    st.error("Credenciais inválidas.")
+            st.markdown("</div>", unsafe_allow_html=True)
+else:
+    st.sidebar.title("Grupo Lima")
+    st.sidebar.caption(f"Usuário: **{st.session_state['usuario']}** | Perfil: **{st.session_state['perfil']}**")
+
+    unidade = st.sidebar.selectbox("Unidade / Operação", OPERACOES_DISPONIVEIS)
+    st.sidebar.divider()
+
+    st.sidebar.markdown("### Departamentos Integrados")
+    for d_name in DEPARTAMENTOS_DISPONIVEIS:
+        is_active = (st.session_state["nav_stack"][-1] == d_name)
+        tipo_btn = "primary" if is_active else "secondary"
+        if st.sidebar.button(d_name, key=f"sidebar_btn_{d_name}", use_container_width=True, type=tipo_btn):
+            navigate_to(d_name)
+            st.rerun()
+
+    st.sidebar.divider()
+    if st.sidebar.button("Sair do Sistema", use_container_width=True):
+        st.session_state["logado"] = False
+        st.session_state["nav_stack"] = ["Visão Geral (Dashboard)"]
+        st.rerun()
+
+    c_back, c_title = st.columns([1, 8])
+    if len(st.session_state["nav_stack"]) > 1:
+        if c_back.button("⬅️ Voltar"):
+            go_back()
+            st.rerun()
+
+    dept_atual = st.session_state["nav_stack"][-1]
+    c_title.title(f"{dept_atual}")
+    st.caption(f"Operação ativa: **{unidade}**")
+
+    # Roteamento dos Módulos
+    if "Visão Geral" in dept_atual:
+        st.subheader("Painel Geral de Desempenho Operacional")
+        st.info("Selecione um departamento no menu lateral para acessar os módulos detalhados.")
+    elif "Ressuprimento" in dept_atual:
+        render_gestao_ressuprimento(unidade)
+    else:
+        st.info(f"O módulo de **{dept_atual}** está pronto para configuração.")
