@@ -1144,45 +1144,34 @@ def carregar_estoque_consolidado(operacao):
 
     df.columns = [str(c).lower() for c in df.columns]
 
-    # Consolida as marcações sem criar colunas duplicadas (d0_x/d0_y).
-    # O erro anterior ocorria porque d0, d1 e d2 eram criadas antes dos merges.
-    marcacoes = pd.DataFrame({"cod_clean": df["cod_clean"]}).drop_duplicates()
+    # Blindagem robusta: Garante que as colunas d0, d1, d2 existam no DataFrame mesmo sem registros
+    df["d0"] = 0.0
+    df["d1"] = 0.0
+    df["d2"] = 0.0
 
     if not df_marc.empty:
-        df_marc.columns = [str(c).lower() for c in df_marc.columns]
-        df_marc["data_puxada"] = pd.to_datetime(
-            df_marc["data_puxada"], errors="coerce"
-        )
-        df_marc["cx_marcadas"] = pd.to_numeric(
-            df_marc["cx_marcadas"], errors="coerce"
-        ).fillna(0.0)
-        df_marc = df_marc.dropna(subset=["data_puxada"])
-
-        datas_pux = sorted(df_marc["data_puxada"].unique())[:3]
-        nomes_dias = ["d0", "d1", "d2"]
-
-        for nome_dia, data_puxada in zip(nomes_dias, datas_pux):
-            por_produto = (
-                df_marc.loc[df_marc["data_puxada"] == data_puxada]
-                .groupby("cod_clean", as_index=False)["cx_marcadas"]
-                .sum()
-                .rename(columns={"cx_marcadas": nome_dia})
-            )
-            marcacoes = marcacoes.merge(por_produto, on="cod_clean", how="left")
-
-    for nome_dia in ("d0", "d1", "d2"):
-        if nome_dia not in marcacoes.columns:
-            marcacoes[nome_dia] = 0.0
-        marcacoes[nome_dia] = pd.to_numeric(
-            marcacoes[nome_dia], errors="coerce"
-        ).fillna(0.0)
-
-    df = df.merge(
-        marcacoes[["cod_clean", "d0", "d1", "d2"]],
-        on="cod_clean",
-        how="left",
-    )
-    df[["d0", "d1", "d2"]] = df[["d0", "d1", "d2"]].fillna(0.0)
+        datas_pux = sorted(df_marc["data_puxada"].dropna().unique())
+        if len(datas_pux) > 0:
+            d0_date = datas_pux[0]
+            df_d0 = df_marc[df_marc["data_puxada"] == d0_date].groupby("cod_clean")["cx_marcadas"].sum().reset_index()
+            df = pd.merge(df, df_d0.rename(columns={"cx_marcadas": "d0_val"}), on="cod_clean", how="left")
+            df["d0"] = df["d0_val"].fillna(0)
+            if "d0_val" in df.columns:
+                df.drop(columns=["d0_val"], inplace=True)
+        if len(datas_pux) > 1:
+            d1_date = datas_pux[1]
+            df_d1 = df_marc[df_marc["data_puxada"] == d1_date].groupby("cod_clean")["cx_marcadas"].sum().reset_index()
+            df = pd.merge(df, df_d1.rename(columns={"cx_marcadas": "d1_val"}), on="cod_clean", how="left")
+            df["d1"] = df["d1_val"].fillna(0)
+            if "d1_val" in df.columns:
+                df.drop(columns=["d1_val"], inplace=True)
+        if len(datas_pux) > 2:
+            d2_date = datas_pux[2]
+            df_d2 = df_marc[df_marc["data_puxada"] == d2_date].groupby("cod_clean")["cx_marcadas"].sum().reset_index()
+            df = pd.merge(df, df_d2.rename(columns={"cx_marcadas": "d2_val"}), on="cod_clean", how="left")
+            df["d2"] = df["d2_val"].fillna(0)
+            if "d2_val" in df.columns:
+                df.drop(columns=["d2_val"], inplace=True)
 
     df["classe_abc"] = "C"
     df["total_puxada"] = df["d0"] + df["d1"] + df["d2"]
