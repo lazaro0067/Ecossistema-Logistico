@@ -179,6 +179,13 @@ def menu_lateral(usuario: dict, atual: str) -> None:
             if pode_acessar_modulo(usuario, chave):
                 _nav(f"{m['icone']}  {m['rotulo']}", chave, atual)
         st.markdown('<div class="eco-menu-titulo">Conta</div>', unsafe_allow_html=True)
+        try:
+            from repositories import motoristas_repo
+
+            n_avisos = motoristas_repo.nao_lidas(usuario["id"])
+        except Exception:
+            n_avisos = 0
+        _nav(f"🔔  Notificações ({n_avisos})" if n_avisos else "🔔  Notificações", "notificacoes", atual)
         if e_master(usuario):
             _nav("🔑  Gestão de Acessos", MODULO_ADMIN, atual)
         _nav("⚙️  Minha conta", "conta", atual)
@@ -247,6 +254,21 @@ def app_carreteiro() -> None:
         app_motorista.render(usuario)
 
 
+def _alertas(usuario: dict) -> None:
+    """Gera os avisos semanais (CNH vencendo) e lembra o usuário das notificações não lidas."""
+    try:
+        from repositories import motoristas_repo
+        from services import motoristas_service
+
+        motoristas_service.verificar_alertas_cnh()
+        n = motoristas_repo.nao_lidas(usuario["id"])
+    except Exception:
+        return
+    if n and not st.session_state.get("_avisou_notif"):
+        st.session_state["_avisou_notif"] = True
+        st.toast(f"Você tem {n} notificação(ões) — veja em 🔔 Notificações.", icon="🔔")
+
+
 def main() -> None:
     tema.aplicar()
     try:
@@ -285,6 +307,7 @@ def main() -> None:
     if pagina in MODULOS and not pode_acessar_modulo(usuario, pagina):
         pagina = "inicio"
 
+    _alertas(usuario)
     menu_lateral(usuario, pagina)
     operacao_id = session.operacao_id()
     ui.mostrar_avisos()
@@ -296,7 +319,7 @@ def main() -> None:
                 "escolha uma filial no menu ao lado.")
         return
 
-    if operacao_id is None and pagina not in (MODULO_ADMIN, "conta"):
+    if operacao_id is None and pagina not in (MODULO_ADMIN, "conta", "notificacoes"):
         tema.cabecalho("Nenhuma operação disponível", icone="🏢")
         if e_master(usuario):
             st.info("Cadastre a primeira operação (filial/CDD) em **🔑 Gestão de Acessos › Operações**.")

@@ -25,11 +25,11 @@ def fabricas_df() -> pd.DataFrame:
     return query_df("SELECT id, nome, cidade, uf FROM fabricas ORDER BY nome")
 
 
-def salvar_fabrica(fid: int | None, nome: str, cidade: str, uf: str) -> None:
+def salvar_fabrica(fid: int | None, nome: str, cidade: str, uf: str) -> int | None:
     if fid:
         execute("UPDATE fabricas SET nome=?, cidade=?, uf=? WHERE id=?", (nome, cidade, uf, fid))
-    else:
-        execute("INSERT INTO fabricas (nome, cidade, uf) VALUES (?, ?, ?)", (nome, cidade, uf))
+        return fid
+    return execute("INSERT INTO fabricas (nome, cidade, uf) VALUES (?, ?, ?)", (nome, cidade, uf))
 
 
 def motoristas_df(operacao_id: int) -> pd.DataFrame:
@@ -37,12 +37,16 @@ def motoristas_df(operacao_id: int) -> pd.DataFrame:
                     (operacao_id,))
 
 
-def salvar_motorista(operacao_id: int, mid: int | None, nome: str, cnh: str, tel: str) -> None:
+def salvar_motorista(operacao_id: int, mid: int | None, nome: str, cnh: str, tel: str, **extras) -> int | None:
+    """extras (opcionais): cpf, cnh_validade, gestor_id, salario_fixo."""
+    campos = {"nome": nome, "cnh": cnh, "telefone": tel,
+              **{k: v for k, v in extras.items() if k in ("cpf", "cnh_validade", "gestor_id", "salario_fixo")}}
     if mid:
-        execute("UPDATE motoristas SET nome=?, cnh=?, telefone=? WHERE id=?", (nome, cnh, tel, mid))
-    else:
-        execute("INSERT INTO motoristas (operacao_id, nome, cnh, telefone) VALUES (?, ?, ?, ?)",
-                (operacao_id, nome, cnh, tel))
+        execute(f"UPDATE motoristas SET {', '.join(k + ' = ?' for k in campos)} WHERE id = ?", (*campos.values(), mid))
+        return mid
+    cols = ["operacao_id", *campos]
+    return execute(f"INSERT INTO motoristas ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
+                   (operacao_id, *campos.values()))
 
 
 def excluir(tabela: str, rid: int) -> None:

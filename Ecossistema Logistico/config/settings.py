@@ -45,6 +45,7 @@ MODULOS = {
         "cadastros": "⚙️ Cadastros",
         "carreteiro": "🚛 App Carreteiro",
         "tmv_tma": "⏱️ TMV / TMA & Viagens",
+        "remuneracao": "💵 Remuneração dos Motoristas",
     }},
     "ressuprimento": {"rotulo": "Ressuprimento", "icone": "🔄", "abas": {
         "bases": "📁 Atualização de Bases",
@@ -99,7 +100,7 @@ GRUPOS_ABAS = {
     "puxada": {
         "🚚 Fretes": ["cotacao", "aprovacoes", "encerramento", "painel", "obz"],
         "🚛 Operação": ["carreteiro", "descarga", "vinculos", "pedidos"],
-        "📊 Indicadores": ["tmv_tma", "viagens"],
+        "📊 Indicadores": ["tmv_tma", "viagens", "remuneracao"],
         "⚙️ Cadastros": ["cadastros"],
     },
     "ressuprimento": {
@@ -188,7 +189,9 @@ TOLERANCIA_APRESENTACAO_MIN = 0   # minutos de tolerância após o horário agen
 # endereço publicado do sistema (usado se APP_URL não estiver nos Secrets)
 APP_URL_PADRAO = "https://ecossistema-logistico-brlwuspuzz9lxealyzculu.streamlit.app"
 RAIO_REVENDA_PADRAO_M = 300       # raio (m) da revenda para validar chegada/saída por GPS
-DESFAZER_ETAPA_MIN = 15           # motorista pode desfazer a última etapa até X minutos depois
+DESFAZER_ETAPA_MIN = 15
+CNH_ALERTA_DIAS = 90              # começa a avisar o gestor 3 meses antes de a CNH vencer
+CNH_ALERTA_INTERVALO_DIAS = 7     # repete o aviso toda semana até renovar           # motorista pode desfazer a última etapa até X minutos depois
 
 
 # --- Armazém / Estoque ----------------------------------------------------

@@ -35,6 +35,16 @@ def render(usuario: dict, operacao_id: int) -> None:
     primeiro = usuario["nome"].split()[0]
     ui.cabecalho(f"Olá, {primeiro}!", "Resumo do dia das suas pastas", "👋")
     _bloco_alertas(usuario, operacao_id)
+    from repositories import motoristas_repo
+
+    avisos = motoristas_repo.notificacoes(usuario["id"], apenas_nao_lidas=True, limite=5)
+    if avisos:
+        with st.container(border=True):
+            a, b = st.columns([5, 1.2])
+            a.markdown(f"**🔔 {len(avisos)} aviso(s) para você** — " + " · ".join(n["titulo"] for n in avisos[:3]))
+            if b.button("Ver avisos ›", key="ini_notif", **ui.LARGURA):
+                session.ir_para("notificacoes")
+                st.rerun()
     mes = ui.mes_atual()
     cards, mostrou = [], False
 

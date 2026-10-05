@@ -374,6 +374,14 @@ def render(usuario: dict) -> None:
         return
     _topo(usuario, mot)
     ui.mostrar_avisos()
+    if mot.get("cnh_validade"):
+        from services.motoristas_service import status_cnh
+
+        cor, rotulo, dias = status_cnh(mot["cnh_validade"])
+        if dias is not None and dias <= 90:
+            (st.error if dias <= 30 else st.warning)(
+                f"🪪 Sua CNH {'venceu' if dias < 0 else 'vence em breve'}: {rotulo.split(' ', 1)[-1]}. "
+                "Renove e avise a Puxada para atualizar o cadastro.")
     geo = localizacao(key="geo_motorista")
     if geo and geo.get("erro"):
         st.caption("Sem GPS o app funciona normalmente — mas a Puxada não consegue confirmar a chegada na revenda.")

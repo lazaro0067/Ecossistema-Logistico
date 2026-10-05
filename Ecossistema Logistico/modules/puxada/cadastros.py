@@ -83,37 +83,42 @@ def _aba_carretas(operacao_id: int) -> None:
                         "status": st.column_config.SelectboxColumn("Status ✏️", options=STATUS_CARRETA)})
 
 
-def _aba_fabricas() -> None:
+def _aba_fabricas(operacao_id: int) -> None:
+    from repositories import motoristas_repo
+
+    st.caption("💵 **Valor da viagem** = quanto o motorista recebe por viagem para cada fábrica nesta filial "
+               "(entra na aba 💵 Remuneração dos Motoristas).")
     df = logistica_repo.fabricas_df()
+    valores = motoristas_repo.valores_viagem(operacao_id)
+    df["valor_viagem"] = df["id"].map(lambda i: valores.get(int(i), 0.0)) if not df.empty else []
+
+    def _valor(fid, v):
+        if v is None:
+            return
+        if float(v or 0) < 0:
+            raise RegraNegocioError("O valor da viagem não pode ser negativo.")
+        motoristas_repo.salvar_valor_viagem(operacao_id, int(fid), float(v or 0))
 
     def alterar(linha, alt):
-        logistica_repo.salvar_fabrica(int(linha["id"]), _obrig(alt.get("nome", linha["nome"]), "o nome"),
-                                      alt.get("cidade", linha["cidade"]) or "", (alt.get("uf", linha["uf"]) or "").upper())
+        if any(k in alt for k in ("nome", "cidade", "uf")):
+            logistica_repo.salvar_fabrica(int(linha["id"]), _obrig(alt.get("nome", linha["nome"]), "o nome"),
+                                          alt.get("cidade", linha["cidade"]) or "",
+                                          (alt.get("uf", linha["uf"]) or "").upper())
+        if "valor_viagem" in alt:
+            _valor(linha["id"], alt["valor_viagem"])
 
     def incluir(n):
-        logistica_repo.salvar_fabrica(None, _obrig(n.get("nome"), "o nome"), n.get("cidade") or "", (n.get("uf") or "").upper())
+        fid = logistica_repo.salvar_fabrica(None, _obrig(n.get("nome"), "o nome"), n.get("cidade") or "",
+                                            (n.get("uf") or "").upper())
+        if fid and n.get("valor_viagem"):
+            _valor(fid, n["valor_viagem"])
 
-    editor_autosave(df, "ed_fabricas", ["nome", "cidade", "uf"], alterar, incluir,
+    editor_autosave(df, f"ed_fabricas_{operacao_id}", ["nome", "cidade", "uf", "valor_viagem"], alterar, incluir,
                     lambda l: logistica_repo.excluir("fabricas", int(l["id"])), column_config={
                         "id": None, "nome": st.column_config.TextColumn("Fábrica ✏️", required=True),
-                        "cidade": "Cidade ✏️", "uf": st.column_config.TextColumn("UF ✏️", max_chars=2)})
-
-
-def _aba_motoristas(operacao_id: int) -> None:
-    df = logistica_repo.motoristas_df(operacao_id)
-
-    def alterar(linha, alt):
-        logistica_repo.salvar_motorista(operacao_id, int(linha["id"]), _obrig(alt.get("nome", linha["nome"]), "o nome"),
-                                        alt.get("cnh", linha["cnh"]) or "", alt.get("telefone", linha["telefone"]) or "")
-
-    def incluir(n):
-        logistica_repo.salvar_motorista(operacao_id, None, _obrig(n.get("nome"), "o nome"), n.get("cnh") or "",
-                                        n.get("telefone") or "")
-
-    editor_autosave(df, f"ed_motoristas_{operacao_id}", ["nome", "cnh", "telefone"], alterar, incluir,
-                    lambda l: logistica_repo.excluir("motoristas", int(l["id"])), column_config={
-                        "id": None, "nome": st.column_config.TextColumn("Motorista ✏️", required=True),
-                        "cnh": "CNH ✏️", "telefone": "Telefone ✏️"})
+                        "cidade": "Cidade ✏️", "uf": st.column_config.TextColumn("UF ✏️", max_chars=2),
+                        "valor_viagem": st.column_config.NumberColumn("💵 Valor da viagem (R$) ✏️", min_value=0,
+                                                                      format="R$ %.2f")})
 
 
 def render(usuario: dict, operacao_id: int) -> None:
@@ -146,9 +151,11 @@ def render(usuario: dict, operacao_id: int) -> None:
     with abas[3]:
         _aba_carretas(operacao_id)
     with abas[4]:
-        _aba_fabricas()
+        _aba_fabricas(operacao_id)
     with abas[5]:
-        _aba_motoristas(operacao_id)
+        from modules.puxada import motoristas
+
+        motoristas.render(operacao_id)
 
     with abas[6]:
         with st.form("f_cc", clear_on_submit=True):

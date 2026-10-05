@@ -12,6 +12,7 @@ from modules.financeiro import page as financeiro
 from modules.frota import page as frota
 from modules.gente import page as gente
 from modules.inicio import page as inicio
+from modules.notificacoes import page as notificacoes
 from modules.puxada import page as puxada
 from modules.relatorios import page as relatorios
 from modules.ressuprimento import page as ressuprimento
@@ -31,4 +32,5 @@ PAGINAS = {
     "relatorios": relatorios.render,
     "admin": admin.render,
     "conta": conta.render,
+    "notificacoes": notificacoes.render,
 }

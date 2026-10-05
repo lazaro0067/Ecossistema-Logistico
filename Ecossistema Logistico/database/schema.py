@@ -497,6 +497,27 @@ CREATE TABLE IF NOT EXISTS viagem_fotos (
     criado_em  TEXT
 );
 
+-- ============ MOTORISTAS: REMUNERAÇÃO E NOTIFICAÇÕES ============
+CREATE TABLE IF NOT EXISTS remuneracao_fabrica (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id  INTEGER NOT NULL REFERENCES operacoes(id),
+    fabrica_id   INTEGER NOT NULL REFERENCES fabricas(id) ON DELETE CASCADE,
+    valor_viagem REAL DEFAULT 0,
+    UNIQUE (operacao_id, fabrica_id)
+);
+
+CREATE TABLE IF NOT EXISTS notificacoes (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    usuario_id  INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+    tipo        TEXT NOT NULL,
+    chave       TEXT,
+    titulo      TEXT NOT NULL,
+    texto       TEXT,
+    pagina      TEXT,
+    criado_em   TEXT NOT NULL,
+    lida_em     TEXT
+);
+
 -- ============ CONTROLE ============
 CREATE TABLE IF NOT EXISTS _migracoes (
     id          TEXT PRIMARY KEY,
@@ -543,6 +564,14 @@ MIGRACOES: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS ix_desc_viagem ON agendamentos_descarga(viagem_id);
         CREATE INDEX IF NOT EXISTS ix_vinc_viagem ON vinculos_pedidos(viagem_id);
         CREATE INDEX IF NOT EXISTS ix_pedmarc_num ON pedidos_marcados(operacao_id, numero_pedido);
+    """),
+    ("014_motoristas_cnh", """
+        ALTER TABLE motoristas ADD COLUMN cpf TEXT;
+        ALTER TABLE motoristas ADD COLUMN cnh_validade TEXT;
+        ALTER TABLE motoristas ADD COLUMN gestor_id INTEGER;
+        ALTER TABLE motoristas ADD COLUMN salario_fixo REAL DEFAULT 0;
+        CREATE INDEX IF NOT EXISTS ix_notif_usuario ON notificacoes(usuario_id, lida_em);
+        CREATE INDEX IF NOT EXISTS ix_notif_chave ON notificacoes(usuario_id, chave, criado_em);
     """),
 ]
 
