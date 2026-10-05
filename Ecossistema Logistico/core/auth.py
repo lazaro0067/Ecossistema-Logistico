@@ -59,10 +59,16 @@ def _perms(usuario: dict) -> set[str]:
     return set(usuario.get("modulos", []))
 
 
+# Telas novas liberadas junto com a tela "irmã" que o usuário já tinha (evita reconfigurar acessos)
+_ABAS_IRMAS = {"armazem.pedidos": "armazem.patio", "puxada.pedidos_dia": "puxada.disponibilidade",
+               "ressuprimento.puxada_pedidos": "ressuprimento.sugestao"}
+
+
 def pode_acessar_aba(usuario: dict, modulo: str, aba: str) -> bool:
     """Acesso à pasta inteira ("puxada") ou à subpasta ("puxada.aprovacoes")."""
     p = _perms(usuario)
-    return e_master(usuario) or modulo in p or f"{modulo}.{aba}" in p
+    chave = f"{modulo}.{aba}"
+    return e_master(usuario) or modulo in p or chave in p or _ABAS_IRMAS.get(chave) in p
 
 
 def abas_permitidas(usuario: dict, modulo: str) -> list[str]:

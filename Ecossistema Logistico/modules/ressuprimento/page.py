@@ -1,5 +1,6 @@
 """Módulo Ressuprimento — cada aba (pasta) vive no seu próprio arquivo."""
 from core import ui
+from modules.puxada import pedidos_dia
 from modules.ressuprimento import bases, cestas, diario, estoque, metas, politica, sugestao
 
 ABAS = {
@@ -10,6 +11,7 @@ ABAS = {
     "diario": diario.render,
     "politica": politica.render,
     "metas": metas.render,
+    "puxada_pedidos": pedidos_dia.tela_ressuprimento,
 }
 
 

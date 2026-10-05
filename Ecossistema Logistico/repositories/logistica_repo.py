@@ -153,17 +153,17 @@ def meses_vinculos(operacao_id: int) -> list[str]:
 
 # --- Disponibilidade planejada das placas -------------------------------------------
 def disponibilidade_df(operacao_id: int, de: str, ate: str) -> pd.DataFrame:
-    return query_df("""SELECT placa, data, status, observacao, atualizado_por, dt_atualizacao
-                       FROM disponibilidade_placas WHERE operacao_id = ? AND data >= ? AND data <= ?""",
-                    (operacao_id, de, ate))
+    f_sql, ids = operacoes_repo.filtro("operacao_id", operacao_id)
+    return query_df(f"""SELECT operacao_id, placa, data, status, sugestao, observacao, atualizado_por, dt_atualizacao
+                        FROM disponibilidade_placas WHERE {f_sql} AND data >= ? AND data <= ?""", (*ids, de, ate))
 
 
 def salvar_disponibilidade(operacao_id: int, placa: str, data: str, status: str | None, obs: str | None,
-                           usuario: str) -> None:
+                           usuario: str, sugestao: str | None = None) -> None:
     """status None = volta para o automático (apaga o planejamento manual)."""
     execute("DELETE FROM disponibilidade_placas WHERE operacao_id = ? AND placa = ? AND data = ?",
             (operacao_id, placa, data))
     if status:
-        execute("""INSERT INTO disponibilidade_placas (operacao_id, placa, data, status, observacao, atualizado_por,
-                   dt_atualizacao) VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (operacao_id, placa, data, status, obs, usuario, tempo.agora_str()))
+        execute("""INSERT INTO disponibilidade_placas (operacao_id, placa, data, status, sugestao, observacao,
+                   atualizado_por, dt_atualizacao) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (operacao_id, placa, data, status, sugestao, obs, usuario, tempo.agora_str()))

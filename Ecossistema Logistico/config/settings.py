@@ -47,6 +47,7 @@ MODULOS = {
         "tmv_tma": "⏱️ TMV / TMA & Viagens",
         "remuneracao": "💵 Remuneração & Produtividade",
         "disponibilidade": "🗓️ Disponibilidade de Placas",
+        "pedidos_dia": "📋 Pedidos D0 / D+1",
     }},
     "ressuprimento": {"rotulo": "Ressuprimento", "icone": "🔄", "abas": {
         "bases": "📁 Atualização de Bases",
@@ -56,6 +57,7 @@ MODULOS = {
         "diario": "📅 Carregamento Dia a Dia",
         "politica": "📦 Política de Estoque",
         "metas": "🎯 Metas Mensais",
+        "puxada_pedidos": "🚛 Placas & Pedidos da Puxada",
     }},
     "vendas": {"rotulo": "Vendas", "icone": "📈", "abas": {
         "comercial": "🛍️ Estoque do Dia (Portal RN)",
@@ -69,6 +71,7 @@ MODULOS = {
         "manter": "🔄 Gerenciar para Manter",
         "melhorar": "🚀 Gerenciar para Melhorar",
         "patio": "🅿️ Pátio / Descarga",
+        "pedidos": "📋 Gestão de Pedidos (Puxada)",
         "estrutura": "🏗️ Capacidade & Áreas",
         "produtos": "🔎 Catálogo de Produtos",
     }},
@@ -99,7 +102,7 @@ MODULO_ADMIN = "admin"
 # Pasta sem grupo definido (ou com poucas abas) mostra as telas direto.
 GRUPOS_ABAS = {
     "puxada": {
-        "🚛 Frota própria": ["carreteiro", "disponibilidade", "remuneracao", "tmv_tma"],
+        "🚛 Frota própria": ["carreteiro", "disponibilidade", "pedidos_dia", "remuneracao", "tmv_tma"],
         "🚚 Frete spot": ["cotacao", "aprovacoes", "encerramento", "painel", "obz"],
         "🏭 Operação": ["descarga", "vinculos", "pedidos", "viagens"],
         "⚙️ Cadastros": ["cadastros"],
@@ -107,7 +110,7 @@ GRUPOS_ABAS = {
     "ressuprimento": {
         "📁 Bases": ["bases"],
         "📦 Estoque": ["estoque", "politica"],
-        "🛒 Marcação": ["sugestao", "diario"],
+        "🛒 Marcação": ["sugestao", "puxada_pedidos", "diario"],
         "📈 Acompanhamento": ["cestas", "metas"],
     },
     "vendas": {
@@ -118,7 +121,7 @@ GRUPOS_ABAS = {
     "armazem": {
         "🏥 Saúde & Estoque": ["saude", "produtos"],
         "📘 Book DPO": ["fundamentos", "manter", "melhorar"],
-        "🏗️ Estrutura & Pátio": ["estrutura", "patio"],
+        "🏗️ Pátio & Pedidos": ["patio", "pedidos", "estrutura"],
     },
     "financeiro": {
         "💳 Contas": ["diario", "contas", "vencimentos"],
@@ -194,7 +197,11 @@ RAIO_REVENDA_PADRAO_M = 300       # raio (m) da revenda para validar chegada/sa�
 DESFAZER_ETAPA_MIN = 15
 TIPOS_DESCARGA_APP = ["Retornável", "Descartável"]  # produto informado pelo motorista no agendamento
 DISPONIBILIDADE_DIAS = 3          # planejamento das placas: hoje + 3 dias
-STATUS_DISPONIBILIDADE = ["Disponível", "Programada", "Em viagem", "Manutenção", "Sem motorista", "Indisponível"]
+STATUS_DISPONIBILIDADE = ["Disponível", "Indisponível Frota", "Indisponível Viagem"]
+SUGESTAO_PEDIDO = ["Retornável", "Descartável"]
+# Retornável: paletes por embalagem (chave da coluna → rótulo)
+EMBALAGENS_RETORNAVEL = {"p600_ambar": "600 ml Âmbar", "p600_verde": "600 ml Verde", "p1l": "1 Litro", "p300": "300 ml"}
+STATUS_PEDIDO_PUXADA = ["Aberto", "Finalizado", "Cancelado"]
 CNH_ALERTA_DIAS = 90              # começa a avisar o gestor 3 meses antes de a CNH vencer
 CNH_ALERTA_INTERVALO_DIAS = 7     # repete o aviso toda semana até renovar           # motorista pode desfazer a última etapa até X minutos depois
 

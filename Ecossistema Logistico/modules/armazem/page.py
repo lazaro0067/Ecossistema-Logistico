@@ -150,6 +150,12 @@ def aba_melhorar(usuario: dict, operacao_id: int) -> None:
     _book(usuario, operacao_id, "melhorar", "arm_mel")
 
 
+def aba_pedidos(usuario: dict, operacao_id: int) -> None:
+    from modules.puxada import pedidos_dia
+
+    pedidos_dia.tela_armazem(usuario, operacao_id)
+
+
 def aba_patio(usuario: dict, operacao_id: int) -> None:
     descarga.tela_patio(usuario, operacao_id, "arm")
 
@@ -230,5 +236,5 @@ def render(usuario: dict, operacao_id: int) -> None:
     ui.cabecalho_modulo("armazem")
     ui.abas_modulo(usuario, "armazem", {
         "saude": aba_saude, "fundamentos": aba_fundamentos, "manter": aba_manter, "melhorar": aba_melhorar,
-        "patio": aba_patio, "estrutura": aba_estrutura, "produtos": aba_produtos,
+        "patio": aba_patio, "pedidos": aba_pedidos, "estrutura": aba_estrutura, "produtos": aba_produtos,
     }, usuario, operacao_id)

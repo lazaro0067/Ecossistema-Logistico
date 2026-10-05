@@ -349,6 +349,29 @@ CREATE TABLE IF NOT EXISTS janelas_descarga (
     ativo       INTEGER DEFAULT 1
 );
 
+-- Pedidos do dia (D0) e do dia seguinte (D+1) montados pela Puxada para cada placa.
+-- Retornável: paletes por embalagem, Descartável: paletes no total. O armazém finaliza.
+CREATE TABLE IF NOT EXISTS pedidos_puxada (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id    INTEGER NOT NULL REFERENCES operacoes(id),
+    data           TEXT NOT NULL,
+    placa          TEXT NOT NULL,
+    numero_pedido  TEXT NOT NULL,
+    tipo           TEXT NOT NULL,
+    p600_ambar     REAL DEFAULT 0,
+    p600_verde     REAL DEFAULT 0,
+    p1l            REAL DEFAULT 0,
+    p300           REAL DEFAULT 0,
+    paletes        REAL DEFAULT 0,
+    status         TEXT DEFAULT 'Aberto',
+    observacao     TEXT,
+    criado_por     TEXT,
+    criado_em      TEXT,
+    atualizado_em  TEXT,
+    finalizado_por TEXT,
+    finalizado_em  TEXT
+);
+
 CREATE TABLE IF NOT EXISTS vinculos_pedidos (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     operacao_id       INTEGER NOT NULL REFERENCES operacoes(id),
@@ -628,6 +651,11 @@ MIGRACOES: list[tuple[str, str]] = [
         ALTER TABLE agendamentos_descarga ADD COLUMN janela_id INTEGER;
         ALTER TABLE viagens_carreteiro ADD COLUMN desc_janela_id INTEGER;
         CREATE INDEX IF NOT EXISTS ix_janela_op ON janelas_descarga(operacao_id);
+    """),
+    # Disponibilidade com sugestão de produto e pedidos D0/D+1 da Puxada
+    ("019_pedidos_puxada", """
+        ALTER TABLE disponibilidade_placas ADD COLUMN sugestao TEXT;
+        CREATE INDEX IF NOT EXISTS ix_pedpux_op ON pedidos_puxada(operacao_id, data);
     """),
 ]
 
