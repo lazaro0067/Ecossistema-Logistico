@@ -1,0 +1,9 @@
+streamlit>=1.46
+pandas>=2.0
+numpy
+plotly>=5.19
+openpyxl
+xlrd
+python-docx
+psycopg[binary,pool]>=3.1
+tzdata
