@@ -5,13 +5,14 @@ from core import tempo
 from database.connection import execute, query_df, query_one
 from repositories import operacoes_repo
 
-CAMPOS = ["data", "placa", "numero_pedido", "tipo", "p600_ambar", "p600_verde", "p1l", "p300", "paletes", "observacao"]
+CAMPOS = ["data", "placa", "numero_pedido", "fabrica_id", "tipo", "p600_ambar", "p600_verde", "p1l", "p300", "paletes", "observacao"]
 
 
 def pedidos_df(operacao_id: int, de: str | None = None, ate: str | None = None,
                apenas_abertos: bool = False) -> pd.DataFrame:
     f_sql, ids = operacoes_repo.filtro("p.operacao_id", operacao_id)
-    sql, p = (f"""SELECT p.*, o.nome AS filial FROM pedidos_puxada p JOIN operacoes o ON o.id = p.operacao_id
+    sql, p = (f"""SELECT p.*, o.nome AS filial, f.nome AS fabrica FROM pedidos_puxada p
+                  JOIN operacoes o ON o.id = p.operacao_id LEFT JOIN fabricas f ON f.id = p.fabrica_id
                   WHERE {f_sql}""", list(ids))
     if de:
         sql += " AND p.data >= ?"
@@ -25,7 +26,8 @@ def pedidos_df(operacao_id: int, de: str | None = None, ate: str | None = None,
 
 
 def pedido(pid: int) -> dict | None:
-    return query_one("SELECT * FROM pedidos_puxada WHERE id = ?", (pid,))
+    return query_one("""SELECT p.*, f.nome AS fabrica FROM pedidos_puxada p LEFT JOIN fabricas f ON f.id = p.fabrica_id
+                        WHERE p.id = ?""", (pid,))
 
 
 def numero_existe(operacao_id: int, numero: str, ignorar_id: int | None) -> bool:

@@ -44,7 +44,7 @@ def _num(v) -> float:
 
 
 def salvar_pedido(operacao_id: int, pid: int | None, data: dt.date, placa: str, numero: str, tipo: str,
-                  qtds: dict | None, paletes, observacao: str, usuario: str) -> int:
+                  qtds: dict | None, paletes, observacao: str, usuario: str, fabrica_id: int | None = None) -> int:
     from repositories import operacoes_repo
 
     if operacoes_repo.e_consolidada(operacao_id):
@@ -62,9 +62,16 @@ def salvar_pedido(operacao_id: int, pid: int | None, data: dt.date, placa: str, 
         raise RegraNegocioError("Informe o número do pedido.")
     if repo.numero_existe(operacao_id, numero, pid):
         raise RegraNegocioError(f"O pedido {numero} já foi lançado.")
+    from repositories import logistica_repo
+
+    fabricas = set(logistica_repo.fabricas_df()["id"].astype(int))
+    if not fabricas:
+        raise RegraNegocioError("Cadastre as fábricas em Puxada › ⚙️ Cadastros › 🏭 Fábricas.")
+    if not fabrica_id or int(fabrica_id) not in fabricas:
+        raise RegraNegocioError("Escolha a fábrica do pedido.")
     if tipo not in SUGESTAO_PEDIDO:
         raise RegraNegocioError("Escolha Retornável ou Descartável.")
-    dados = {"data": data.isoformat(), "placa": placa, "numero_pedido": numero, "tipo": tipo,
+    dados = {"data": data.isoformat(), "placa": placa, "numero_pedido": numero, "fabrica_id": int(fabrica_id), "tipo": tipo,
              "observacao": (observacao or "").strip() or None, **{k: 0.0 for k in EMBALAGENS_RETORNAVEL}, "paletes": 0.0}
     if tipo == "Retornável":
         for k in EMBALAGENS_RETORNAVEL:
@@ -121,7 +128,9 @@ def tabela(df: pd.DataFrame, com_filial: bool = False) -> pd.DataFrame:
         d = {"Dia": rotulo_dia(dt.date.fromisoformat(str(r["data"])[:10]))}
         if com_filial:
             d["Filial"] = r.get("filial")
-        d.update({"Placa": r["placa"], "Pedido": r["numero_pedido"], "Tipo": r["tipo"],
+        fab = r.get("fabrica")
+        d.update({"Placa": r["placa"], "Pedido": r["numero_pedido"], "Fábrica": fab if isinstance(fab, str) else "—",
+                  "Tipo": r["tipo"],
                   **{rot: float(r.get(k) or 0) if r["tipo"] == "Retornável" else None
                      for k, rot in EMBALAGENS_RETORNAVEL.items()},
                   "Paletes (total)": float(r.get("paletes") or 0),

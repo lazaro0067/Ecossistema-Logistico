@@ -657,6 +657,9 @@ MIGRACOES: list[tuple[str, str]] = [
         ALTER TABLE disponibilidade_placas ADD COLUMN sugestao TEXT;
         CREATE INDEX IF NOT EXISTS ix_pedpux_op ON pedidos_puxada(operacao_id, data);
     """),
+    ("020_pedidos_puxada_fabrica", """
+        ALTER TABLE pedidos_puxada ADD COLUMN fabrica_id INTEGER;
+    """),
 ]
 
 

@@ -69,10 +69,11 @@ def _card(r: dict, com_filial: bool = False) -> str:
         d = tempo.parse_dt(r["finalizado_em"])
         fim = f" · ✅ {_e(r.get('finalizado_por'))} {d:%d/%m %H:%M}" if d else ""
     filial = f"🏢 {_e(r.get('filial'))} · " if com_filial else ""
+    fab = f" · 🏭 {_e(r['fabrica'])}" if isinstance(r.get("fabrica"), str) and r.get("fabrica") else ""
     obs = f"<br>📝 {_e(r.get('observacao'))}" if isinstance(r.get("observacao"), str) and r.get("observacao") else ""
     return (f'<div class="pp-card {"cancelado" if r["status"] == "Cancelado" else ""}" style="--c:{cor};--f:{fundo}">'
             f'<div class="pp-top"><b>🚛 {_e(r["placa"])}</b><span class="pp-st">{svc.STATUS_ICONE.get(r["status"], "")} '
-            f'{_e(r["status"])}</span></div><div class="pp-ped">Pedido <b>{_e(r["numero_pedido"])}</b> · '
+            f'{_e(r["status"])}</span></div><div class="pp-ped">Pedido <b>{_e(r["numero_pedido"])}</b>{fab} · '
             f'{_e(svc.rotulo_dia(dt.date.fromisoformat(str(r["data"])[:10])))}</div>'
             f'<span class="pp-tipo">{ICONE_TIPO.get(r["tipo"], "")} {_e(r["tipo"])} · {_f(r.get("paletes"))} palete(s)</span>'
             f'{corpo}<div class="pp-rod">{filial}lançado por {_e(r.get("criado_por"))}{fim}{obs}</div></div>')
@@ -143,16 +144,29 @@ def _form(usuario: dict, operacao_id: int, d: dt.date, atual: dict | None, chave
         sug = r.get("sugestao") if isinstance(r.get("sugestao"), str) else ""
         return f"{p} · {r['status']}" + (f" · sugestão {sug}" if sug else "")
 
-    c1, c2, c3 = st.columns([1.6, 1, 1.4])
+    from repositories import logistica_repo
+
+    fabs = logistica_repo.fabricas_df()
+    if fabs.empty:
+        st.warning("Cadastre as fábricas em **⚙️ Cadastros › 🏭 Fábricas** para lançar pedidos.")
+        return
+    nomes_fab = {int(r["id"]): r["nome"] for r in fabs.to_dict("records")}
+    c1, c2, c3 = st.columns([1.5, 1.3, 1])
     placa = c1.selectbox("🚛 Placa *", ordem, key=f"{chave}_placa", format_func=rot_placa,
                          index=ordem.index(atual["placa"]) if atual else 0)
     st_placa = info.get(placa, {}).get("status")
     if st_placa and st_placa != "Disponível":
         c1.caption(f"⚠️ Esta placa está **{st_placa}** em {d:%d/%m}.")
-    numero = c2.text_input("Nº do pedido *", value=(atual or {}).get("numero_pedido") or "", key=f"{chave}_num")
+    numero = c3.text_input("Nº do pedido *", value=(atual or {}).get("numero_pedido") or "", key=f"{chave}_num")
+    fab_atual = (atual or {}).get("fabrica_id")
+    fab_atual = int(fab_atual) if fab_atual and int(fab_atual) in nomes_fab else None
+    ids_fab = list(nomes_fab)
+    fabrica_id = c2.selectbox("🏭 Fábrica *", ids_fab, format_func=nomes_fab.get, key=f"{chave}_fab",
+                              index=ids_fab.index(fab_atual) if fab_atual else (0 if len(ids_fab) == 1 else None),
+                              placeholder="Selecione a fábrica...")
     sug = info.get(placa, {}).get("sugestao")
     padrao = (atual or {}).get("tipo") or (sug if sug in SUGESTAO_PEDIDO else None)
-    tipo = c3.radio("Tipo *", SUGESTAO_PEDIDO, horizontal=True, key=f"{chave}_tipo_{placa}",
+    tipo = st.radio("Tipo *", SUGESTAO_PEDIDO, horizontal=True, key=f"{chave}_tipo_{placa}",
                     index=SUGESTAO_PEDIDO.index(padrao) if padrao in SUGESTAO_PEDIDO else None,
                     format_func=lambda t: f"{ICONE_TIPO.get(t, '')} {t}")
     qtds, paletes = {}, 0.0
@@ -171,7 +185,7 @@ def _form(usuario: dict, operacao_id: int, d: dt.date, atual: dict | None, chave
     if st.button("💾 Salvar pedido" if not atual else "💾 Salvar alteração", type="primary", key=f"{chave}_ok"):
         try:
             svc.salvar_pedido(operacao_id, atual["id"] if atual else None, d, placa, numero, tipo, qtds, paletes, obs,
-                              usuario.get("nome") or usuario.get("login") or "")
+                              usuario.get("nome") or usuario.get("login") or "", fabrica_id=fabrica_id)
         except RegraNegocioError as e:
             st.error(str(e))
         else:
@@ -219,6 +233,7 @@ def render(usuario: dict, operacao_id: int) -> None:
         with st.container(key="cad_alt_pp"):
             st.markdown('<div class="eco-alt-titulo">✏️ Alterar ou cancelar pedido</div>', unsafe_allow_html=True)
             nomes = {int(r["id"]): f"{r['placa']} · pedido {r['numero_pedido']} · {r['tipo']}"
+                     + (f" · {r['fabrica']}" if isinstance(r.get("fabrica"), str) else "")
                      for r in abertos.to_dict("records")}
             pid = st.selectbox("Pedido", [None, *nomes], key=f"pp_alt_{d}",
                                format_func=lambda i: "Selecione..." if i is None else nomes[i])
