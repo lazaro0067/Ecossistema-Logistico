@@ -14,7 +14,7 @@ st.set_page_config(page_title=f"{APP_TITULO} — {APP_SUBTITULO}", page_icon=APP
                    layout="wide", initial_sidebar_state="expanded")
 
 from core import session, tema, ui  # noqa: E402
-from core.auth import autenticar, e_master, operacoes_permitidas, pode_acessar_modulo  # noqa: E402
+from core.auth import autenticar, e_master, e_motorista, operacoes_permitidas, pode_acessar_modulo  # noqa: E402
 from database.connection import is_postgres  # noqa: E402
 from database.schema import init_db  # noqa: E402
 from modules import PAGINAS  # noqa: E402
@@ -26,9 +26,18 @@ SO_FILIAL = {"puxada", "distribuicao", "frota", "gente", "financeiro", "compras"
 
 
 @st.cache_resource(show_spinner="Preparando o banco de dados...")
-def _preparar_banco() -> bool:
+def _preparar_banco(destino: str) -> bool:
+    """Cria/atualiza as tabelas. O `destino` (arquivo ou URL do banco) entra na chave do cache:
+    se o banco mudar de lugar, as tabelas são criadas de novo no banco novo."""
     init_db()
     return True
+
+
+def _destino_banco() -> str:
+    from config.settings import DB_PATH
+    from database.connection import database_url
+
+    return database_url() if is_postgres() else str(DB_PATH)
 
 
 def tela_login() -> None:
@@ -42,7 +51,8 @@ def tela_login() -> None:
                 return
             tema.titulo_form("Bem-vindo(a) 👋", "Entre com o seu e-mail corporativo e senha.")
             with st.form("login"):
-                email = st.text_input("E-mail", placeholder="nome@grupolima.com.br", autocomplete="email")
+                email = st.text_input("E-mail (motorista: CPF ou celular)", placeholder="nome@grupolima.com.br",
+                                      autocomplete="username")
                 senha = st.text_input("Senha", type="password", placeholder="••••••••",
                                       autocomplete="current-password")
                 if st.form_submit_button("Entrar", type="primary", **ui.LARGURA):
@@ -213,7 +223,10 @@ def paginas_publicas() -> bool:
 def main() -> None:
     tema.aplicar()
     try:
-        _preparar_banco()
+        _preparar_banco(_destino_banco())
+        if not st.session_state.get("_banco_ok"):
+            init_db()  # garante as tabelas uma vez por sessão (barato e idempotente)
+            st.session_state["_banco_ok"] = True
     except Exception as e:
         st.error(f"Não foi possível conectar ao banco de dados: {e}")
         st.stop()
@@ -228,6 +241,12 @@ def main() -> None:
         return
     if usuario.get("trocar_senha"):
         tela_troca_obrigatoria(usuario)
+        return
+
+    if e_motorista(usuario):  # motorista vê só o App Carreteiro (tela de celular)
+        from modules.puxada import app_motorista
+
+        app_motorista.render(usuario)
         return
 
     pagina = session.pagina() or "inicio"
