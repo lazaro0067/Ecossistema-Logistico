@@ -32,24 +32,28 @@ def _preparar_banco() -> bool:
 
 
 def tela_login() -> None:
-    _, centro, _ = st.columns([1, 1.1, 1])
-    with centro:
-        tema.cabecalho(APP_TITULO, f"{APP_SUBTITULO} · {APP_EMPRESA}", APP_ICONE)
-        if st.session_state.get("_tela") == "esqueci":
-            tela_esqueci_senha()
-            return
-        with st.form("login"):
-            email = st.text_input("E-mail", placeholder="nome@grupolima.com.br", autocomplete="email")
-            senha = st.text_input("Senha", type="password", autocomplete="current-password")
-            if st.form_submit_button("Entrar", type="primary", **ui.LARGURA):
-                usuario = autenticar(email, senha)
-                if usuario:
-                    session.logar(usuario)
-                    st.rerun()
-                st.error("E-mail ou senha inválidos.")
-        if ui.botao("🔑 Esqueci minha senha", key="btn_esqueci"):
-            st.session_state["_tela"] = "esqueci"
-            st.rerun()
+    with st.container(key="login_card"):
+        esq, dir_ = st.columns([1.05, 1])
+        with esq:
+            tema.painel_marca(APP_TITULO, APP_SUBTITULO, APP_EMPRESA, APP_ICONE)
+        with dir_:
+            if st.session_state.get("_tela") == "esqueci":
+                tela_esqueci_senha()
+                return
+            tema.titulo_form("Bem-vindo(a) 👋", "Entre com o seu e-mail corporativo e senha.")
+            with st.form("login"):
+                email = st.text_input("E-mail", placeholder="nome@grupolima.com.br", autocomplete="email")
+                senha = st.text_input("Senha", type="password", placeholder="••••••••",
+                                      autocomplete="current-password")
+                if st.form_submit_button("Entrar", type="primary", **ui.LARGURA):
+                    usuario = autenticar(email, senha)
+                    if usuario:
+                        session.logar(usuario)
+                        st.rerun()
+                    st.error("E-mail ou senha inválidos.")
+            if ui.botao("Esqueci minha senha", key="btn_esqueci"):
+                st.session_state["_tela"] = "esqueci"
+                st.rerun()
 
 
 def tela_esqueci_senha() -> None:
@@ -57,11 +61,11 @@ def tela_esqueci_senha() -> None:
     from services.erros import RegraNegocioError
 
     etapa = st.session_state.get("_rec_etapa", 1)
+    tema.titulo_form("Redefinir senha", "Vamos enviar um código para o seu e-mail.")
     if not email_service.configurado():
         st.warning("O envio de e-mail ainda não foi configurado neste sistema. Peça ao administrador (Master) "
                    "uma senha provisória.")
     elif etapa == 1:
-        st.markdown("**Redefinir senha** — enviaremos um código de 6 dígitos para o seu e-mail.")
         with st.form("rec_1"):
             email = st.text_input("E-mail cadastrado", value=st.session_state.get("_rec_email", ""))
             if st.form_submit_button("📧 Enviar código", type="primary", **ui.LARGURA):
@@ -101,10 +105,12 @@ def tela_esqueci_senha() -> None:
 
 
 def tela_troca_obrigatoria(usuario: dict) -> None:
-    _, centro, _ = st.columns([1, 1.1, 1])
+    with st.container(key="login_card"):
+        esq, centro = st.columns([1.05, 1])
+        with esq:
+            tema.painel_marca(APP_TITULO, APP_SUBTITULO, APP_EMPRESA, APP_ICONE)
     with centro:
-        tema.cabecalho("Crie sua senha", f"Olá, {usuario['nome']}! Por segurança, defina uma senha pessoal "
-                       "antes de continuar.", "🔐")
+        tema.titulo_form("Crie sua senha", f"Olá, {usuario['nome'].split()[0]}! Defina uma senha pessoal para continuar.")
         with st.form("troca_obrigatoria"):
             nova = st.text_input("Nova senha", type="password")
             conf = st.text_input("Confirme a nova senha", type="password")

@@ -51,7 +51,7 @@ ignora). O arquivo principal é **`app.py`** na raiz.
 ### 5. Primeiro acesso (login por e-mail)
 - Nos **Secrets**, coloque `ADMIN_EMAIL = "seu.email@..."` — esse é o login do Master.
   (Sem ele, o Master entra com `admin@grupolima.com.br`.)
-- Senha inicial **admin123** → o sistema obriga a criar uma senha nova.
+- Senha inicial: a combinada com o administrador do sistema (só o hash fica no código). Troque em **⚙️ Minha conta** depois do 1º acesso.
 - Vá em **🔑 Gestão de Acessos** e crie um acesso para cada pessoa (o e-mail é o login).
 
 ### 6. E-mail (redefinir senha e boas-vindas)
