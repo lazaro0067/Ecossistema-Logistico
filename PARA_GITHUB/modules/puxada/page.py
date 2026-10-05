@@ -1,0 +1,22 @@
+"""Módulo Puxada — cada aba (pasta) vive no seu próprio arquivo."""
+from core import ui
+from modules.puxada import (aprovacoes, cadastros, cotacao, descarga, encerramento, obz, painel, pedidos, viagens,
+                            vinculos)
+
+ABAS = {
+    "cotacao": cotacao.render,
+    "aprovacoes": aprovacoes.render,
+    "encerramento": encerramento.render,
+    "painel": painel.render,
+    "obz": obz.render,
+    "descarga": descarga.render,
+    "vinculos": vinculos.render,
+    "viagens": viagens.render,
+    "pedidos": pedidos.render,
+    "cadastros": cadastros.render,
+}
+
+
+def render(usuario: dict, operacao_id: int) -> None:
+    ui.cabecalho_modulo("puxada")
+    ui.abas_modulo(usuario, "puxada", ABAS, usuario, operacao_id)
