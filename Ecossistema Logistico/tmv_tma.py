@@ -60,6 +60,31 @@ def _tabela_grupo(tab: pd.DataFrame, chave: str, rotulo: str, key: str) -> None:
     ui.downloads(tab, f"viagens_por_{chave}", key=key)
 
 
+def _lista(df: pd.DataFrame, ordenar: str | None = None) -> pd.DataFrame:
+    """Viagens em formato de leitura (para o detalhamento dos cards e gráficos)."""
+    if df.empty:
+        return df
+    if ordenar:
+        df = df.sort_values(ordenar, ascending=False)
+    vis = df[["id", "status", "motorista", "placa", "numero_pedido", "destino", "ts_inicio", "ts_fim", "tmv_h",
+              "espera_h", "na_cervejaria_h", "tma_h", "chegada_gps", "apresentou_no_prazo", "atraso_min",
+              "qtd_nfs"]].copy()
+    for c in ("ts_inicio", "ts_fim"):
+        vis[c] = vis[c].dt.strftime("%d/%m/%Y %H:%M").fillna("")
+    for c in ("tmv_h", "espera_h", "na_cervejaria_h", "tma_h"):
+        vis[c] = vis[c].map(F)
+    vis["apresentou_no_prazo"] = vis["apresentou_no_prazo"].map(
+        lambda x: "" if pd.isna(x) else ("✅ No prazo" if int(x) else "⚠️ Fora"))
+    vis["atraso_min"] = vis["atraso_min"].map(lambda x: "" if pd.isna(x) else F(x / 60) if x > 0 else "—")
+    return vis
+
+
+COLUNAS = {"id": "Nº", "status": "Status", "motorista": "Motorista", "placa": "Placa", "numero_pedido": "Pedido",
+           "destino": "Destino", "ts_inicio": "Início", "ts_fim": "Fim", "tmv_h": "TMV", "espera_h": "Espera",
+           "na_cervejaria_h": "Na cervejaria", "tma_h": "TMA (parada seguinte)", "chegada_gps": "GPS chegada",
+           "apresentou_no_prazo": "Apresentação", "atraso_min": "Atraso", "qtd_nfs": "NFs"}
+
+
 def render(usuario: dict, operacao_id: int) -> None:
     c1, c2, c3, c4 = st.columns([1, 1, 1.5, 1.5])
     de = c1.date_input("De", value=tempo.hoje().replace(day=1), format="DD/MM/YYYY", key="tmv_de")
@@ -83,39 +108,50 @@ def render(usuario: dict, operacao_id: int) -> None:
     tma_validos = df["tma_h"].dropna()
     tma_gps = int(df["tma_confirmado_gps"].sum())
     prazo = _pct_prazo(df)
+    fora = df[pd.to_numeric(df["apresentou_no_prazo"], errors="coerce") == 0]
     tema.kpis([
-        {"titulo": "Viagens", "valor": len(df), "icone": "🚛", "status": "info",
+        {"titulo": "Viagens", "valor": len(df), "icone": "🚛", "status": "info", "dados": _lista(df), "colunas": COLUNAS,
          "detalhe": f"{len(fin)} finalizadas · {int((df['status'] == 'Em viagem').sum())} em andamento"},
         {"titulo": "TMV — tempo médio de viagem", "valor": F(_media(fin["tmv_h"])), "icone": "⏱️", "status": "info",
-         "detalhe": f"início → fim · {len(fin)} viagens"},
+         "detalhe": f"início → fim · {len(fin)} viagens", "dados": _lista(fin, "tmv_h"), "colunas": COLUNAS},
         {"titulo": "TMA — parada na revenda", "valor": F(_media(df["tma_h"])), "icone": "🅿️", "status": "info",
          "detalhe": f"chegada → próxima saída · {len(tma_validos)} paradas"
-                    + (f" · {tma_gps} confirmadas por GPS" if tma_gps else "")},
+                    + (f" · {tma_gps} confirmadas por GPS" if tma_gps else ""),
+         "dados": _lista(df.dropna(subset=["tma_h"]), "tma_h"), "colunas": COLUNAS},
         {"titulo": "Apresentação no prazo", "valor": ui.pct(prazo, 0) if prazo is not None else "—", "icone": "🙋",
-         "status": _status_prazo(prazo), "detalhe": "dentro do horário agendado"},
+         "status": _status_prazo(prazo), "detalhe": "dentro do horário agendado",
+         "dados": _lista(fora, "atraso_min"), "colunas": COLUNAS, "ver": "quem atrasou"},
         {"titulo": "Espera p/ carregar", "valor": F(_media(df["espera_h"])), "icone": "🏭", "status": "info",
-         "detalhe": "apresentado → chamado"},
+         "detalhe": "apresentado → chamado", "dados": _lista(df.dropna(subset=["espera_h"]), "espera_h"),
+         "colunas": COLUNAS},
         {"titulo": "Tempo na cervejaria", "valor": F(_media(df["na_cervejaria_h"])), "icone": "📦", "status": "info",
-         "detalhe": "apresentado → saída"},
-    ])
+         "detalhe": "apresentado → saída", "dados": _lista(df.dropna(subset=["na_cervejaria_h"]), "na_cervejaria_h"),
+         "colunas": COLUNAS},
+    ], key="kp_tmv")
+    st.caption("🔎 Clique num card ou numa barra para ver as viagens.")
 
     abas = st.tabs(["📊 Visão geral", "👤 Por motorista", "🚛 Por placa", "📋 Viagens"])
     with abas[0]:
         tema.secao("Onde o tempo da viagem vai", "Média de cada trecho, em horas.")
         medias = [(_media(df[c]) or 0) for c, _ in TRECHOS]
+        nomes = dict((rot, col) for col, rot in TRECHOS)
         graficos.mostrar(graficos.barras_h([r for _, r in TRECHOS], medias, casas=1, sufixo=" h",
-                                           textos=[F(m) for m in medias]), key="tmv_trechos")
+                                           textos=[F(m) for m in medias]), key="tmv_trechos", colunas=COLUNAS,
+                         detalhe=lambda rot: _lista(df.dropna(subset=[nomes[rot]]), nomes[rot]) if rot in nomes
+                         else _lista(df), titulo="Trecho")
         dia = df.groupby("data").agg(viagens=("id", "count"), tmv=("tmv_h", "mean")).reset_index()
         g1, g2 = st.columns(2)
         with g1:
             graficos.mostrar(graficos.barras([d.strftime("%d/%m") for d in dia["data"]], {"Viagens": dia["viagens"]},
-                                             titulo="Viagens por dia"), key="tmv_dia")
+                                             titulo="Viagens por dia"), key="tmv_dia", colunas=COLUNAS, titulo="Dia",
+                             detalhe=lambda rot: _lista(df[df["data"].map(lambda d: d.strftime("%d/%m")) == rot]))
         with g2:
             tma_placa = df.dropna(subset=["tma_h"]).groupby("placa")["tma_h"].mean().sort_values(ascending=False)
             if not tma_placa.empty:
                 graficos.mostrar(graficos.barras_h(tma_placa.index, tma_placa.values, titulo="TMA médio por placa",
                                                    textos=[F(v) for v in tma_placa.values], casas=1),
-                                 key="tmv_tma_placa")
+                                 key="tmv_tma_placa", colunas=COLUNAS, titulo="Placa",
+                                 detalhe=lambda rot: _lista(df[(df["placa"] == rot) & df["tma_h"].notna()], "tma_h"))
             else:
                 st.info("TMA aparece quando a mesma placa chega na revenda e inicia a viagem seguinte.")
         if df["chegada_gps"].ne("Sem GPS").any():
@@ -124,19 +160,23 @@ def render(usuario: dict, operacao_id: int) -> None:
             cores = {"Dentro do raio": tema.STATUS["bom"][0], "Fora do raio": tema.STATUS["serio"][0],
                      "Sem GPS": tema.STATUS["neutro"][0]}
             graficos.mostrar(graficos.barras_h(cont.index, cont.values, cores=[cores[i] for i in cont.index]),
-                             key="tmv_gps")
+                             key="tmv_gps", colunas=COLUNAS, titulo="GPS",
+                             detalhe=lambda rot: _lista(df[(df["chegada_gps"] == rot) & df["ts_chegada_revenda"].notna()]))
 
     with abas[1]:
         tab = _agrupado(df, "motorista")
         g1, g2 = st.columns(2)
         with g1:
             graficos.mostrar(graficos.barras_h(tab["motorista"], tab["viagens"], titulo="Viagens por motorista"),
-                             key="tmv_mot_v")
+                             key="tmv_mot_v", colunas=COLUNAS, titulo="Motorista",
+                             detalhe=lambda rot: _lista(df[df["motorista"] == rot]))
         with g2:
             t = tab.dropna(subset=["tmv_h"]).sort_values("tmv_h", ascending=False)
             if not t.empty:
                 graficos.mostrar(graficos.barras_h(t["motorista"], t["tmv_h"], titulo="TMV médio por motorista",
-                                                   textos=[F(v) for v in t["tmv_h"]], casas=1), key="tmv_mot_tmv")
+                                                   textos=[F(v) for v in t["tmv_h"]], casas=1), key="tmv_mot_tmv",
+                                 colunas=COLUNAS, titulo="Motorista",
+                                 detalhe=lambda rot: _lista(fin[fin["motorista"] == rot], "tmv_h"))
         _tabela_grupo(tab, "motorista", "Motorista", "dl_tmv_mot")
 
     with abas[2]:
@@ -144,30 +184,18 @@ def render(usuario: dict, operacao_id: int) -> None:
         g1, g2 = st.columns(2)
         with g1:
             graficos.mostrar(graficos.barras_h(tab["placa"], tab["viagens"], titulo="Viagens por placa"),
-                             key="tmv_pl_v")
+                             key="tmv_pl_v", colunas=COLUNAS, titulo="Placa",
+                             detalhe=lambda rot: _lista(df[df["placa"] == rot]))
         with g2:
             t = tab.dropna(subset=["tmv_h"]).sort_values("tmv_h", ascending=False)
             if not t.empty:
                 graficos.mostrar(graficos.barras_h(t["placa"], t["tmv_h"], titulo="TMV médio por placa",
-                                                   textos=[F(v) for v in t["tmv_h"]], casas=1), key="tmv_pl_tmv")
+                                                   textos=[F(v) for v in t["tmv_h"]], casas=1), key="tmv_pl_tmv",
+                                 colunas=COLUNAS, titulo="Placa",
+                                 detalhe=lambda rot: _lista(fin[fin["placa"] == rot], "tmv_h"))
         _tabela_grupo(tab, "placa", "Placa", "dl_tmv_pl")
 
     with abas[3]:
-        vis = df[["id", "status", "motorista", "placa", "numero_pedido", "destino", "ts_inicio", "ts_fim", "tmv_h",
-                  "espera_h", "na_cervejaria_h", "tma_h", "chegada_gps", "apresentou_no_prazo", "atraso_min",
-                  "qtd_nfs"]].copy()
-        for c in ("ts_inicio", "ts_fim"):
-            vis[c] = vis[c].dt.strftime("%d/%m/%Y %H:%M").fillna("")
-        for c in ("tmv_h", "espera_h", "na_cervejaria_h", "tma_h"):
-            vis[c] = vis[c].map(F)
-        vis["apresentou_no_prazo"] = vis["apresentou_no_prazo"].map(
-            lambda x: "" if pd.isna(x) else ("✅ No prazo" if int(x) else "⚠️ Fora"))
-        vis["atraso_min"] = vis["atraso_min"].map(lambda x: "" if pd.isna(x) else F(x / 60) if x > 0 else "—")
-        ui.tabela(vis, column_config={
-            "id": "Nº", "status": "Status", "motorista": "Motorista", "placa": "Placa", "numero_pedido": "Pedido",
-            "destino": "Destino", "ts_inicio": "Início", "ts_fim": "Fim", "tmv_h": "TMV",
-            "espera_h": "Espera", "na_cervejaria_h": "Na cervejaria", "tma_h": "TMA (parada seguinte)",
-            "chegada_gps": "GPS chegada", "apresentou_no_prazo": "Apresentação", "atraso_min": "Atraso",
-            "qtd_nfs": "NFs"})
+        ui.tabela(_lista(df), column_config=COLUNAS)
         exp = df.drop(columns=["operacao_id", "motorista_id"], errors="ignore")
         ui.downloads(exp, "tmv_tma_viagens", key="dl_tmv_viagens")

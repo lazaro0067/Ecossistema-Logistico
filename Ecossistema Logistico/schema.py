@@ -537,6 +537,13 @@ MIGRACOES: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS ix_vnf_viagem ON viagem_notas(viagem_id);
         CREATE INDEX IF NOT EXISTS ix_vft_viagem ON viagem_fotos(viagem_id, nota_id);
     """),
+    ("013_integracao_viagem", """
+        ALTER TABLE agendamentos_descarga ADD COLUMN viagem_id INTEGER;
+        ALTER TABLE vinculos_pedidos ADD COLUMN viagem_id INTEGER;
+        CREATE INDEX IF NOT EXISTS ix_desc_viagem ON agendamentos_descarga(viagem_id);
+        CREATE INDEX IF NOT EXISTS ix_vinc_viagem ON vinculos_pedidos(viagem_id);
+        CREATE INDEX IF NOT EXISTS ix_pedmarc_num ON pedidos_marcados(operacao_id, numero_pedido);
+    """),
 ]
 
 

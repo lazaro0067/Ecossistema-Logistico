@@ -77,6 +77,11 @@ def viagem_ativa_placa(operacao_id: int, placa: str) -> dict | None:
                      (operacao_id, placa, EM_VIAGEM))
 
 
+def pedido_em_viagem(operacao_id: int, numero: str) -> bool:
+    return query_one("SELECT 1 AS x FROM viagens_carreteiro WHERE operacao_id = ? AND trim(numero_pedido) = ? "
+                     "AND status <> ?", (operacao_id, numero.strip(), CANCELADA)) is not None
+
+
 def criar_viagem(dados: dict) -> int:
     cols = list(dados)
     return execute(f"INSERT INTO viagens_carreteiro ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
@@ -207,3 +212,59 @@ def fotos(vid: int, nota_id: int | None = None) -> list[dict]:
 
 def nfs_texto(vid: int) -> str:
     return ", ".join(n["numero_nf"] for n in notas(vid))
+
+
+# --- Integração: Pedidos Marcados, Vincular Pedido & NFs, Descarga (pátio) ----------
+def pedido_marcado(operacao_id: int, numero: str) -> dict | None:
+    """Resumo do pedido nos Pedidos Marcados (aceita o número com ou sem zeros à esquerda)."""
+    numero = (numero or "").strip()
+    if not numero:
+        return None
+    f_sql, p = operacoes_repo.filtro("operacao_id", operacao_id)
+    r = query_one(f"""SELECT COUNT(*) AS itens, COALESCE(SUM(cx_marcadas), 0) AS cx, COALESCE(SUM(hl_marcado), 0) AS hl,
+                             MAX(data_puxada) AS data_puxada
+                      FROM pedidos_marcados WHERE {f_sql}
+                      AND (trim(numero_pedido) = ? OR ltrim(trim(numero_pedido), '0') = ltrim(?, '0'))""",
+                  [*p, numero, numero])
+    return r if r and int(r["itens"] or 0) > 0 else None
+
+
+def vinculo_da_viagem(vid: int) -> dict | None:
+    return query_one("SELECT * FROM vinculos_pedidos WHERE viagem_id = ? ORDER BY id LIMIT 1", (vid,))
+
+
+def vinculo_manual_do_pedido(operacao_id: int, numero: str) -> dict | None:
+    """Vínculo lançado à mão para o mesmo pedido (sem viagem) — é aproveitado em vez de duplicar."""
+    return query_one("""SELECT * FROM vinculos_pedidos WHERE operacao_id = ? AND trim(numero_pedido) = ?
+                        AND viagem_id IS NULL ORDER BY id DESC LIMIT 1""", (operacao_id, (numero or "").strip()))
+
+
+def apagar_vinculo_da_viagem(vid: int) -> None:
+    execute("DELETE FROM vinculos_pedidos WHERE viagem_id = ?", (vid,))
+
+
+def agendamento_da_viagem(vid: int) -> dict | None:
+    return query_one("SELECT * FROM agendamentos_descarga WHERE viagem_id = ? ORDER BY id LIMIT 1", (vid,))
+
+
+def agendamento_livre_da_placa(operacao_id: int, placa: str, de: str, ate: str) -> dict | None:
+    """Descarga agendada à mão para a mesma placa (ainda sem viagem) — a viagem assume esse agendamento."""
+    return query_one("""SELECT * FROM agendamentos_descarga WHERE operacao_id = ? AND upper(placa) = upper(?)
+                        AND viagem_id IS NULL AND status = 'Agendado' AND data >= ? AND data <= ?
+                        ORDER BY data, hora LIMIT 1""", (operacao_id, placa, de, ate))
+
+
+def apagar_agendamento(aid: int) -> None:
+    execute("DELETE FROM agendamentos_descarga WHERE id = ?", (aid,))
+
+
+def retornos_destino(operacao_id: int, destino_id: int | None, limite: int = 30) -> list[dict]:
+    """Últimos retornos (saída da cervejaria → chegada na revenda) para prever a chegada."""
+    sql = """SELECT ts_saida_cervejaria, ts_chegada_revenda FROM viagens_carreteiro
+             WHERE operacao_id = ? AND ts_saida_cervejaria IS NOT NULL AND ts_chegada_revenda IS NOT NULL
+             AND status <> 'Cancelada'"""
+    p = [operacao_id]
+    if destino_id:
+        sql += " AND destino_id = ?"
+        p.append(destino_id)
+    return query_all(sql + " ORDER BY ts_chegada_revenda DESC LIMIT ?", [*p, limite])

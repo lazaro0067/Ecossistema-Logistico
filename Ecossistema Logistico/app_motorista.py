@@ -56,6 +56,97 @@ _CSS = f"""
 """
 
 
+_CSS_LOGIN = f"""
+<style>
+.block-container {{ max-width: 460px; padding-top: 6vh; }}
+.car-login-topo {{ background: linear-gradient(150deg, #0B1F3A 0%, #16305A 55%, #1f4a8a 100%); color:#fff;
+    border-radius: 22px; padding: 1.6rem 1.4rem 1.4rem; margin-bottom: 1rem; text-align:center;
+    box-shadow: 0 18px 40px -18px rgba(11,31,58,.5); }}
+.car-login-topo .ic {{ font-size: 2.6rem; line-height: 1; }}
+.car-login-topo b {{ display:block; font-size: 1.5rem; margin-top:.4rem; letter-spacing:-.01em; }}
+.car-login-topo span {{ opacity:.78; font-size:.9rem; }}
+.st-key-car_login [data-testid="stForm"] {{ background:#fff; border-radius:18px; border:1px solid #e1e0d9;
+    padding: 1.2rem 1.1rem; }}
+.st-key-car_login input {{ height: 3rem; font-size: 1.05rem; }}
+.st-key-car_login [data-testid="stFormSubmitButton"] button {{ background:{VERDE} !important;
+    border-color:{VERDE} !important; min-height: 3.2rem; border-radius: 14px !important; }}
+.st-key-car_login [data-testid="stFormSubmitButton"] button p {{ color:#fff !important; font-size:1.1rem !important;
+    font-weight:800; }}
+[data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"] {{ display: none; }}
+</style>
+"""
+
+
+def _topo_login(sub: str) -> None:
+    st.markdown(_CSS_LOGIN, unsafe_allow_html=True)
+    st.markdown(f'<div class="car-login-topo"><div class="ic">🚛</div><b>App Carreteiro</b>'
+                f'<span>{tema._e(sub)}</span></div>', unsafe_allow_html=True)
+
+
+def tela_login() -> None:
+    """Login do link exclusivo dos motoristas (CPF, celular ou e-mail)."""
+    from core.auth import autenticar
+
+    _topo_login("Grupo Lima · registre cada passo da sua viagem")
+    with st.container(key="car_login"):
+        with st.form("car_login_form"):
+            acesso = st.text_input("CPF, celular ou e-mail", placeholder="Só os números do CPF ou celular",
+                                   autocomplete="username")
+            senha = st.text_input("Senha", type="password", autocomplete="current-password")
+            if st.form_submit_button("Entrar", type="primary", **ui.LARGURA):
+                usuario = autenticar(acesso, senha)
+                if usuario:
+                    session.logar(usuario)
+                    st.rerun()
+                st.error("Acesso ou senha inválidos.")
+    st.caption("Esqueceu a senha ou ainda não tem acesso? Fale com a equipe da Puxada da sua unidade.")
+
+
+def tela_criar_senha(usuario: dict) -> None:
+    _topo_login(f"Olá, {usuario['nome'].split()[0]}! Crie a sua senha para começar.")
+    with st.container(key="car_login"):
+        with st.form("car_criar_senha"):
+            nova = st.text_input("Nova senha", type="password", autocomplete="new-password")
+            conf = st.text_input("Confirme a nova senha", type="password", autocomplete="new-password")
+            if st.form_submit_button("Salvar e entrar", type="primary", **ui.LARGURA):
+                try:
+                    usuarios_service.trocar_propria_senha(usuario["id"], None, nova, conf)
+                except RegraNegocioError as e:
+                    st.error(str(e))
+                else:
+                    usuario["trocar_senha"] = 0
+                    ui.avisar("Senha criada! Boa viagem. 🚛")
+                    st.rerun()
+    if st.button("Sair", key="car_sair_senha"):
+        session.sair()
+        st.rerun()
+
+
+def tela_nao_motorista(usuario: dict) -> None:
+    from core.segredos import segredo
+
+    _topo_login("Link exclusivo dos motoristas")
+    st.warning(f"{usuario['nome'].split()[0]}, este endereço é só para motoristas. "
+               "A gestão da puxada fica no link principal do sistema.")
+    url = (segredo("APP_URL") or "").rstrip("/")
+    if url:
+        st.link_button("Abrir o sistema principal", url)
+    if st.button("Sair", key="car_sair_outro"):
+        session.sair()
+        st.rerun()
+
+
+def link_do_app() -> str | None:
+    """Endereço do App Carreteiro para mandar aos motoristas."""
+    from core.segredos import segredo
+
+    proprio = (segredo("CARRETEIRO_URL") or "").strip()
+    if proprio:
+        return proprio
+    url = (segredo("APP_URL") or "").strip().rstrip("/")
+    return f"{url}/?app=motorista" if url else None
+
+
 def _fmt(ts) -> str:
     d = tempo.parse_dt(ts)
     return d.strftime("%d/%m %H:%M") if d else "—"
@@ -85,6 +176,10 @@ def _topo(usuario: dict, mot: dict) -> None:
 def _resumo(v: dict) -> None:
     linhas = [("Pedido", v["numero_pedido"]), ("Destino", v.get("destino") or "—"), ("Placa do cavalo", v["placa"]),
               ("Agendamento", _fmt(v.get("agendamento")) if v.get("agendamento") else "sem agendamento")]
+    marcado = repo.pedido_marcado(v["operacao_id"], v["numero_pedido"])
+    if marcado:
+        linhas.append(("Pedido marcado", f"{int(marcado['itens'])} itens · {ui.numero(marcado['cx'])} cx · "
+                                         f"{ui.numero(marcado['hl'], 1)} HL"))
     st.markdown('<div class="car-viagem">' + "".join(
         f'<div class="lin"><span>{tema._e(a)}</span><b>{tema._e(b)}</b></div>' for a, b in linhas) + "</div>",
         unsafe_allow_html=True)
@@ -148,7 +243,8 @@ def _nova_viagem(usuario: dict, mot: dict, geo: dict | None) -> None:
 # --- Notas fiscais (etapa "Pedido carregado") --------------------------------
 def _notas(usuario: dict, v: dict, obrigatorio: bool) -> None:
     notas = repo.notas(v["id"])
-    tema.secao("📄 Notas fiscais", "Digite o número de cada NF e tire foto(s) dela. Pode adicionar várias notas.")
+    tema.secao("📄 Notas fiscais", "Digite o número de cada NF e tire foto(s) dela. Pode adicionar várias notas — "
+               "elas já vão para a Puxada vinculadas ao seu pedido.")
     for n in notas:
         c1, c2, c3 = st.columns([3, 1.3, .8])
         c1.markdown(f'<div class="car-nf">🧾 <b>NF {tema._e(n["numero_nf"])}</b> · {n["fotos"]} foto(s)</div>',

@@ -122,6 +122,8 @@ def iniciar_viagem(usuario: dict, numero_pedido: str, data_ag: dt.date | None, h
         raise RegraNegocioError("Escolha o destino.")
     if not placa:
         raise RegraNegocioError("Escolha a placa do cavalo.")
+    if repo.pedido_em_viagem(mot["operacao_id"], numero_pedido):
+        raise RegraNegocioError(f"O pedido {numero_pedido} já tem uma viagem lançada. Confira o número.")
     outra = repo.viagem_ativa_placa(mot["operacao_id"], placa)
     if outra:
         raise RegraNegocioError(f"A placa {placa} já está em viagem com {outra['motorista']}.")
@@ -174,6 +176,7 @@ def registrar_etapa(usuario: dict, viagem_id: int, etapa: str, geo: dict | None 
     if not repo.marcar_etapa(viagem_id, ETAPAS[etapa]["coluna"], ts, extra):
         raise RegraNegocioError(f"“{ETAPAS[etapa]['nome']}” já foi registrado.")
     repo.registrar_evento(viagem_id, etapa, ts, _geo_com_raio(v["operacao_id"], etapa, geo))
+    integrar(viagem_id)
     return repo.viagem(viagem_id)
 
 
@@ -195,6 +198,7 @@ def desfazer_ultima(usuario: dict, viagem_id: int) -> str:
             campos.update(apresentou_no_prazo=None, atraso_min=None)
         repo.atualizar(viagem_id, **campos)
     repo.apagar_evento(viagem_id, ultima)
+    integrar(viagem_id)
     return ETAPAS[ultima]["nome"]
 
 
@@ -244,7 +248,9 @@ def adicionar_nota(usuario: dict, viagem_id: int, numero: str, arquivos) -> int:
         raise RegraNegocioError("Tire (ou escolha) pelo menos uma foto da nota.")
     if repo.nota_existe(viagem_id, numero):
         raise RegraNegocioError(f"A NF {numero} já foi adicionada. Para mais fotos, use “➕ fotos” nela.")
-    return repo.adicionar_nota(viagem_id, numero, agora_seg(), fotos)
+    nid = repo.adicionar_nota(viagem_id, numero, agora_seg(), fotos)
+    integrar(viagem_id)
+    return nid
 
 
 def adicionar_fotos(usuario: dict, viagem_id: int, nota_id: int, arquivos) -> int:
@@ -261,6 +267,126 @@ def remover_nota(usuario: dict, viagem_id: int, nota_id: int) -> None:
     if v.get("ts_carregado") and len(repo.notas(viagem_id)) <= 1:
         raise RegraNegocioError("O pedido já foi carregado — a viagem precisa de pelo menos uma NF.")
     repo.remover_nota(viagem_id, nota_id)
+    integrar(viagem_id)
+
+
+# --- Integração com o resto da Puxada --------------------------------------------
+# A viagem começa no carregamento da fábrica e alimenta, sozinha:
+#   • 🔗 Vincular Pedido & NFs  — no "Pedido carregado" (pedido, placa, fábrica, motorista, NFs e o HL
+#     dos Pedidos Marcados); acompanha cada NF incluída ou removida.
+#   • 🅿️ Descarga (Pátio)       — na "Saída da cervejaria" entra como "A caminho" com previsão de chegada;
+#     na "Chegada na revenda" vira "Chegou"; no "Finalizar viagem" vira "Descarregado".
+ORIGEM_APP = "App Carreteiro"
+
+
+def _hora_meia(d: dt.datetime) -> str:
+    """Arredonda para o horário de 30 em 30 minutos usado no pátio."""
+    total = int(round((d.hour * 60 + d.minute) / 30.0)) * 30
+    total = min(total, 23 * 60 + 30)
+    return f"{total // 60:02d}:{total % 60:02d}"
+
+
+def previsao_chegada(v: dict) -> dt.datetime | None:
+    """Saída da cervejaria + média dos últimos retornos desse destino (ou de todos)."""
+    saida = tempo.parse_dt(v.get("ts_saida_cervejaria"))
+    if not saida:
+        return None
+    for destino in (v.get("destino_id"), None):
+        horas = []
+        for r in repo.retornos_destino(v["operacao_id"], destino):
+            a, b = tempo.parse_dt(r["ts_saida_cervejaria"]), tempo.parse_dt(r["ts_chegada_revenda"])
+            if a and b and b > a and r["ts_saida_cervejaria"] != v.get("ts_saida_cervejaria"):
+                horas.append((b - a).total_seconds() / 3600)
+        if len(horas) >= 2 or (horas and destino is None):
+            horas.sort()
+            mediana = horas[len(horas) // 2]
+            return saida + dt.timedelta(hours=mediana)
+    return None
+
+
+def _obs_descarga(v: dict) -> str:
+    partes = [f"📱 Pedido {v['numero_pedido']}", v.get("motorista") or ""]
+    nfs = repo.nfs_texto(v["id"])
+    if nfs:
+        partes.append(f"NFs {nfs}")
+    if v.get("ts_chegada_revenda"):
+        partes.append(f"chegou {tempo.parse_dt(v['ts_chegada_revenda']):%d/%m %H:%M}")
+    elif v.get("ts_saida_cervejaria"):
+        partes.append(f"saiu da cervejaria {tempo.parse_dt(v['ts_saida_cervejaria']):%d/%m %H:%M}")
+    return " · ".join(p for p in partes if p)
+
+
+def _sincronizar_vinculo(v: dict) -> None:
+    from repositories import logistica_repo
+
+    atual = repo.vinculo_da_viagem(v["id"])
+    if v["status"] == repo.CANCELADA or not v.get("ts_carregado"):
+        if atual:
+            repo.apagar_vinculo_da_viagem(v["id"])
+        return
+    if not atual:
+        atual = repo.vinculo_manual_do_pedido(v["operacao_id"], v["numero_pedido"])
+    marcado = repo.pedido_marcado(v["operacao_id"], v["numero_pedido"])
+    dados = {
+        "numero_pedido": v["numero_pedido"], "data_puxada": str(v["ts_carregado"])[:10], "placa": v["placa"],
+        "fabrica": v.get("destino"), "motorista": v.get("motorista"), "notas_fiscais": repo.nfs_texto(v["id"]),
+        "viagem_id": v["id"],
+    }
+    if not atual or not float(atual.get("hl_carregado") or 0):
+        dados["hl_carregado"] = float(marcado["hl"]) if marcado else 0.0
+    logistica_repo.salvar_vinculo(v["operacao_id"], atual["id"] if atual else None, dados)
+
+
+def _sincronizar_descarga(v: dict) -> None:
+    from repositories import logistica_repo
+
+    ag = repo.agendamento_da_viagem(v["id"])
+    if v["status"] == repo.CANCELADA:
+        if ag and ag["status"] not in ("Descarregado",):
+            logistica_repo.atualizar_agendamento(ag["id"], status="Cancelado")
+        return
+    if not v.get("ts_saida_cervejaria"):  # ainda não saiu (ou desfez a saída)
+        if ag:
+            if ag.get("criado_por") == ORIGEM_APP:
+                repo.apagar_agendamento(ag["id"])
+            else:
+                logistica_repo.atualizar_agendamento(ag["id"], status="Agendado", viagem_id=None)
+        return
+    status = "Descarregado" if v.get("ts_fim") else "Chegou" if v.get("ts_chegada_revenda") else "A caminho"
+    obs = _obs_descarga(v)
+    if not ag:
+        hoje = tempo.hoje()
+        ag = repo.agendamento_livre_da_placa(v["operacao_id"], v["placa"], hoje.isoformat(),
+                                             (hoje + dt.timedelta(days=2)).isoformat())
+        if ag:
+            logistica_repo.atualizar_agendamento(ag["id"], viagem_id=v["id"], status=status,
+                                                 observacao=((ag.get("observacao") or "") + " | " + obs).strip(" |"))
+            return
+        prev = previsao_chegada(v) or tempo.parse_dt(v.get("ts_chegada_revenda"))
+        data = (prev or tempo.agora()).date().isoformat()
+        hora = _hora_meia(prev) if prev else None
+        aid = logistica_repo.inserir_agendamento(v["operacao_id"], data, hora, v["placa"], "A definir", None,
+                                                 obs, ORIGEM_APP)
+        logistica_repo.atualizar_agendamento(aid, viagem_id=v["id"], status=status)
+        return
+    campos = {"status": status, "placa": v["placa"]}
+    if ag.get("criado_por") == ORIGEM_APP:
+        campos["observacao"] = obs
+    logistica_repo.atualizar_agendamento(ag["id"], **campos)
+
+
+def integrar(viagem_id: int) -> None:
+    """Atualiza vínculo de pedido/NFs e a descarga do pátio a partir da viagem. Nunca derruba o app do motorista."""
+    v = repo.viagem(viagem_id)
+    if not v:
+        return
+    for passo in (_sincronizar_vinculo, _sincronizar_descarga):
+        try:
+            passo(v)
+        except Exception as e:  # a viagem já foi gravada; a integração é refeita no próximo passo
+            import logging
+            logging.getLogger(__name__).warning("Integração da viagem %s falhou em %s: %s", viagem_id,
+                                                passo.__name__, e)
 
 
 # --- Gestão (Puxada) -----------------------------------------------------------
@@ -312,6 +438,7 @@ def corrigir_viagem(viagem_id: int, campos: dict, usuario_nome: str = "") -> Non
         if marca and "observacao" not in novos:
             novos["observacao"] = (obs + " | " if obs else "") + marca
         repo.atualizar(viagem_id, **novos)
+        integrar(viagem_id)
 
 
 def cancelar_viagem(viagem_id: int, motivo: str, usuario_nome: str) -> None:
@@ -319,6 +446,7 @@ def cancelar_viagem(viagem_id: int, motivo: str, usuario_nome: str) -> None:
         raise RegraNegocioError("Informe o motivo do cancelamento.")
     repo.atualizar(viagem_id, status=repo.CANCELADA,
                    observacao=f"Cancelada por {usuario_nome} em {tempo.agora_str()}: {motivo.strip()}")
+    integrar(viagem_id)
 
 
 def salvar_revenda(operacao_id: int, lat, lon, raio_m) -> None:

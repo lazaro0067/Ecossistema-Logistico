@@ -40,66 +40,124 @@ def _desde(ts) -> float | None:
 
 
 # --- Ao vivo -----------------------------------------------------------------
+_COLS_VIAGEM = {"id": "Nº", "motorista": "Motorista", "placa": "Placa", "numero_pedido": "Pedido",
+                "destino": "Destino", "etapa": "Etapa atual", "desde": "Desde", "agendamento": "Agendamento"}
+
+
+def _tabela_viagens(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame(columns=list(_COLS_VIAGEM))
+    linhas = []
+    for r in df.to_dict("records"):
+        ult = svc.ultima_etapa(r)
+        linhas.append({"id": r["id"], "motorista": r["motorista"], "placa": r["placa"],
+                       "numero_pedido": r["numero_pedido"], "destino": r.get("destino"),
+                       "etapa": svc.ETAPAS[ult]["nome"] if ult else "—",
+                       "desde": _fmt(r[svc.ETAPAS[ult]["coluna"]]) if ult else "",
+                       "agendamento": _fmt(r.get("agendamento"))})
+    return pd.DataFrame(linhas)
+
+
+@st.dialog("🚛 Viagem", width="large")
+def _dialogo_viagem(vid: int) -> None:
+    v = repo.viagem(vid)
+    if not v:
+        st.info("Viagem não encontrada.")
+        return
+    st.markdown(f"#### {v['placa']} · {v['motorista']}")
+    st.caption(f"Pedido {v['numero_pedido']} · {v.get('destino') or '—'} · "
+               f"agendamento {_fmt(v.get('agendamento')) or '—'} · {v['status']}")
+    aviso = svc.mensagem_apresentacao(v)
+    if aviso:
+        getattr(st, "error" if aviso[0] == "error" else "success")(aviso[1])
+    ev = repo.eventos_df(vid)
+    gps = {r["etapa"]: r for r in ev.to_dict("records")} if not ev.empty else {}
+    linhas = []
+    for chave in svc.ORDEM:
+        e = svc.ETAPAS[chave]
+        g = gps.get(chave, {})
+        dentro = g.get("dentro_raio")
+        linhas.append({"etapa": f"{e['icone']} {e['nome']}", "data_hora": _fmt(v.get(e["coluna"])) or "⏳ pendente",
+                       "gps": "" if not g or g.get("lat") is None else
+                       (f"{g.get('distancia_m'):.0f} m da revenda" if g.get("distancia_m") == g.get("distancia_m")
+                        and g.get("distancia_m") is not None else "registrado")
+                       + ("" if dentro is None or dentro != dentro else (" ✅" if int(dentro) else " ⚠️ fora do raio"))})
+    ui.tabela(pd.DataFrame(linhas), column_config={"etapa": "Etapa", "data_hora": "Data/hora", "gps": "GPS"})
+    _fotos(vid, prefixo="dlg_")
+
+
 def _ao_vivo(operacao_id: int) -> None:
     df = repo.viagens_df(operacao_id, de=(tempo.hoje() - dt.timedelta(days=30)).isoformat())
     ativas = df[df["status"] == repo.EM_VIAGEM] if not df.empty else df
     hoje = tempo.hoje().isoformat()
-    fin_hoje = int((df["ts_fim"].fillna("").str[:10] == hoje).sum()) if not df.empty else 0
+    finalizadas = df[df["ts_fim"].fillna("").str[:10] == hoje] if not df.empty else df
     fases = [svc.ultima_etapa(r) for r in ativas.to_dict("records")] if not ativas.empty else []
+    tab_ativas = _tabela_viagens(ativas)
+
+    def em(*etapas):
+        return tab_ativas[[f in etapas for f in fases]] if fases else tab_ativas
+
     parados = svc.placas_na_revenda(operacao_id)
     parados = parados[~parados["placa"].isin(ativas["placa"])] if not ativas.empty else parados
+    tab_parados = parados.assign(chegada=parados["chegada"].dt.strftime(_FMT),
+                                 parada=parados["parada_h"].map(svc.formatar_duracao))[
+        ["placa", "motorista", "chegada", "parada"]] if not parados.empty else parados
+    col_parados = {"placa": "Placa", "motorista": "Último motorista", "chegada": "Chegou em", "parada": "Parada há"}
     tema.kpis([
-        {"titulo": "Em viagem agora", "valor": len(ativas), "icone": "🚛", "status": "info"},
-        {"titulo": "Indo p/ cervejaria", "valor": fases.count("inicio"), "icone": "🛣️", "status": "info"},
+        {"titulo": "Em viagem agora", "valor": len(ativas), "icone": "🚛", "status": "info", "dados": tab_ativas,
+         "colunas": _COLS_VIAGEM},
+        {"titulo": "Indo p/ cervejaria", "valor": fases.count("inicio"), "icone": "🛣️", "status": "info",
+         "dados": em("inicio"), "colunas": _COLS_VIAGEM},
         {"titulo": "Na cervejaria", "valor": sum(f in ("apresentado", "chamado", "carregado") for f in fases),
-         "icone": "🏭", "status": tema.status_contagem(sum(f in ("apresentado", "chamado") for f in fases), 3, 6)},
-        {"titulo": "Retornando", "valor": fases.count("saida"), "icone": "↩️", "status": "info"},
-        {"titulo": "Placas paradas na revenda", "valor": len(parados), "icone": "🅿️", "status": "neutro"},
-        {"titulo": "Finalizadas hoje", "valor": fin_hoje, "icone": "✅", "status": "bom" if fin_hoje else "neutro"},
-    ])
+         "icone": "🏭", "status": tema.status_contagem(sum(f in ("apresentado", "chamado") for f in fases), 3, 6),
+         "dados": em("apresentado", "chamado", "carregado"), "colunas": _COLS_VIAGEM},
+        {"titulo": "Retornando", "valor": fases.count("saida"), "icone": "↩️", "status": "info",
+         "dados": em("saida"), "colunas": _COLS_VIAGEM},
+        {"titulo": "Placas paradas na revenda", "valor": len(parados), "icone": "🅿️", "status": "neutro",
+         "dados": tab_parados, "colunas": col_parados},
+        {"titulo": "Finalizadas hoje", "valor": len(finalizadas), "icone": "✅",
+         "status": "bom" if len(finalizadas) else "neutro", "dados": _tabela_viagens(finalizadas),
+         "colunas": _COLS_VIAGEM},
+    ], key="kp_car_vivo")
     c1, c2 = st.columns([1, 5])
     if c1.button("🔄 Atualizar", key="car_gv_atualizar"):
         st.rerun()
-    c2.caption(f"Atualizado às {tempo.agora().strftime('%H:%M')}. Os horários são lançados pelos motoristas no celular.")
+    c2.caption(f"Atualizado às {tempo.agora().strftime('%H:%M')}. Toque num card para ver os detalhes.")
 
-    tema.secao("Viagens em andamento")
+    tema.secao("Viagens em andamento", "Toque na viagem para ver as etapas, o GPS e as fotos das NFs.")
     if ativas.empty:
         st.info("Nenhuma viagem em andamento agora.")
     else:
         cards = []
         for r, fase in zip(ativas.to_dict("records"), fases):
             onde, status = FASES.get(fase, ("—", "neutro"))
-            coluna = svc.ETAPAS[fase]["coluna"]
-            ha = svc.formatar_duracao(_desde(r[coluna]))
-            prazo = ""
+            ha = svc.formatar_duracao(_desde(r[svc.ETAPAS[fase]["coluna"]]))
+            selo = None
             if r.get("apresentou_no_prazo") is not None and not pd.isna(r.get("apresentou_no_prazo")):
-                prazo = tema.selo("bom", "Apresentou no prazo") if int(r["apresentou_no_prazo"]) else \
-                    tema.selo("critico", f"Atraso {svc.formatar_duracao((r.get('atraso_min') or 0) / 60)}")
+                if int(r["apresentou_no_prazo"]):
+                    selo = "Apresentou no prazo"
+                else:
+                    status, selo = "critico", f"Atraso {svc.formatar_duracao((r.get('atraso_min') or 0) / 60)}"
             elif r.get("agendamento") and not r.get("ts_apresentado"):
                 ag = tempo.parse_dt(r["agendamento"])
                 if ag and tempo.agora() > ag:
-                    prazo = tema.selo("critico", "Agendamento vencido sem apresentação")
-            cards.append(
-                f'<div class="eco-kpi" style="--cor:{tema.STATUS[status][0]}">'
-                f'<div class="rot">🚛 {tema._e(r["placa"])} · {tema._e(r["motorista"])}</div>'
-                f'<div class="val" style="font-size:1.05rem">{tema._e(onde)}</div>'
-                f'<div class="det">Pedido {tema._e(r["numero_pedido"])} · {tema._e(r.get("destino") or "")}<br>'
-                f'{tema._e(svc.ETAPAS[fase]["nome"])} há {ha}'
-                f'{" · agend. " + tema._e(_fmt(r["agendamento"])) if r.get("agendamento") else ""}</div>{prazo}</div>')
-        st.markdown(f'<div class="eco-kpis">{"".join(cards)}</div>', unsafe_allow_html=True)
+                    status, selo = "critico", "Agendamento vencido"
+            cards.append({
+                "titulo": f"{r['placa']} · {r['motorista']}", "icone": "🚛", "valor": onde, "status": status,
+                "selo": selo or svc.ETAPAS[fase]["nome"],
+                "detalhe": f"Pedido {r['numero_pedido']} · {svc.ETAPAS[fase]['nome']} há {ha}",
+                "ver": "viagem", "ao_clicar": lambda vid=int(r["id"]): _dialogo_viagem(vid)})
+        tema.kpis(cards, key="kp_car_ativas")
 
     tema.secao("Placas paradas na revenda", "Chegaram e ainda não iniciaram nova viagem (TMA em aberto).")
     if parados.empty:
         st.info("Nenhuma placa parada na revenda.")
     else:
-        tab = parados.assign(chegada=parados["chegada"].dt.strftime(_FMT),
-                             parada=parados["parada_h"].map(svc.formatar_duracao))
-        ui.tabela(tab[["placa", "motorista", "chegada", "parada"]], column_config={
-            "placa": "Placa", "motorista": "Último motorista", "chegada": "Chegou em", "parada": "Parada há"})
+        ui.tabela(tab_parados, column_config=col_parados)
 
 
 # --- Viagens & NFs -------------------------------------------------------------
-def _fotos(vid: int) -> None:
+def _fotos(vid: int, prefixo: str = "") -> None:
     notas = repo.notas(vid)
     if not notas:
         st.caption("Sem notas fiscais lançadas.")
@@ -115,7 +173,7 @@ def _fotos(vid: int) -> None:
         for f in fotos:
             if f not in imgs:
                 st.download_button(f"⬇️ {f['nome']}", f["conteudo"], file_name=f["nome"] or "arquivo",
-                                   mime=f["tipo"] or "application/octet-stream", key=f"car_dl_{f['id']}")
+                                   mime=f["tipo"] or "application/octet-stream", key=f"car_dl_{prefixo}{f['id']}")
 
 
 def _viagens(usuario: dict, operacao_id: int) -> None:
@@ -183,11 +241,21 @@ def _acessos(operacao_id: int) -> None:
     if df.empty:
         st.info("Cadastre os motoristas em **⚙️ Cadastros › 👤 Motoristas** e volte aqui para criar o acesso.")
         return
+    from modules.puxada.app_motorista import link_do_app
+
+    link = link_do_app()
+    if link:
+        st.success(f"📲 **Link do App Carreteiro** (o mesmo para as três operações): {link}")
+        st.caption("Mande pelo WhatsApp. No celular, o motorista pode usar “Adicionar à tela inicial” para abrir como app.")
+    else:
+        st.info("📲 **Link do App Carreteiro:** endereço do sistema + `/?app=motorista` "
+                "(ex.: https://seu-sistema.streamlit.app/?app=motorista). Cadastre `APP_URL` nos Secrets para o link "
+                "aparecer pronto aqui — ou publique o `app_carreteiro.py` como app separado e informe `CARRETEIRO_URL`.")
     nova = st.session_state.pop("car_senha_nova", None)
     if nova:
         st.success(f"Acesso de **{nova['nome']}** pronto. Passe ao motorista (a senha aparece só agora):")
         st.code(f"Login: {nova['login']}\nSenha provisória: {nova['senha']}", language=None)
-        st.caption("No primeiro acesso ele cria a própria senha. O endereço é o mesmo do sistema.")
+        st.caption("No primeiro acesso ele cria a própria senha.")
     ui.tabela(df.drop(columns=["usuario_id"]).assign(ultimo_acesso=df["ultimo_acesso"].fillna("")), column_config={
         "id": None, "nome": "Motorista", "cnh": "CNH", "telefone": "Telefone", "acesso": "Login",
         "situacao": "Situação", "ultimo_acesso": "Último acesso"})

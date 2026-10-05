@@ -72,6 +72,26 @@ Depois de entrar, **apague a linha** dos Secrets.
 
 ---
 
+## 🚛 App Carreteiro (link dos motoristas)
+
+Os motoristas das três operações usam **um link só**; cada um entra com o próprio CPF/celular
+e vê apenas as placas e viagens da sua operação.
+
+- **Opção 1 — sem publicar nada novo:** endereço do sistema + `/?app=motorista`
+  (ex.: `https://seu-sistema.streamlit.app/?app=motorista`). Cadastre `APP_URL` nos Secrets
+  para o link aparecer pronto em Puxada › 🚛 App Carreteiro › 🔑 Acessos dos motoristas.
+- **Opção 2 — app separado (endereço próprio):** no Streamlit Cloud, *Create app* → mesmo
+  repositório → *Main file path* `app_carreteiro.py`. Copie os **mesmos Secrets** (o
+  `DATABASE_URL` é obrigatório para os dois apps usarem o mesmo banco). Informe o endereço
+  novo no Secret `CARRETEIRO_URL` do sistema principal para ele aparecer na tela de acessos.
+
+A viagem alimenta sozinha o resto da Puxada:
+- **Pedido carregado** → cria/atualiza o vínculo em 🔗 Vincular Pedido & NFs (pedido, placa,
+  fábrica, motorista, NFs e HL dos Pedidos Marcados);
+- **Saída da cervejaria** → entra na 🅿️ Descarga como "A caminho" (com previsão de chegada;
+  se o pátio já tinha agendado a placa, usa esse agendamento);
+- **Chegada na revenda** → "Chegou"; **Finalizar viagem** → "Descarregado".
+
 ## 📁 Pastas (departamentos) e abas
 
 | Pasta | Abas |
@@ -107,6 +127,11 @@ envie o `puxada_ambev.db` (e, se quiser, o do Sistema Puxada).
 - **Senha provisória:** em *Resetar senha*, o Master gera uma senha; no próximo
   login o usuário é obrigado a trocar.
 - Perfis: **Master** (tudo), **Gestor** (pode definir metas), **Operacional**.
+
+## 🔎 Painéis clicáveis
+
+Toque em qualquer card de indicador ou barra de gráfico para abrir os registros por trás do número
+(com download em CSV). No Início, os cards levam direto para a pasta.
 
 ## 💾 Salvamento automático
 

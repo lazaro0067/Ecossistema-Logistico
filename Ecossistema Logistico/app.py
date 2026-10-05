@@ -6,12 +6,22 @@ Este arquivo só: configura a página, garante o banco, faz o login,
 desenha o menu e encaminha para o módulo escolhido. Regras ficam em
 services/, SQL em repositories/ e telas em modules/.
 """
+import os
+
 import streamlit as st
 
 from config.settings import APP_EMPRESA, APP_ICONE, APP_SUBTITULO, APP_TITULO, MODULO_ADMIN, MODULOS
 
-st.set_page_config(page_title=f"{APP_TITULO} — {APP_SUBTITULO}", page_icon=APP_ICONE,
-                   layout="wide", initial_sidebar_state="expanded")
+# Link exclusivo dos motoristas: ...?app=motorista  (ou um app publicado à parte com ECO_MODO=carreteiro)
+MODO_MOTORISTA = (str(st.query_params.get("app", "")).lower() in ("motorista", "carreteiro")
+                  or os.environ.get("ECO_MODO", "").lower() == "carreteiro")
+
+if MODO_MOTORISTA:
+    st.set_page_config(page_title="App Carreteiro — Grupo Lima", page_icon="🚛", layout="centered",
+                       initial_sidebar_state="collapsed")
+else:
+    st.set_page_config(page_title=f"{APP_TITULO} — {APP_SUBTITULO}", page_icon=APP_ICONE,
+                       layout="wide", initial_sidebar_state="expanded")
 
 from core import session, tema, ui  # noqa: E402
 from core.auth import autenticar, e_master, e_motorista, operacoes_permitidas, pode_acessar_modulo  # noqa: E402
@@ -220,6 +230,23 @@ def paginas_publicas() -> bool:
     return True
 
 
+def app_carreteiro() -> None:
+    """Link separado dos motoristas: login próprio e só o App Carreteiro (de qualquer operação)."""
+    from modules.puxada import app_motorista
+
+    session.iniciar()
+    usuario = session.usuario()
+    ui.mostrar_avisos()
+    if not usuario:
+        app_motorista.tela_login()
+    elif usuario.get("trocar_senha"):
+        app_motorista.tela_criar_senha(usuario)
+    elif not e_motorista(usuario):
+        app_motorista.tela_nao_motorista(usuario)
+    else:
+        app_motorista.render(usuario)
+
+
 def main() -> None:
     tema.aplicar()
     try:
@@ -230,6 +257,9 @@ def main() -> None:
     except Exception as e:
         st.error(f"Não foi possível conectar ao banco de dados: {e}")
         st.stop()
+    if MODO_MOTORISTA:
+        app_carreteiro()
+        return
     if paginas_publicas():
         return
     session.iniciar()
