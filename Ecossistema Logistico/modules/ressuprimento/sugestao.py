@@ -24,17 +24,23 @@ def render(usuario: dict, operacao_id: int) -> None:
         return
     comprar = sug[sug["sugestao_cx"] > 0]
     dias = max(1, (alvo - tempo.hoje()).days)
+    det_cols = ["cod", "descricao", "marca", "disponivel", "doi", "meta_usada", "cobertura_pct", "sugestao_paletes",
+                "sugestao_cx", "sugestao_hl"]
+    det_cols = [c for c in det_cols if c in sug.columns]
+    baixos = sug[sug["cobertura_pct"] < 50][det_cols].sort_values("cobertura_pct")
     tema.kpis([
         {"titulo": f"Paletes para {alvo:%d/%m}", "valor": ui.numero(comprar["sugestao_paletes"].sum(), 1), "icone": "🧱",
-         "status": "info", "detalhe": f"projeção de {dias} dia(s)"},
-        {"titulo": "Caixas sugeridas", "valor": ui.numero(comprar["sugestao_cx"].sum()), "icone": "📦", "status": "info"},
+         "status": "info", "detalhe": f"projeção de {dias} dia(s)",
+         "dados": comprar[det_cols].sort_values("sugestao_paletes", ascending=False)},
+        {"titulo": "Caixas sugeridas", "valor": ui.numero(comprar["sugestao_cx"].sum()), "icone": "📦", "status": "info",
+         "dados": comprar[det_cols].sort_values("sugestao_cx", ascending=False)},
         {"titulo": "Volume sugerido", "valor": f"{ui.numero(comprar['sugestao_hl'].sum(), 1)} HL", "icone": "🍺",
-         "status": "info"},
-        {"titulo": "SKUs para marcar", "valor": len(comprar), "icone": "🛒",
+         "status": "info", "dados": comprar[det_cols].sort_values("sugestao_hl", ascending=False)},
+        {"titulo": "SKUs para marcar", "valor": len(comprar), "icone": "🛒", "dados": comprar[det_cols],
          "status": "atencao" if len(comprar) else "bom", "selo": "precisam de pedido" if len(comprar) else "tudo coberto"},
-        {"titulo": "SKUs abaixo de 50% da meta", "valor": int((sug["cobertura_pct"] < 50).sum()), "icone": "🔴",
-         "status": tema.status_contagem(int((sug["cobertura_pct"] < 50).sum()), 1, 5)},
-    ])
+        {"titulo": "SKUs abaixo de 50% da meta", "valor": len(baixos), "icone": "🔴", "dados": baixos,
+         "status": tema.status_contagem(len(baixos), 1, 5)},
+    ], key="kp_sug")
 
     marc = sugestao_service.marcado_por_dia(operacao_id)
     g1, g2 = st.columns(2)
@@ -42,14 +48,16 @@ def render(usuario: dict, operacao_id: int) -> None:
         if not marc.empty:
             dia = marc.groupby("dia", sort=False)["hl_marcado"].sum()
             graficos.mostrar(graficos.barras(dia.index, {"HL marcado": dia.values.round(1)},
-                                             titulo="Já marcado por dia (HL)", sufixo=" HL"), key="g_sug_dia")
+                                             titulo="Já marcado por dia (HL)", sufixo=" HL"), key="g_sug_dia",
+                             detalhe=(marc, "dia"), titulo="Dia")
         else:
             st.info("Nenhuma puxada marcada de hoje em diante. Envie a **Puxada Marcada** na aba de bases.")
     with g2:
         if not comprar.empty:
             por_marca = comprar.groupby("marca")["sugestao_hl"].sum().sort_values(ascending=False).head(10)
             graficos.mostrar(graficos.barras_h(por_marca.index, por_marca.values, casas=1, sufixo=" HL",
-                                               titulo="Sugestão por marca (HL)"), key="g_sug_marca")
+                                               titulo="Sugestão por marca (HL)"), key="g_sug_marca",
+                             detalhe=(comprar[det_cols], "marca"), titulo="Marca")
 
     tema.secao(f"Sugestão de marcação para {alvo:%d/%m/%Y}", "Ordem: menor cobertura primeiro.")
     tab = comprar.assign(prioridade=comprar["cobertura_pct"].map(lambda p: _PRIO[sugestao_service.status_cobertura(p)]))

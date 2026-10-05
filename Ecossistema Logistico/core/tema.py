@@ -82,6 +82,20 @@ h1, h2, h3 {{ letter-spacing: -0.01em; color:{TINTA}; }}
 .eco-kpi .rot {{ font-size:.8rem; color:{TINTA_2}; font-weight:600; display:flex; gap:.4rem; align-items:center; }}
 .eco-kpi .val {{ font-size:1.6rem; font-weight:750; color:{TINTA}; margin:.25rem 0 .1rem; line-height:1.15; }}
 .eco-kpi .det {{ font-size:.78rem; color:{TINTA_2}; min-height:1.1rem; }}
+/* cards clicáveis: o botão invisível cobre o card inteiro */
+div[class*="st-key-kpic_"] {{ position:relative; gap:0 !important; height:100%; }}
+div[class*="st-key-kpic_"] [data-testid="stElementContainer"]:has(.eco-kpi),
+div[class*="st-key-kpic_"] [data-testid="stMarkdown"],
+div[class*="st-key-kpic_"] [data-testid="stMarkdownContainer"] {{ height:100%; }}
+div[class*="st-key-kpic_"] .eco-kpi {{ height:100%; margin:0; transition: transform .12s ease, box-shadow .12s ease; }}
+div[class*="st-key-kpic_"]:hover .eco-kpi {{ transform: translateY(-2px); border-color: var(--cor);
+    box-shadow: 0 12px 24px -14px rgba(11,31,58,.45); }}
+div[class*="st-key-kpic_"] [data-testid="stElementContainer"]:has(.stButton) {{ position:absolute; inset:0; z-index:3; margin:0; }}
+div[class*="st-key-kpic_"] .stButton, div[class*="st-key-kpic_"] .stButton button {{ width:100%; height:100%; }}
+div[class*="st-key-kpic_"] .stButton button {{ opacity:0; cursor:pointer; }}
+.eco-kpi .ver {{ font-size:.72rem; font-weight:700; color:{TINTA_3}; margin-top:.4rem; letter-spacing:.01em; }}
+div[class*="st-key-kpic_"]:hover .eco-kpi .ver {{ color: var(--cor); }}
+.eco-kpis-row {{ margin:.3rem 0 1rem; }}
 .eco-selo {{ display:inline-flex; align-items:center; gap:.3rem; padding:.12rem .5rem; border-radius:999px;
     font-size:.72rem; font-weight:700; margin-top:.35rem; }}
 .eco-selo i {{ font-style:normal; font-weight:800; }}
@@ -148,20 +162,75 @@ def secao(titulo: str, descricao: str = "") -> None:
                 f'{f"<p>{_e(descricao)}</p>" if descricao else ""}</div>', unsafe_allow_html=True)
 
 
-def kpis(cards: list[dict]) -> None:
-    """cards: [{titulo, valor, detalhe?, status?, selo?, icone?}]"""
-    partes = []
-    for c in cards:
-        status = c.get("status", "info")
-        cor = STATUS.get(status, STATUS["neutro"])[0]
-        selo_html = selo(status, c.get("selo")) if c.get("selo") or status not in ("info",) else ""
-        partes.append(
-            f'<div class="eco-kpi" style="--cor:{cor}">'
+def _card_html(c: dict, clicavel: bool = False) -> str:
+    status = c.get("status", "info")
+    cor = STATUS.get(status, STATUS["neutro"])[0]
+    selo_html = selo(status, c.get("selo")) if c.get("selo") or status not in ("info",) else ""
+    ver = f'<div class="ver">🔎 ver {_e(c.get("ver") or "detalhes")} ›</div>' if clicavel else ""
+    return (f'<div class="eco-kpi" style="--cor:{cor}">'
             f'<div class="rot">{_e(c.get("icone", ""))} {_e(c["titulo"])}</div>'
             f'<div class="val">{_e(c["valor"])}</div>'
-            f'<div class="det">{_e(c.get("detalhe", ""))}</div>{selo_html}</div>'
-        )
-    st.markdown(f'<div class="eco-kpis">{"".join(partes)}</div>', unsafe_allow_html=True)
+            f'<div class="det">{_e(c.get("detalhe", ""))}</div>{selo_html}{ver}</div>')
+
+
+def _tem_detalhe(c: dict) -> bool:
+    return c.get("dados") is not None or callable(c.get("ao_clicar"))
+
+
+def kpis(cards: list[dict], key: str | None = None) -> None:
+    """cards: [{titulo, valor, detalhe?, status?, selo?, icone?, dados?, colunas?, ao_clicar?}]
+
+    Card com `dados` (DataFrame) fica clicável e abre o detalhamento com esses registros;
+    `colunas` é o column_config da tabela. `ao_clicar` (função) troca o detalhamento por outra ação.
+    """
+    if not any(_tem_detalhe(c) for c in cards):
+        st.markdown(f'<div class="eco-kpis">{"".join(_card_html(c) for c in cards)}</div>', unsafe_allow_html=True)
+        return
+    import hashlib
+
+    base = key or "k" + hashlib.md5("|".join(str(c["titulo"]) for c in cards).encode()).hexdigest()[:8]
+    por_linha = len(cards) if len(cards) <= 6 else 4
+    clicado = None
+    for ini in range(0, len(cards), por_linha):
+        linha = cards[ini:ini + por_linha]
+        for i, (col, c) in enumerate(zip(st.columns(por_linha), linha), start=ini):
+            with col:
+                if not _tem_detalhe(c):
+                    st.markdown(_card_html(c), unsafe_allow_html=True)
+                    continue
+                with st.container(key=f"kpic_{base}_{i}"):
+                    st.markdown(_card_html(c, clicavel=True), unsafe_allow_html=True)
+                    if st.button(f"Ver {c['titulo']}", key=f"kpib_{base}_{i}", help=f"Ver detalhes: {c['titulo']}"):
+                        clicado = c
+    st.markdown('<div class="eco-kpis-row"></div>', unsafe_allow_html=True)
+    if clicado is not None:
+        if callable(clicado.get("ao_clicar")):
+            clicado["ao_clicar"]()
+        else:
+            detalhe(clicado["titulo"], clicado["dados"], clicado.get("colunas"))
+
+
+@st.dialog("🔎 Detalhamento", width="large")
+def _dialogo_detalhe(titulo: str, df, colunas: dict | None) -> None:
+    from core.ui import LARGURA
+
+    st.markdown(f"#### {_e(titulo)}")
+    if df is None or len(df) == 0:
+        st.info("Nenhum registro.")
+        return
+    st.caption(f"{len(df)} registro(s)")
+    st.dataframe(df, hide_index=True, column_config=colunas, **LARGURA)
+    csv = df.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig")
+    nome = "".join(ch if ch.isalnum() else "_" for ch in str(titulo).lower())[:40] or "detalhe"
+    try:
+        st.download_button("⬇️ Baixar (CSV)", csv, file_name=f"{nome}.csv", mime="text/csv", on_click="ignore")
+    except TypeError:  # Streamlit sem on_click="ignore"
+        st.download_button("⬇️ Baixar (CSV)", csv, file_name=f"{nome}.csv", mime="text/csv")
+
+
+def detalhe(titulo: str, df, colunas: dict | None = None) -> None:
+    """Abre a janela de detalhamento com os registros por trás de um card ou de uma barra."""
+    _dialogo_detalhe(titulo, df, colunas)
 
 
 # --- Regras de cor por desempenho ----------------------------------------

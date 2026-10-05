@@ -10,11 +10,14 @@ FUSO = "America/Sao_Paulo"
 
 # --- Caminhos -------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = BASE_DIR / "data"
+import os  # noqa: E402
+
+# ECO_DATA_DIR: o app.py da raiz aponta para uma pasta fixa (o sistema pode rodar de uma cópia temporária)
+DATA_DIR = Path(os.environ.get("ECO_DATA_DIR") or BASE_DIR / "data")
 ANEXOS_DIR = DATA_DIR / "anexos"
 DB_PATH = DATA_DIR / "ecossistema.db"
 
-DATA_DIR.mkdir(exist_ok=True)
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 ANEXOS_DIR.mkdir(exist_ok=True)
 
 # --- Identidade -----------------------------------------------------------
@@ -40,6 +43,8 @@ MODULOS = {
         "viagens": "📅 Viagens do Mês",
         "pedidos": "📦 Pedidos Marcados",
         "cadastros": "⚙️ Cadastros",
+        "carreteiro": "🚛 App Carreteiro",
+        "tmv_tma": "⏱️ TMV / TMA & Viagens",
     }},
     "ressuprimento": {"rotulo": "Ressuprimento", "icone": "🔄", "abas": {
         "bases": "📁 Atualização de Bases",
@@ -117,7 +122,8 @@ CESTAS_TOTAL = ["CATEGORIA_AGRUPADO - CERVEJA", "CATEGORIA_AGRUPADO - NAB"]  # l
 
 # --- Perfis ---------------------------------------------------------------
 PERFIL_MASTER = "Master"
-PERFIS = [PERFIL_MASTER, "Gestor", "Operacional"]
+PERFIL_MOTORISTA = "Motorista"  # entra direto no App Carreteiro (celular)
+PERFIS = [PERFIL_MASTER, "Gestor", "Operacional", PERFIL_MOTORISTA]
 
 # --- Puxada / Fretes ------------------------------------------------------
 TIPOS_OD = ["Origem e destino", "Apenas Origem", "Apenas Destino"]
@@ -133,6 +139,22 @@ class StatusFrete:
 
     TODOS = [PENDENTE, APROVADO, REJEITADO, FINALIZADO, CANCELADO]
     COMPROMETIDOS = [APROVADO, FINALIZADO]  # entram no realizado do OBZ
+
+
+# --- App Carreteiro (motorista aponta cada passo da viagem) -------------
+# (chave, botão para o motorista, coluna com a data/hora, ícone, nome curto)
+ETAPAS_VIAGEM = [
+    ("inicio", "Iniciar viagem", "ts_inicio", "🟢", "Início da viagem"),
+    ("apresentado", "Registre sua apresentação", "ts_apresentado", "🙋", "Apresentado"),
+    ("chamado", "Chamado para carregar", "ts_chamado", "📣", "Chamado p/ carregar"),
+    ("carregado", "Pedido carregado", "ts_carregado", "📦", "Pedido carregado"),
+    ("saida", "Saída da cervejaria", "ts_saida_cervejaria", "🏭", "Saída cervejaria"),
+    ("chegada", "Chegada na revenda", "ts_chegada_revenda", "🏁", "Chegada revenda"),
+    ("fim", "Finalizar viagem", "ts_fim", "✅", "Viagem finalizada"),
+]
+TOLERANCIA_APRESENTACAO_MIN = 0   # minutos de tolerância após o horário agendado
+RAIO_REVENDA_PADRAO_M = 300       # raio (m) da revenda para validar chegada/saída por GPS
+DESFAZER_ETAPA_MIN = 15           # motorista pode desfazer a última etapa até X minutos depois
 
 
 # --- Armazém / Estoque ----------------------------------------------------

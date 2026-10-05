@@ -27,16 +27,17 @@ def render(usuario: dict, operacao_id: int) -> None:
     cont = df["status"].value_counts()
     filtro_k = "pol_filtro"
     st.session_state.setdefault(filtro_k, None)
-    cols = st.columns(4)
-    for col, (rot, cor) in zip(cols, STATUS.items()):
-        with col:
-            tema.kpis([{"titulo": rot, "valor": f"{int(cont.get(rot, 0))} SKUs", "status": cor,
-                        "detalhe": ui.pct(cont.get(rot, 0) / len(df) * 100)}])
-            ativo = st.session_state[filtro_k] == rot
-            if st.button("✓ Filtrando" if ativo else "Filtrar", key=f"pol_{rot}", type="primary" if ativo else "secondary",
-                         **ui.LARGURA):
-                st.session_state[filtro_k] = None if ativo else rot
-                st.rerun()
+    def _filtrar(rot):
+        def acao():
+            st.session_state[filtro_k] = None if st.session_state[filtro_k] == rot else rot
+            st.rerun()
+        return acao
+
+    tema.kpis([{"titulo": rot, "valor": f"{int(cont.get(rot, 0))} SKUs", "status": cor,
+                "detalhe": ui.pct(cont.get(rot, 0) / len(df) * 100),
+                "selo": "✓ filtrando" if st.session_state[filtro_k] == rot else None,
+                "ver": "limpar filtro" if st.session_state[filtro_k] == rot else "filtrar a tabela",
+                "ao_clicar": _filtrar(rot)} for rot, cor in STATUS.items()], key="kp_pol")
     f1, f2 = st.columns(2)
     tipo = f1.selectbox("Tipo", ["Todos"] + sorted(df["tipo"].dropna().unique()), key="pol_tipo")
     cat = f2.selectbox("Categoria", ["Todas"] + sorted(df["categoria"].dropna().unique()), key="pol_cat")

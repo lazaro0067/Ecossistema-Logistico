@@ -81,8 +81,9 @@ def tela_registros(*, modulo: str, usuario: dict, tabela: str, operacao_id: int,
             for ind in indicadores:
                 v = ind.calcular(df)
                 cards.append({"titulo": ind.rotulo, "valor": ind.formato(v), "icone": ind.icone,
-                              "status": ind.status(v) if ind.status else "info"})
-            tema.kpis(cards)
+                              "status": ind.status(v) if ind.status else "info", "ver": "lançamentos",
+                              "dados": df.drop(columns=["operacao_id"], errors="ignore")})
+            tema.kpis(cards, key=f"kp_{tabela}")
 
         if grafico_extra is not None:
             grafico_extra(df)
@@ -98,7 +99,9 @@ def tela_registros(*, modulo: str, usuario: dict, tabela: str, operacao_id: int,
                     else:
                         serie = serie.sort_index()
                         fig = graficos.barras(serie.index, {g.titulo: serie.values}, titulo=g.titulo, sufixo=g.sufixo)
-                    graficos.mostrar(fig, key=f"g_{tabela}_{i}")
+                    base = df.drop(columns=["operacao_id"], errors="ignore")
+                    base = base.assign(**{g.agrupar_por: base[g.agrupar_por].fillna("—")})
+                    graficos.mostrar(fig, key=f"g_{tabela}_{i}", detalhe=(base, g.agrupar_por), titulo=g.titulo)
 
         ui.tabela(df.drop(columns=["operacao_id"], errors="ignore"))
         c1, c2 = st.columns([1, 3])

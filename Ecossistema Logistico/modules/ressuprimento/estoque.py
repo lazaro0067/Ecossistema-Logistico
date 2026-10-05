@@ -27,19 +27,27 @@ def _gestao_doi(usuario: dict, operacao_id: int) -> None:
         return
     r = armazem_service.resumo(operacao_id, df)
     meta_media = float(df.loc[df["linear_cx_dia"] > 0, "doi_meta"].mean() or 7)
+    cols = ["cod", "descricao", "tipo", "situacao", "disponivel", "linear_cx_dia", "doi", "doi_meta", "hl", "paletes"]
+
+    def sit(*s):
+        return df[df["situacao"].isin(s)][cols]
+
     tema.kpis([
-        {"titulo": "SKUs em estoque", "valor": r["skus"], "icone": "📦", "status": "info"},
+        {"titulo": "SKUs em estoque", "valor": r["skus"], "icone": "📦", "status": "info", "dados": df[cols]},
         {"titulo": "Estoque", "valor": f"{ui.compacto(r['hl'])} HL", "detalhe": f"{ui.numero(r['paletes'])} paletes",
-         "icone": "🍺", "status": "info"},
+         "icone": "🍺", "status": "info", "dados": df[cols].sort_values("hl", ascending=False)},
         {"titulo": "DOI médio", "valor": f"{ui.numero(r['doi_medio'], 1)} dias", "detalhe": f"meta média {ui.numero(meta_media, 1)} dias",
-         "icone": "⏱️", "status": "bom" if r["doi_medio"] >= meta_media else "atencao" if r["doi_medio"] >= meta_media * .7 else "critico"},
+         "icone": "⏱️", "status": "bom" if r["doi_medio"] >= meta_media else "atencao" if r["doi_medio"] >= meta_media * .7 else "critico",
+         "dados": df[df["linear_cx_dia"] > 0][cols].sort_values("doi")},
         {"titulo": "Rupturas", "valor": r["rupturas"], "detalhe": "SKUs com giro e sem estoque", "icone": "⛔",
-         "status": tema.status_contagem(r["rupturas"], 1, 3), "selo": "Sem ruptura" if not r["rupturas"] else "Agir hoje"},
+         "status": tema.status_contagem(r["rupturas"], 1, 3), "selo": "Sem ruptura" if not r["rupturas"] else "Agir hoje",
+         "dados": sit("Ruptura")},
         {"titulo": "Críticos (< 50% da meta)", "valor": r["criticos"], "icone": "⚠️",
-         "status": tema.status_contagem(r["criticos"], 1, 10)},
+         "status": tema.status_contagem(r["criticos"], 1, 10), "dados": sit("Crítico")},
         {"titulo": "Em excesso (> 2× meta)", "valor": int((df["situacao"] == "Excesso").sum()), "icone": "📈",
-         "status": "atencao" if (df["situacao"] == "Excesso").any() else "bom", "selo": "capital parado"},
-    ])
+         "status": "atencao" if (df["situacao"] == "Excesso").any() else "bom", "selo": "capital parado",
+         "dados": sit("Excesso")},
+    ], key="kp_est_doi")
 
     f1, f2, f3 = st.columns([1, 2, 2])
     tipos = sorted(t for t in df["tipo"].dropna().unique())
@@ -59,7 +67,8 @@ def _gestao_doi(usuario: dict, operacao_id: int) -> None:
         cont = vis["situacao"].value_counts().reindex(list(_ICONE_SIT)).dropna()
         graficos.mostrar(graficos.barras_h(
             [f"{_ICONE_SIT[s]} {s}" for s in cont.index], cont.values,
-            cores=[graficos.COR_SITUACAO[s] for s in cont.index], titulo="SKUs por situação"), key="g_est_sit")
+            cores=[graficos.COR_SITUACAO[s] for s in cont.index], titulo="SKUs por situação"), key="g_est_sit",
+            detalhe=lambda rot: vis[vis["situacao"] == rot.split(" ", 1)[-1]][cols], titulo="Situação")
     with g2:
         risco = vis[vis["linear_cx_dia"] > 0].assign(cob=lambda d: d["doi"] / d["doi_meta"] * 100) \
             .sort_values("cob").head(12)
@@ -68,7 +77,9 @@ def _gestao_doi(usuario: dict, operacao_id: int) -> None:
             graficos.mostrar(graficos.barras_h(
                 rot, risco["doi"].round(1), casas=1, sufixo=" d",
                 cores=[graficos.COR_SITUACAO.get(s, "#2a78d6") for s in risco["situacao"]],
-                titulo="Menor cobertura — DOI atual (dias)"), key="g_est_risco")
+                titulo="Menor cobertura — DOI atual (dias)"), key="g_est_risco",
+                detalhe=lambda rot_: risco[[f"{c} · {str(d)[:22]}" == rot_ for c, d in zip(risco["cod"], risco["descricao"])]][cols],
+                titulo="SKU")
 
     tema.secao("Posição por SKU", "Edite a coluna “Meta DOI” direto na tabela — salva na hora.")
     tab = vis[["cod", "descricao", "tipo", "situacao", "disponivel", "linear_cx_dia", "doi", "doi_meta",

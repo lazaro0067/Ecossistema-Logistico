@@ -54,14 +54,20 @@ def excluir(tabela: str, rid: int) -> None:
 # --- Agendamentos de descarga (pátio) --------------------------------------
 def agendamentos_df(operacao_id: int, de: str | None = None, ate: str | None = None) -> pd.DataFrame:
     f_sql, ids = operacoes_repo.filtro("operacao_id", operacao_id)
-    sql, p = f"SELECT id, data, hora, placa, slot, tipo_carga, status, observacao, criado_por FROM agendamentos_descarga WHERE {f_sql}", list(ids)
+    f_sql = f_sql.replace("operacao_id", "a.operacao_id", 1)
+    sql, p = (f"""SELECT a.id, a.data, a.hora, a.placa, a.slot, a.tipo_carga, a.status, a.observacao, a.criado_por,
+                         a.viagem_id, m.nome AS motorista, v.numero_pedido AS pedido_app
+                  FROM agendamentos_descarga a
+                  LEFT JOIN viagens_carreteiro v ON v.id = a.viagem_id
+                  LEFT JOIN motoristas m ON m.id = v.motorista_id
+                  WHERE {f_sql}""", list(ids))
     if de:
-        sql += " AND data >= ?"
+        sql += " AND a.data >= ?"
         p.append(de)
     if ate:
-        sql += " AND data <= ?"
+        sql += " AND a.data <= ?"
         p.append(ate)
-    return query_df(sql + " ORDER BY data, hora, slot", p)
+    return query_df(sql + " ORDER BY a.data, a.hora, a.slot", p)
 
 
 def inserir_agendamento(operacao_id: int, data: str, hora: str, placa: str, slot: str, tipo: str,
@@ -87,7 +93,7 @@ def atualizar_agendamento(aid: int, **campos) -> None:
 def vinculos_df(operacao_id: int, mes_ano: str | None = None) -> pd.DataFrame:
     f_sql, ids = operacoes_repo.filtro("operacao_id", operacao_id)
     sql, p = (f"""SELECT id, numero_pedido, data_puxada, placa, fabrica, transportadora, motorista, notas_fiscais,
-                  hl_carregado, dt_atualizacao FROM vinculos_pedidos WHERE {f_sql}""", list(ids))
+                  hl_carregado, dt_atualizacao, viagem_id FROM vinculos_pedidos WHERE {f_sql}""", list(ids))
     if mes_ano:
         sql += " AND substr(data_puxada, 1, 7) = ?"
         p.append(mes_ano)

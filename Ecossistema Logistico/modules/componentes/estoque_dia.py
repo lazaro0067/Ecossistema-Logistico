@@ -25,17 +25,21 @@ def render(operacao_id: int, key: str, mostrar_download: bool = True) -> None:
     total = len(df)
     filtro_k = f"{key}_filtro"
     st.session_state.setdefault(filtro_k, None)
-    cols = st.columns(4)
-    for col, (rot, (cor, ico, desc)) in zip(cols, STATUS.items()):
+    def _filtrar(rot):
+        def acao():
+            st.session_state[filtro_k] = None if st.session_state[filtro_k] == rot else rot
+            st.rerun()
+        return acao
+
+    cards = []
+    for rot, (cor, ico, desc) in STATUS.items():
         n = int((df["status_comercial"] == rot).sum())
-        with col:
-            tema.kpis([{"titulo": f"{ico} {rot}", "valor": f"{n} SKUs", "status": cor,
-                        "detalhe": f"{ui.pct(n / total * 100 if total else 0)} · {desc}"}])
-            ativo = st.session_state[filtro_k] == rot
-            if st.button("✓ Filtrando" if ativo else "Filtrar", key=f"{key}_btn_{rot}", type="primary" if ativo else "secondary",
-                         **ui.LARGURA):
-                st.session_state[filtro_k] = None if ativo else rot
-                st.rerun()
+        ativo = st.session_state[filtro_k] == rot
+        cards.append({"titulo": f"{ico} {rot}", "valor": f"{n} SKUs", "status": cor,
+                      "detalhe": f"{ui.pct(n / total * 100 if total else 0)} · {desc}",
+                      "selo": "✓ filtrando" if ativo else None,
+                      "ver": "limpar filtro" if ativo else "filtrar a lista", "ao_clicar": _filtrar(rot)})
+    tema.kpis(cards, key=f"kp_{key}")
 
     f1, f2, f3, f4 = st.columns([2, 1, 1, 1])
     busca = f1.text_input("🔍 Código ou nome do produto", key=f"{key}_busca")

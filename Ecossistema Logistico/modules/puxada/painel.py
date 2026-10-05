@@ -19,35 +19,40 @@ def render(usuario: dict, operacao_id: int) -> None:
     if df.empty:
         st.info("Nenhuma cotação com esses filtros.")
         return
-    pend = int((df["status"] == StatusFrete.PENDENTE).sum())
+    colunas = ["id", "status", "data_frete", "origem", "destino", "transportadora", "motivo",
+               "valor_negociado", "valor_tabela", "centro_custo", "solicitante", "aprovador",
+               "numero_cte", "motivo_rejeicao"]
+    fmt = {"valor_negociado": st.column_config.NumberColumn("Negociado", format="R$ %.2f"),
+           "valor_tabela": st.column_config.NumberColumn("Tabela", format="R$ %.2f")}
+    pend_df = df[df["status"] == StatusFrete.PENDENTE][colunas]
+    pend = len(pend_df)
     acima = df[df["valor_tabela"].notna() & (df["valor_negociado"] > df["valor_tabela"])]
     tema.kpis([
-        {"titulo": "Cotações", "valor": len(df), "icone": "📋", "status": "info"},
-        {"titulo": "Valor total", "valor": ui.moeda(df["valor_negociado"].sum()), "icone": "💸", "status": "info"},
+        {"titulo": "Cotações", "valor": len(df), "icone": "📋", "status": "info", "dados": df[colunas], "colunas": fmt},
+        {"titulo": "Valor total", "valor": ui.moeda(df["valor_negociado"].sum()), "icone": "💸", "status": "info",
+         "dados": df[colunas].sort_values("valor_negociado", ascending=False), "colunas": fmt},
         {"titulo": "Aguardando aprovação", "valor": pend, "icone": "⏳", "status": "atencao" if pend else "bom",
-         "selo": "fila vazia" if not pend else "pendentes"},
+         "selo": "fila vazia" if not pend else "pendentes", "dados": pend_df, "colunas": fmt},
         {"titulo": "Acima da tabela", "valor": len(acima), "icone": "🔺",
          "detalhe": f"+{ui.moeda((acima['valor_negociado'] - acima['valor_tabela']).sum())}" if len(acima) else "",
-         "status": "serio" if len(acima) else "bom", "selo": "negociar melhor" if len(acima) else "dentro da tabela"},
-    ])
+         "status": "serio" if len(acima) else "bom", "selo": "negociar melhor" if len(acima) else "dentro da tabela",
+         "dados": acima[colunas], "colunas": fmt},
+    ], key="kp_painel")
 
     g1, g2 = st.columns(2)
     with g1:
         por_tr = df.groupby(df["transportadora"].fillna("—"))["valor_negociado"].sum().sort_values(ascending=False).head(8)
+        base = df.assign(transportadora=df["transportadora"].fillna("—"))[colunas]
         graficos.mostrar(graficos.barras_h(por_tr.index, por_tr.values, titulo="Valor por transportadora (R$)"),
-                         key="g_pn_tr")
+                         key="g_pn_tr", detalhe=(base, "transportadora"), colunas=fmt, titulo="Transportadora")
     with g2:
         cont = df["status"].value_counts()
         graficos.mostrar(graficos.barras_h(cont.index, cont.values,
                                            cores=[tema.STATUS[_COR_STATUS.get(s, "neutro")][0] for s in cont.index],
-                                           titulo="Cotações por status"), key="g_pn_st")
-
-    colunas = ["id", "status", "data_frete", "origem", "destino", "transportadora", "motivo",
-               "valor_negociado", "valor_tabela", "centro_custo", "solicitante", "aprovador",
-               "numero_cte", "motivo_rejeicao"]
-    ui.tabela(df[colunas], column_config={
-        "valor_negociado": st.column_config.NumberColumn("Negociado", format="R$ %.2f"),
-        "valor_tabela": st.column_config.NumberColumn("Tabela", format="R$ %.2f")})
+                                           titulo="Cotações por status"), key="g_pn_st",
+                         detalhe=(df[colunas], "status"), colunas=fmt, titulo="Status")
+    st.caption("🔎 Clique num card ou numa barra para ver os registros.")
+    ui.tabela(df[colunas], column_config=fmt)
     ui.download_csv(df[colunas], "fretes", key="dl_fretes")
 
     cancelaveis = df[df["status"].isin([StatusFrete.PENDENTE, StatusFrete.APROVADO])]

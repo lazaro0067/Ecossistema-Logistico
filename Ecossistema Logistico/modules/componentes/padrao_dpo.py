@@ -95,9 +95,12 @@ def editor_padrao(operacao_id: int, usuario: dict, modulo: str, subbloco: str, r
         itens = avaliar(st.session_state.get(f"{k}_cont", ""))
         ok = sum(1 for _, v in itens if v)
         pct = ok / len(itens) * 100
+        import pandas as pd
+
         tema.kpis([{"titulo": "Aderência ao padrão DPO", "valor": ui.pct(pct, 0), "icone": "✅",
                     "status": "bom" if pct >= 85 else "atencao" if pct >= 60 else "critico",
-                    "detalhe": f"{ok} de {len(itens)} itens"}])
+                    "detalhe": f"{ok} de {len(itens)} itens", "ver": "itens que faltam",
+                    "dados": pd.DataFrame([{"item": n} for n, v in itens if not v])}], key=f"kp_dpo_{k}")
         st.markdown("\n".join(f"{'✅' if v else '⬜'} {n}" for n, v in itens))
 
 
@@ -122,17 +125,22 @@ def book(operacao_id: int, usuario: dict, modulo: str, grupo: dict, chave: str,
             editor_padrao(operacao_id, usuario, modulo, sb, rot)
 
 
-def progresso_book(operacao_id: int, modulo: str, estrutura: dict) -> None:
+def progresso_book(operacao_id: int, modulo: str, estrutura: dict, chave: str = "") -> None:
     todos = todos_subblocos(estrutura)
     feitos = dpo_repo.resumo_padroes(operacao_id, modulo)
     status = dict(zip(feitos["subbloco"], feitos["status"])) if not feitos.empty else {}
     impl = sum(1 for sb, _ in todos if status.get(sb) in ("Implementado", "Auditado"))
     escritos = sum(1 for sb, _ in todos if sb in status)
     pct = impl / len(todos) * 100 if todos else 0
+    import pandas as pd
+
+    lista = pd.DataFrame([{"subbloco": sb, "padrao": rot, "status": status.get(sb, "Não escrito")} for sb, rot in todos])
     tema.kpis([
         {"titulo": "Padrões implementados", "valor": f"{impl} de {len(todos)}", "icone": "📘",
-         "status": "bom" if pct >= 85 else "atencao" if pct >= 50 else "critico", "detalhe": ui.pct(pct, 0)},
-        {"titulo": "Padrões escritos", "valor": escritos, "icone": "✍️", "status": "info"},
+         "status": "bom" if pct >= 85 else "atencao" if pct >= 50 else "critico", "detalhe": ui.pct(pct, 0),
+         "dados": lista[~lista["status"].isin(["Implementado", "Auditado"])], "ver": "o que falta implementar"},
+        {"titulo": "Padrões escritos", "valor": escritos, "icone": "✍️", "status": "info",
+         "dados": lista[lista["status"] != "Não escrito"]},
         {"titulo": "Auditados", "valor": sum(1 for v in status.values() if v == "Auditado"), "icone": "🔍",
-         "status": "info"},
-    ])
+         "status": "info", "dados": lista[lista["status"] == "Auditado"]},
+    ], key=f"kp_book_{modulo}_{chave}")

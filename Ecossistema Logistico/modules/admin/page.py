@@ -103,12 +103,18 @@ def _aba_usuarios(usuario_logado: dict) -> None:
     df = usuarios_repo.listar_df()
     ativos = int((df["situacao"] == "Ativo").sum()) if not df.empty else 0
     tema.kpis([
-        {"titulo": "Usuários ativos", "valor": ativos, "icone": "👤", "status": "info"},
-        {"titulo": "Masters", "valor": int((df["perfil"] == PERFIL_MASTER).sum()), "icone": "🔑", "status": "info"},
-        {"titulo": "Aprovadores", "valor": int((df["aprovador"] == "Sim").sum()), "icone": "✅", "status": "info"},
+        {"titulo": "Usuários ativos", "valor": ativos, "icone": "👤", "status": "info",
+         "dados": df[df["situacao"] == "Ativo"]},
+        {"titulo": "Masters", "valor": int((df["perfil"] == PERFIL_MASTER).sum()), "icone": "🔑", "status": "info",
+         "dados": df[df["perfil"] == PERFIL_MASTER]},
+        {"titulo": "Aprovadores", "valor": int((df["aprovador"] == "Sim").sum()), "icone": "✅", "status": "info",
+         "dados": df[df["aprovador"] == "Sim"]},
+        {"titulo": "Motoristas (App)", "valor": int((df["perfil"] == "Motorista").sum()), "icone": "🚛",
+         "status": "info", "dados": df[df["perfil"] == "Motorista"]},
         {"titulo": "Nunca acessaram", "valor": int(df["ultimo_acesso"].isna().sum()), "icone": "⏳",
-         "status": "atencao" if df["ultimo_acesso"].isna().any() else "bom", "selo": "aguardando 1º login"},
-    ])
+         "status": "atencao" if df["ultimo_acesso"].isna().any() else "bom", "selo": "aguardando 1º login",
+         "dados": df[df["ultimo_acesso"].isna()]},
+    ], key="kp_admin")
     ui.tabela(df, column_config={"alcada": st.column_config.NumberColumn("alçada", format="R$ %.0f"),
                                  "pastas": st.column_config.NumberColumn("pastas/abas")})
 

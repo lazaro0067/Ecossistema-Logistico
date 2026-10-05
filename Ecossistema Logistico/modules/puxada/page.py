@@ -1,7 +1,7 @@
 """Módulo Puxada — cada aba (pasta) vive no seu próprio arquivo."""
 from core import ui
-from modules.puxada import (aprovacoes, cadastros, cotacao, descarga, encerramento, obz, painel, pedidos, viagens,
-                            vinculos)
+from modules.puxada import (aprovacoes, cadastros, carreteiro, cotacao, descarga, encerramento, obz, painel, pedidos,
+                            tmv_tma, viagens, vinculos)
 
 ABAS = {
     "cotacao": cotacao.render,
@@ -14,6 +14,8 @@ ABAS = {
     "viagens": viagens.render,
     "pedidos": pedidos.render,
     "cadastros": cadastros.render,
+    "carreteiro": carreteiro.render,
+    "tmv_tma": tmv_tma.render,
 }
 
 

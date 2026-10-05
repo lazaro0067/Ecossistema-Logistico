@@ -28,18 +28,22 @@ def acompanhamento(operacao_id: int, chave: str = "ces", com_graficos: bool = Tr
                            format_func=lambda m: MESES[m - 1], key=f"{chave}_meses")
     df = svc.acompanhamento(operacao_id, int(ano), meses)
     tot = df[df["cesta"] == "TOTAL"].iloc[0]
+    det = df[["indicador", "meta", "real", "tendencia", "ating_real", "ating_tend", "pendencia"]]
+    neg = det[det["pendencia"] < 0].sort_values("pendencia")
     preench, periodo = df.attrs.get("dias_preenchidos", 0), df.attrs.get("dias_periodo", 0)
     tema.kpis([
         {"titulo": "Total Cerveja + Nab — real", "valor": f"{ui.compacto(tot['real'])} HL", "icone": "🍺",
-         "status": "info", "detalhe": f"{preench} de {periodo} dia(s) com dado"},
+         "status": "info", "detalhe": f"{preench} de {periodo} dia(s) com dado", "dados": det, "ver": "por cesta"},
         {"titulo": "Meta do período", "valor": f"{ui.compacto(tot['meta'])} HL" if tot["meta"] else "Sem meta",
-         "icone": "🎯", "status": "info" if tot["meta"] else "neutro"},
+         "icone": "🎯", "status": "info" if tot["meta"] else "neutro", "dados": det, "ver": "por cesta"},
         {"titulo": "Tendência de fechamento", "valor": f"{ui.compacto(tot['tendencia'])} HL", "icone": "🔮",
          "detalhe": f"{ui.pct(tot['ating_tend'])} da meta" if tot["meta"] else "defina as metas",
-         "status": tema.status_atingimento(tot["ating_tend"] if tot["meta"] else None)},
+         "status": tema.status_atingimento(tot["ating_tend"] if tot["meta"] else None),
+         "dados": det.sort_values("ating_tend"), "ver": "por cesta"},
         {"titulo": "Pendência (real − meta)", "valor": f"{ui.compacto(tot['pendencia'])} HL", "icone": "⚖️",
-         "status": ("bom" if tot["pendencia"] >= 0 else "critico") if tot["meta"] else "neutro"},
-    ])
+         "status": ("bom" if tot["pendencia"] >= 0 else "critico") if tot["meta"] else "neutro",
+         "dados": neg, "ver": "cestas abaixo da meta"},
+    ], key=f"kp_{chave}")
     tab = df.assign(
         status=df["ating_tend"].map(lambda p: _COR[tema.status_atingimento(p if pd.notna(p) else None)]),
     )[["status", "indicador", "meta", "real", "tendencia", "ating_real", "ating_tend", "pendencia"]]
@@ -64,7 +68,7 @@ def acompanhamento(operacao_id: int, chave: str = "ces", com_graficos: bool = Tr
             cores = [tema.STATUS[tema.status_atingimento(p)][0] for p in com_meta["ating_tend"]]
             graficos.mostrar(graficos.barras_h(com_meta["indicador"], com_meta["ating_tend"].fillna(0), cores=cores,
                                                sufixo="%", titulo="Tendência de atingimento por cesta"),
-                             key=f"g_{chave}_ating")
+                             key=f"g_{chave}_ating", detalhe=(det, "indicador"), titulo="Cesta")
         else:
             st.info("Cadastre as metas em **🎯 Metas Mensais** para ver o atingimento.")
     with g2:

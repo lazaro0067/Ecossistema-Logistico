@@ -10,15 +10,27 @@ from services import fretes_service as svc
 AVULSO = "✏️ Outro trecho (preencher manualmente)"
 
 
+COLUNAS = ["id", "status", "data_frete", "origem", "destino", "transportadora", "motivo", "valor_negociado",
+          "valor_tabela", "solicitante", "aprovador", "numero_cte"]
+FORMATO = {"valor_negociado": st.column_config.NumberColumn("Negociado", format="R$ %.2f"),
+           "valor_tabela": st.column_config.NumberColumn("Tabela", format="R$ %.2f")}
+
+
 def _kpis(operacao_id: int) -> None:
     df = fretes_repo.listar_df(operacao_id)
-    cont = df["status"].value_counts() if not df.empty else {}
-    pend = int(cont.get("Pendente Aprovação", 0))
+
+    def por(status):
+        return df[df["status"] == status][COLUNAS] if not df.empty else df
+
+    pend = len(por("Pendente Aprovação"))
     tema.kpis([
-        {"titulo": "Pendentes de aprovação", "valor": pend, "icone": "⏳", "status": "atencao" if pend else "bom"},
-        {"titulo": "Aprovados (a finalizar)", "valor": int(cont.get("Aprovado", 0)), "icone": "📋", "status": "info"},
-        {"titulo": "Finalizados", "valor": int(cont.get("Finalizado", 0)), "icone": "✅", "status": "info"},
-    ])
+        {"titulo": "Pendentes de aprovação", "valor": pend, "icone": "⏳", "status": "atencao" if pend else "bom",
+         "dados": por("Pendente Aprovação"), "colunas": FORMATO},
+        {"titulo": "Aprovados (a finalizar)", "valor": len(por("Aprovado")), "icone": "📋", "status": "info",
+         "dados": por("Aprovado"), "colunas": FORMATO},
+        {"titulo": "Finalizados", "valor": len(por("Finalizado")), "icone": "✅", "status": "info",
+         "dados": por("Finalizado"), "colunas": FORMATO},
+    ], key="kp_cot")
 
 
 def render(usuario: dict, operacao_id: int) -> None:

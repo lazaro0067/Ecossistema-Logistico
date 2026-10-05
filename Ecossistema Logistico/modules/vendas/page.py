@@ -31,16 +31,20 @@ def aba_metas(usuario: dict, operacao_id: int) -> None:
     base = pd.concat([base, df[~df["categoria"].isin(CATEGORIAS_PADRAO)]], ignore_index=True).fillna(0.0)
     base["atingimento"] = (base["realizado_hl"] / base["meta_hl"].where(base["meta_hl"] > 0) * 100).round(1)
     meta, real = base["meta_hl"].sum(), base["realizado_hl"].sum()
+    abaixo = base[(base["meta_hl"] > 0) & (base["realizado_hl"] < base["meta_hl"])]
     tema.kpis([
-        {"titulo": "Meta de vendas", "valor": f"{ui.compacto(meta)} HL", "icone": "🎯", "status": "info"},
-        {"titulo": "Realizado", "valor": f"{ui.compacto(real)} HL", "icone": "📈", "status": "info"},
+        {"titulo": "Meta de vendas", "valor": f"{ui.compacto(meta)} HL", "icone": "🎯", "status": "info",
+         "dados": base.sort_values("meta_hl", ascending=False)},
+        {"titulo": "Realizado", "valor": f"{ui.compacto(real)} HL", "icone": "📈", "status": "info",
+         "dados": base.sort_values("realizado_hl", ascending=False)},
         {"titulo": "Atingimento", "valor": ui.pct(real / meta * 100) if meta else "—", "icone": "🏁",
-         "status": tema.status_atingimento(real / meta * 100 if meta else None)},
-    ])
+         "status": tema.status_atingimento(real / meta * 100 if meta else None),
+         "dados": abaixo.sort_values("atingimento"), "ver": "categorias abaixo da meta"},
+    ], key="kp_mv")
     com = base[base["meta_hl"] > 0]
     if not com.empty:
         graficos.mostrar(graficos.real_x_meta(com, "categoria", "realizado_hl", "meta_hl", "Realizado x meta (HL)", "HL"),
-                         key="g_mv")
+                         key="g_mv", detalhe=(com, "categoria"), titulo="Categoria")
     if ui.somente_leitura(operacao_id):
         ui.tabela(base)
         return
@@ -78,14 +82,16 @@ def aba_abc(usuario: dict, operacao_id: int) -> None:
             r = resumo.loc[cl]
             cards.append({"titulo": f"Classe {cl} · {desc}", "valor": f"{int(r['skus'])} SKUs", "icone": "🔤",
                           "detalhe": f"{ui.pct(r['pct_volume'])} do volume · {ui.pct(r['pct_skus'])} dos SKUs",
-                          "status": "info"})
-    tema.kpis(cards)
+                          "status": "info", "ver": "SKUs",
+                          "dados": df[df["classe"] == cl][["cod", "descricao", "total_qtde", "pct_acumulado", "classe"]]})
+    tema.kpis(cards, key="kp_abc")
     g1, g2 = st.columns([1.3, 1])
     with g1:
-        top = df.sort_values("total_qtde", ascending=False).head(15)
-        graficos.mostrar(graficos.barras_h([f"{c} · {str(d).strip()[:24]}" for c, d in zip(top["cod"], top["descricao"])],
-                                           top["total_qtde"], cores=[_COR_CLASSE.get(c) for c in top["classe"]],
-                                           titulo="Top 15 SKUs por volume (cor = classe A/B/C)"), key="g_abc_top")
+        top = df.sort_values("total_qtde", ascending=False).head(15).copy()
+        top["rotulo"] = [f"{c} · {str(d).strip()[:24]}" for c, d in zip(top["cod"], top["descricao"])]
+        graficos.mostrar(graficos.barras_h(top["rotulo"], top["total_qtde"], cores=[_COR_CLASSE.get(c) for c in top["classe"]],
+                                           titulo="Top 15 SKUs por volume (cor = classe A/B/C)"), key="g_abc_top",
+                         detalhe=(top.drop(columns=["rotulo"]).assign(rotulo=top["rotulo"]), "rotulo"), titulo="SKU")
     with g2:
         curva = df.sort_values("pct_acumulado").reset_index(drop=True)
         curva["pct_skus"] = (curva.index + 1) / len(curva) * 100

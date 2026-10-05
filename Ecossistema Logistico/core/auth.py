@@ -33,6 +33,9 @@ def autenticar(email: str, senha: str) -> dict | None:
 
     chave = (email or "").strip().lower()
     usuario = usuarios_repo.buscar_por_email(chave) or usuarios_repo.buscar_por_login(chave)
+    if not usuario and "@" not in chave:  # motoristas entram com CPF/celular (só os números)
+        digitos = "".join(c for c in chave if c.isdigit())
+        usuario = usuarios_repo.buscar_por_login(digitos) if digitos else None
     if not usuario or not usuario["ativo"]:
         return None
     if not verificar_senha(senha, usuario["senha_hash"]):
@@ -44,6 +47,12 @@ def autenticar(email: str, senha: str) -> dict | None:
 # --- Regras de permissão --------------------------------------------------
 def e_master(usuario: dict) -> bool:
     return usuario.get("perfil") == PERFIL_MASTER
+
+
+def e_motorista(usuario: dict) -> bool:
+    from config.settings import PERFIL_MOTORISTA
+
+    return usuario.get("perfil") == PERFIL_MOTORISTA
 
 
 def _perms(usuario: dict) -> set[str]:

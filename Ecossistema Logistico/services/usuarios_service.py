@@ -50,6 +50,9 @@ def salvar_usuario(*, id: int | None, nome: str, senha: str, email: str, cargo: 
     Novo usuário sem senha + enviar_email=True → gera senha provisória e envia por e-mail.
     Devolve {"id", "senha_provisoria" (se gerada e NÃO enviada), "email_enviado"}."""
     nome = nome.strip()
+    if perfil == "Motorista":
+        raise RegraNegocioError("Acessos de motorista são criados e alterados em Puxada › 🚛 App Carreteiro › "
+                                "🔑 Acessos dos motoristas.")
     email = validar_email(email)
     if not nome:
         raise RegraNegocioError("Informe o nome.")

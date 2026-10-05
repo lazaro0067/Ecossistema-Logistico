@@ -19,21 +19,29 @@ def aba_saude(usuario: dict, operacao_id: int) -> None:
     df = armazem_service.posicao_com_indicadores(operacao_id)
     s = armazem_service.saude_dpo(df)
     r = armazem_service.resumo(operacao_id, df)
+    cols = [c for c in ["cod", "descricao", "tipo", "situacao", "disponivel", "linear_cx_dia", "doi", "doi_meta", "hl",
+                        "paletes"] if c in df.columns]
+    doi = df["doi"].fillna(999) if not df.empty else pd.Series(dtype=float)
+    fora = df[(doi < 3) | (doi > 15)][cols] if not df.empty else df
     tema.kpis([
         {"titulo": "Saúde do estoque DPO", "valor": ui.pct(s["pct"]), "icone": "🏥", "detalhe": "meta DPO ≥ 85%",
-         "status": "bom" if s["pct"] >= 85 else "atencao" if s["pct"] >= 70 else "critico"},
-        {"titulo": "SKUs saudáveis (DOI 3–15)", "valor": s["saudaveis"], "icone": "🟢", "status": "bom"},
+         "status": "bom" if s["pct"] >= 85 else "atencao" if s["pct"] >= 70 else "critico",
+         "dados": fora, "ver": "SKUs fora da faixa"},
+        {"titulo": "SKUs saudáveis (DOI 3–15)", "valor": s["saudaveis"], "icone": "🟢", "status": "bom",
+         "dados": df[(doi >= 3) & (doi <= 15)][cols] if not df.empty else df},
         {"titulo": "Em risco / ruptura (DOI < 3)", "valor": s["risco"], "icone": "🔴",
-         "status": tema.status_contagem(s["risco"], 1, 10)},
+         "status": tema.status_contagem(s["risco"], 1, 10),
+         "dados": df[doi < 3][cols].sort_values("doi") if not df.empty else df},
         {"titulo": "Em excesso (DOI > 15)", "valor": s["excesso"], "icone": "🔵",
-         "status": "atencao" if s["excesso"] else "bom"},
+         "status": "atencao" if s["excesso"] else "bom",
+         "dados": df[doi > 15][cols].sort_values("doi", ascending=False) if not df.empty else df},
         {"titulo": "Ocupação (paletes)", "valor": ui.pct(r["ocup_paletes"]) if r["cap_paletes"] else "—", "icone": "🧱",
          "detalhe": f"{ui.numero(r['paletes'])} de {ui.numero(r['cap_paletes'])}" if r["cap_paletes"] else "cadastre a capacidade",
          "status": tema.status_ocupacao(r["ocup_paletes"]) if r["cap_paletes"] else "neutro"},
         {"titulo": "Ocupação (HL)", "valor": ui.pct(r["ocup_hl"]) if r["cap_hl"] else "—", "icone": "🍺",
          "detalhe": f"{ui.compacto(r['hl'])} de {ui.compacto(r['cap_hl'])} HL" if r["cap_hl"] else "",
          "status": tema.status_ocupacao(r["ocup_hl"]) if r["cap_hl"] else "neutro"},
-    ])
+    ], key="kp_arm_saude")
     if df.empty:
         st.info("Sem posição de estoque. Atualize o Relatório 02.03.04 no Ressuprimento.")
         return
@@ -42,17 +50,21 @@ def aba_saude(usuario: dict, operacao_id: int) -> None:
         faixas = pd.cut(df["doi"].fillna(999), [-1, 0.0001, 3, 7, 15, 30, 10_000],
                         labels=["Zerado", "< 3 dias", "3–7 dias", "7–15 dias", "15–30 dias", "> 30 dias ou sem giro"])
         cont = faixas.value_counts().reindex(faixas.cat.categories).fillna(0)
+        com_faixa = df.assign(faixa=faixas.astype(str))
         cores = [tema.STATUS[c][0] for c in ("critico", "serio", "bom", "bom", "atencao", "info")]
         graficos.mostrar(graficos.barras_h(cont.index.astype(str), cont.values, cores=cores,
-                                           titulo="SKUs por faixa de cobertura (DOI)"), key="g_saude_faixa")
+                                           titulo="SKUs por faixa de cobertura (DOI)"), key="g_saude_faixa",
+                         detalhe=lambda rot: com_faixa[com_faixa["faixa"] == rot][cols], titulo="Faixa")
     with g2:
         por_tipo = df.groupby("tipo")["paletes"].sum().sort_values(ascending=False)
         graficos.mostrar(graficos.barras_h(por_tipo.index, por_tipo.values, titulo="Paletes ocupados por tipo"),
-                         key="g_saude_tipo")
+                         key="g_saude_tipo", detalhe=(df[cols].sort_values("paletes", ascending=False), "tipo"),
+                         titulo="Tipo")
     top = df.sort_values("paletes", ascending=False).head(10)
-    graficos.mostrar(graficos.barras_h([f"{c} · {str(d)[:26]}" for c, d in zip(top["cod"], top["descricao"])],
-                                       top["paletes"], casas=1, titulo="SKUs que mais ocupam espaço (paletes)"),
-                     key="g_saude_top")
+    top = top.assign(rotulo=[f"{c} · {str(d)[:26]}" for c, d in zip(top["cod"], top["descricao"])])
+    graficos.mostrar(graficos.barras_h(top["rotulo"], top["paletes"], casas=1,
+                                       titulo="SKUs que mais ocupam espaço (paletes)"),
+                     key="g_saude_top", detalhe=(top[cols + ["rotulo"]], "rotulo"), titulo="SKU")
 
 
 # --- Book DPO ---------------------------------------------------------------
@@ -97,12 +109,14 @@ def _abc_layout(operacao_id: int) -> None:
     if not meses:
         st.caption("Sem curva ABC calculada (Vendas › Importar Vendas).")
         return
-    resumo = curva_abc_service.resumo_classes(estoque_repo.curva_abc_df(operacao_id, meses[0]))
+    abc = estoque_repo.curva_abc_df(operacao_id, meses[0])
+    resumo = curva_abc_service.resumo_classes(abc)
     if not resumo.empty:
         tema.kpis([{"titulo": f"Classe {r.classe} ({ui.nome_mes(meses[0])})", "valor": f"{r.skus} SKUs",
                     "detalhe": f"{ui.pct(r.pct_volume)} do volume — perto da expedição" if r.classe == "A"
-                    else f"{ui.pct(r.pct_volume)} do volume", "status": "info", "icone": "🔤"}
-                   for r in resumo.itertuples()])
+                    else f"{ui.pct(r.pct_volume)} do volume", "status": "info", "icone": "🔤", "ver": "SKUs",
+                    "dados": abc[abc["classe"] == r.classe][["cod", "descricao", "total_qtde", "pct_acumulado", "classe"]]}
+                   for r in resumo.itertuples()], key="kp_arm_abc")
 
 
 def _capacidade(operacao_id: int) -> None:
@@ -116,7 +130,7 @@ def _book(usuario, operacao_id, grupo, chave, extras=None):
     if operacoes_repo.e_consolidada(operacao_id):
         st.info("O Book DPO é por filial. Escolha uma filial no menu.")
         return
-    padrao_dpo.progresso_book(operacao_id, MODULO, dpo.ARMAZEM)
+    padrao_dpo.progresso_book(operacao_id, MODULO, dpo.ARMAZEM, chave)
     padrao_dpo.book(operacao_id, usuario, MODULO, dpo.ARMAZEM[grupo], chave, extras)
 
 

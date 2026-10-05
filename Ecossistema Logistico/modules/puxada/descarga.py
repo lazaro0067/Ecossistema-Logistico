@@ -9,7 +9,11 @@ from modules.componentes.autosave import editor_autosave
 from repositories import logistica_repo
 from services.erros import RegraNegocioError
 
-STATUS = ["Agendado", "Chegou", "Descarregando", "Descarregado", "Cancelado", "No-show"]
+STATUS = ["Agendado", "A caminho", "Chegou", "Descarregando", "Descarregado", "Cancelado", "No-show"]
+# As carretas do App Carreteiro entram sozinhas: "A caminho" na saída da cervejaria (com previsão de
+# chegada), "Chegou" na chegada à revenda e "Descarregado" quando o motorista finaliza a viagem.
+COLUNAS = {"id": None, "data": None, "viagem_id": None, "placa": "Placa", "motorista": "Motorista (app)",
+           "pedido_app": "Pedido (app)", "tipo_carga": "Carga", "criado_por": "Agendado por"}
 TIPOS = ["Descartável", "Retornável", "Misto"]
 HORAS = [f"{h:02d}:{m:02d}" for h in range(5, 23) for m in (0, 30)]
 
@@ -25,31 +29,42 @@ def agendar(operacao_id: int, data: dt.date, hora: str, placa: str, slot: str, t
 
 def painel_dia(operacao_id: int, dia: dt.date, editar: bool, key: str) -> pd.DataFrame:
     df = logistica_repo.agendamentos_df(operacao_id, dia.isoformat(), dia.isoformat())
-    cont = df["status"].value_counts() if not df.empty else {}
-    no_patio = int(cont.get("Chegou", 0)) + int(cont.get("Descarregando", 0))
+    vis = df.drop(columns=["id", "viagem_id"]) if not df.empty else df
+
+    def filtro(*status):
+        return vis[vis["status"].isin(status)] if not vis.empty else vis
+
+    no_patio, a_caminho = filtro("Chegou", "Descarregando"), filtro("A caminho")
+    perdidos = filtro("No-show", "Cancelado")
     tema.kpis([
-        {"titulo": f"Agendados em {dia:%d/%m}", "valor": len(df), "icone": "🗓️", "status": "info"},
-        {"titulo": "No pátio agora", "valor": no_patio, "icone": "🅿️", "status": "atencao" if no_patio else "info"},
-        {"titulo": "Descarregados", "valor": int(cont.get("Descarregado", 0)), "icone": "✅", "status": "bom"},
-        {"titulo": "No-show / cancelados", "valor": int(cont.get("No-show", 0)) + int(cont.get("Cancelado", 0)),
-         "icone": "⚠️", "status": "serio" if cont.get("No-show", 0) else "info"},
-    ])
+        {"titulo": f"Agendados em {dia:%d/%m}", "valor": len(df), "icone": "🗓️", "status": "info", "dados": vis},
+        {"titulo": "A caminho (App)", "valor": len(a_caminho), "icone": "🛣️", "status": "info", "dados": a_caminho,
+         "detalhe": "saíram da cervejaria"},
+        {"titulo": "No pátio agora", "valor": len(no_patio), "icone": "🅿️",
+         "status": "atencao" if len(no_patio) else "info", "dados": no_patio},
+        {"titulo": "Descarregados", "valor": len(filtro("Descarregado")), "icone": "✅", "status": "bom",
+         "dados": filtro("Descarregado")},
+        {"titulo": "No-show / cancelados", "valor": len(perdidos), "icone": "⚠️",
+         "status": "serio" if len(filtro("No-show")) else "info", "dados": perdidos},
+    ], key=f"kp_desc_{key}")
     if df.empty:
         st.info("Nenhuma descarga agendada para este dia.")
         return df
-    por_hora = df.groupby(df["hora"].fillna("--").str[:2] + "h").size()
+    df["faixa"] = df["hora"].fillna("--").str[:2] + "h"
+    por_hora = df.groupby("faixa").size()
     graficos.mostrar(graficos.barras(por_hora.index, {"Descargas": por_hora.values}, titulo="Descargas por hora"),
-                     key=f"g_desc_{key}")
+                     key=f"g_desc_{key}", detalhe=(df.drop(columns=["id", "viagem_id"]), "faixa"), titulo="Descargas")
+    df = df.drop(columns=["faixa"])
     if editar:
         editor_autosave(df, f"ed_desc_{key}_{dia}", ["status", "slot", "hora", "observacao"],
                         lambda l, alt: logistica_repo.atualizar_agendamento(int(l["id"]), **alt), column_config={
-                            "id": None, "data": None, "placa": "Placa",
+                            **COLUNAS,
                             "status": st.column_config.SelectboxColumn("Status ✏️", options=STATUS),
                             "hora": st.column_config.SelectboxColumn("Hora ✏️", options=HORAS),
-                            "slot": "Slot ✏️", "tipo_carga": "Carga", "observacao": "Observação ✏️",
-                            "criado_por": "Agendado por"})
+                            "slot": "Slot ✏️", "observacao": "Observação ✏️"})
+        st.caption("📱 Linhas com motorista vieram do App Carreteiro e acompanham a viagem sozinhas.")
     else:
-        ui.tabela(df.drop(columns=["id"]))
+        ui.tabela(df.drop(columns=["id", "viagem_id"]))
     return df
 
 
@@ -78,5 +93,5 @@ def render(usuario: dict, operacao_id: int) -> None:
     with st.expander("📋 Próximos 7 dias"):
         prox = logistica_repo.agendamentos_df(operacao_id, tempo.hoje().isoformat(),
                                               (tempo.hoje() + dt.timedelta(days=7)).isoformat())
-        ui.tabela(prox.drop(columns=["id"]) if not prox.empty else prox)
+        ui.tabela(prox.drop(columns=["id", "viagem_id"]) if not prox.empty else prox)
         ui.downloads(prox, "agendamentos_descarga", key="dl_desc")

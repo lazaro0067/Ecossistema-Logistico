@@ -7,7 +7,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from core.tema import STATUS, TINTA, TINTA_2, TINTA_3
+from core.tema import STATUS, TINTA, TINTA_2, TINTA_3  # noqa: F401
 from core.ui import LARGURA
 
 CATEGORICAS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
@@ -41,8 +41,45 @@ def _layout(fig: go.Figure, titulo: str = "", altura: int = 340, legenda: bool =
     return fig
 
 
-def mostrar(fig: go.Figure, key: str | None = None) -> None:
-    st.plotly_chart(fig, key=key, config={"displayModeBar": False, "locale": "pt-BR"}, **LARGURA)
+def mostrar(fig: go.Figure, key: str | None = None, detalhe=None, colunas: dict | None = None,
+            titulo: str | None = None) -> None:
+    """Desenha o gráfico. Com `detalhe`, clicar numa barra/ponto abre os registros dela:
+       detalhe = (df, "coluna")  → filtra df[coluna] == rótulo clicado
+       detalhe = função(rótulo) → devolve o DataFrame a mostrar."""
+    config = {"displayModeBar": False, "locale": "pt-BR"}
+    if detalhe is None or not key:
+        st.plotly_chart(fig, key=key, config=config, **LARGURA)
+        return
+    versao = st.session_state.get(f"_gv_{key}", 0)
+    try:
+        ev = st.plotly_chart(fig, key=f"{key}__{versao}", config=config, on_select="rerun",
+                             selection_mode=("points",), **LARGURA)
+    except TypeError:  # versão sem seleção
+        st.plotly_chart(fig, key=key, config=config, **LARGURA)
+        return
+    try:
+        pontos = list(ev["selection"]["points"]) if ev else []
+    except (KeyError, TypeError, AttributeError):
+        pontos = []
+    if not pontos:
+        return
+    p = pontos[0]
+    candidatos = [str(p.get(k)) for k in ("y", "x", "label", "customdata") if p.get(k) is not None]
+    if callable(detalhe):
+        horizontal = bool(fig.data) and getattr(fig.data[0], "orientation", None) == "h"
+        rotulo = str(p.get("y") if horizontal else p.get("x", p.get("label", "")))
+        df = detalhe(rotulo)
+    else:
+        base, coluna = detalhe
+        valores = base[coluna].astype(str)
+        rotulo = next((c for c in candidatos if c in set(valores)), None)
+        if rotulo is None:
+            return
+        df = base[valores == rotulo]
+    st.session_state[f"_gv_{key}"] = versao + 1  # limpa a seleção no próximo carregamento
+    from core.tema import detalhe as abrir
+
+    abrir(f"{titulo + ': ' if titulo else ''}{rotulo}", df, colunas)
 
 
 def real_x_meta(df: pd.DataFrame, x: str, real: str, meta: str, titulo: str = "",

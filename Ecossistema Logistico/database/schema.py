@@ -443,6 +443,60 @@ CREATE TABLE IF NOT EXISTS senha_codigos (
     usado       INTEGER NOT NULL DEFAULT 0
 );
 
+-- ============ APP CARRETEIRO ============
+CREATE TABLE IF NOT EXISTS viagens_carreteiro (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id         INTEGER NOT NULL REFERENCES operacoes(id),
+    motorista_id        INTEGER NOT NULL REFERENCES motoristas(id),
+    usuario_id          INTEGER REFERENCES usuarios(id),
+    numero_pedido       TEXT NOT NULL,
+    agendamento         TEXT,
+    destino_id          INTEGER REFERENCES fabricas(id),
+    destino             TEXT,
+    placa               TEXT NOT NULL,
+    status              TEXT NOT NULL DEFAULT 'Em viagem',
+    ts_inicio           TEXT,
+    ts_apresentado      TEXT,
+    apresentou_no_prazo INTEGER,
+    atraso_min          INTEGER,
+    ts_chamado          TEXT,
+    ts_carregado        TEXT,
+    ts_saida_cervejaria TEXT,
+    ts_chegada_revenda  TEXT,
+    ts_fim              TEXT,
+    observacao          TEXT,
+    criado_em           TEXT DEFAULT (datetime('now','localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS viagem_eventos (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    viagem_id   INTEGER NOT NULL REFERENCES viagens_carreteiro(id) ON DELETE CASCADE,
+    etapa       TEXT NOT NULL,
+    ts          TEXT NOT NULL,
+    lat         REAL,
+    lon         REAL,
+    precisao_m  REAL,
+    distancia_m REAL,
+    dentro_raio INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS viagem_notas (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    viagem_id  INTEGER NOT NULL REFERENCES viagens_carreteiro(id) ON DELETE CASCADE,
+    numero_nf  TEXT NOT NULL,
+    criado_em  TEXT
+);
+
+CREATE TABLE IF NOT EXISTS viagem_fotos (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    viagem_id  INTEGER NOT NULL REFERENCES viagens_carreteiro(id) ON DELETE CASCADE,
+    nota_id    INTEGER REFERENCES viagem_notas(id) ON DELETE CASCADE,
+    nome       TEXT,
+    tipo       TEXT,
+    conteudo   BLOB NOT NULL,
+    criado_em  TEXT
+);
+
 -- ============ CONTROLE ============
 CREATE TABLE IF NOT EXISTS _migracoes (
     id          TEXT PRIMARY KEY,
@@ -470,6 +524,25 @@ MIGRACOES: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS ix_vinc_op ON vinculos_pedidos(operacao_id, data_puxada);
         CREATE INDEX IF NOT EXISTS ix_pol_op ON politica_estoque(operacao_id, data_registro);
         CREATE INDEX IF NOT EXISTS ix_cp_op ON contas_pagar(operacao_id, data_vencimento);
+    """),
+    ("012_carreteiro", """
+        ALTER TABLE motoristas ADD COLUMN usuario_id INTEGER;
+        ALTER TABLE operacoes ADD COLUMN lat REAL;
+        ALTER TABLE operacoes ADD COLUMN lon REAL;
+        ALTER TABLE operacoes ADD COLUMN raio_m REAL;
+        CREATE INDEX IF NOT EXISTS ix_vc_op ON viagens_carreteiro(operacao_id, ts_inicio);
+        CREATE INDEX IF NOT EXISTS ix_vc_mot ON viagens_carreteiro(motorista_id, status);
+        CREATE INDEX IF NOT EXISTS ix_vc_placa ON viagens_carreteiro(operacao_id, placa, ts_inicio);
+        CREATE INDEX IF NOT EXISTS ix_vev_viagem ON viagem_eventos(viagem_id);
+        CREATE INDEX IF NOT EXISTS ix_vnf_viagem ON viagem_notas(viagem_id);
+        CREATE INDEX IF NOT EXISTS ix_vft_viagem ON viagem_fotos(viagem_id, nota_id);
+    """),
+    ("013_integracao_viagem", """
+        ALTER TABLE agendamentos_descarga ADD COLUMN viagem_id INTEGER;
+        ALTER TABLE vinculos_pedidos ADD COLUMN viagem_id INTEGER;
+        CREATE INDEX IF NOT EXISTS ix_desc_viagem ON agendamentos_descarga(viagem_id);
+        CREATE INDEX IF NOT EXISTS ix_vinc_viagem ON vinculos_pedidos(viagem_id);
+        CREATE INDEX IF NOT EXISTS ix_pedmarc_num ON pedidos_marcados(operacao_id, numero_pedido);
     """),
 ]
 

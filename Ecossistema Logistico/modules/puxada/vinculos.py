@@ -67,7 +67,10 @@ def render(usuario: dict, operacao_id: int) -> None:
     vinc = logistica_repo.vinculos_df(operacao_id)
     if not vinc.empty:
         vinc["qtd_nfs"] = vinc["notas_fiscais"].fillna("").map(lambda t: len([x for x in t.split(",") if x.strip()]))
-    ui.tabela(vinc.drop(columns=["id"]) if not vinc.empty else vinc, vazio="Nenhum pedido vinculado ainda.")
+        vinc["origem"] = vinc["viagem_id"].map(lambda v: "📱 App Carreteiro" if v == v and v else "Manual")
+        st.caption("📱 Os pedidos do App Carreteiro entram aqui sozinhos no “Pedido carregado”, com as NFs "
+                   "fotografadas pelo motorista e o HL dos Pedidos Marcados.")
+    ui.tabela(vinc.drop(columns=["id", "viagem_id"]) if not vinc.empty else vinc, vazio="Nenhum pedido vinculado ainda.")
     if not vinc.empty:
         ui.downloads(vinc, "pedidos_vinculados", key="dl_vinc")
         with st.popover("🗑️ Excluir vínculo"):
