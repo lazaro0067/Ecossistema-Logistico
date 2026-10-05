@@ -78,10 +78,15 @@ def tem_janelas(operacao_id: int) -> bool:
     return bool(repo.janelas(operacao_id))
 
 
-def _janela_da_hora(janelas: list[dict], hora: str | None) -> dict | None:
-    if not hora:
+def _vazio(v) -> bool:
+    return v is None or (isinstance(v, float) and v != v) or str(v).strip() in ("", "None", "nan", "NaT")
+
+
+def _janela_da_hora(janelas: list[dict], hora) -> dict | None:
+    if _vazio(hora):
         return None
-    return next((j for j in janelas if j["hora_inicio"] <= hora[:5] < j["hora_fim"]), None)
+    hora = str(hora)[:5]
+    return next((j for j in janelas if j["hora_inicio"] <= hora < j["hora_fim"]), None)
 
 
 def janelas_do_dia(operacao_id: int, data: dt.date, produto: str | None = None,
@@ -96,7 +101,8 @@ def janelas_do_dia(operacao_id: int, data: dt.date, produto: str | None = None,
             continue
         jid = a.get("janela_id") if a.get("janela_id") in ids else None
         if jid is None:
-            candidatas = [j for j in todas if j["hora_inicio"] <= (a.get("hora") or "")[:5] < j["hora_fim"]]
+            hora = "" if _vazio(a.get("hora")) else str(a["hora"])[:5]
+            candidatas = [j for j in todas if hora and j["hora_inicio"] <= hora < j["hora_fim"]]
             prod = [j for j in candidatas if j.get("produto") and j["produto"] == a.get("tipo_carga")]
             j = (prod or candidatas or [None])[0]
             jid = j["id"] if j else None
@@ -134,8 +140,9 @@ def validar_reserva(operacao_id: int, data: dt.date, janela_id: int | None, prod
 
 def janela_de_agendamento(js: list[dict], data: str, hora: str | None, janela_id: int | None) -> str:
     """Rótulo da janela de uma descarga (pela janela gravada ou pela hora). js = repo.janelas(op, False)."""
+    janela_id = None if _vazio(janela_id) else int(janela_id)
     j = next((x for x in js if x["id"] == janela_id), None) if janela_id else None
-    if not j and data:
+    if not j and not _vazio(data):
         try:
             d = dt.date.fromisoformat(str(data)[:10])
             j = _janela_da_hora([x for x in js if d.weekday() in dias_lista(x["dias"])], hora)

@@ -69,7 +69,7 @@ def _e(v) -> str:
 
 
 def _txt(v) -> str:
-    return "" if v is None or (isinstance(v, float) and pd.isna(v)) else str(v)
+    return "" if v is None or (isinstance(v, float) and pd.isna(v)) or str(v) in ("None", "nan", "NaT") else str(v)
 
 
 # --- Regras do agendamento manual ---------------------------------------------------
@@ -113,7 +113,7 @@ def tabela_legivel(df: pd.DataFrame, js_todas: list[dict], com_data: bool = Fals
     for r in df.to_dict("records"):
         d = {}
         if com_data:
-            d["Dia"] = pd.to_datetime(r["data"]).strftime("%d/%m/%Y") if r.get("data") else ""
+            d["Dia"] = pd.to_datetime(r["data"]).strftime("%d/%m/%Y") if _txt(r.get("data")) else ""
         d.update({
             "Janela": _janela_txt(js_todas, r) if js_todas else "",
             "Hora": _txt(r.get("hora")) or "—",
@@ -135,10 +135,9 @@ def tabela_legivel(df: pd.DataFrame, js_todas: list[dict], com_data: bool = Fals
 def _card(r: dict) -> str:
     cor, fundo = _CORES.get(r.get("status"), ("#52514e", "#f0efec"))
     app = "📱 " if r.get("criado_por") == ORIGEM_APP else ""
-    l2 = " · ".join(x for x in [_txt(r.get("motorista")), f"Ped. {_txt(r.get('pedido_app'))}" if r.get("pedido_app")
-                                else "", _txt(r.get("tipo_carga"))] if x)
-    l3 = " · ".join(x for x in [f"⏰ {_txt(r.get('hora'))}" if r.get("hora") else "",
-                                f"Doca: {_txt(r.get('slot'))}" if r.get("slot") and r.get("slot") != "A definir" else "",
+    ped, hora, doca = _txt(r.get("pedido_app")), _txt(r.get("hora")), _txt(r.get("slot"))
+    l2 = " · ".join(x for x in [_txt(r.get("motorista")), f"Ped. {ped}" if ped else "", _txt(r.get("tipo_carga"))] if x)
+    l3 = " · ".join(x for x in [f"⏰ {hora}" if hora else "", f"Doca: {doca}" if doca and doca != "A definir" else "",
                                 _andamento(r)] if x)
     apagado = ";opacity:.55" if r.get("status") in ("Cancelado", "No-show") else ""
     return (f'<div class="pt-card" style="--c:{cor};--f:{fundo}{apagado}"><div class="l1"><b>{app}{_e(r.get("placa"))}</b>'
@@ -155,7 +154,8 @@ def quadro_dia(operacao_id: int, dia: dt.date, df: pd.DataFrame) -> None:
     fora = []
     por_rotulo = {j["rotulo"]: j["id"] for j in js}
     for r in regs:
-        jid = r.get("janela_id") if r.get("janela_id") in grupos else por_rotulo.get(_janela_txt(js_todas, r))
+        jid = r.get("janela_id")
+        jid = int(jid) if _txt(jid) and int(jid) in grupos else por_rotulo.get(_janela_txt(js_todas, r))
         (grupos[jid] if jid in grupos else fora).append(r)
     blocos = []
     for j in js:
