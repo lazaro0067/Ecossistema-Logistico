@@ -15,6 +15,20 @@ def diario_df(operacao_id: int, mes_ano: str) -> pd.DataFrame:
     """, (*ids, mes_ano))
 
 
+def diario_ops_df(operacao_id: int, de: str | None = None, ate: str | None = None) -> pd.DataFrame:
+    """Linhas por filial (sem somar) — base do cálculo do real do mês."""
+    f_sql, ids = operacoes_repo.filtro("operacao_id", operacao_id)
+    sql, p = (f"""SELECT operacao_id, data, cesta, volume_sellin_hl, volume_real_hl FROM ressuprimento_diario
+                  WHERE {f_sql}""", list(ids))
+    if de:
+        sql += " AND data >= ?"
+        p.append(de)
+    if ate:
+        sql += " AND data <= ?"
+        p.append(ate)
+    return query_df(sql + " ORDER BY operacao_id, cesta, data", p)
+
+
 def meses_disponiveis(operacao_id: int) -> list[str]:
     f_sql, ids = operacoes_repo.filtro("operacao_id", operacao_id)
     df = query_df(f"SELECT DISTINCT substr(data,1,7) AS m FROM ressuprimento_diario WHERE {f_sql} ORDER BY m DESC", ids)

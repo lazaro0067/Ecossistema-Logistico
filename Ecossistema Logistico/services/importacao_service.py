@@ -357,7 +357,8 @@ def preparar(layout_key: str, df: pd.DataFrame, mapeamento: dict[str, str | None
                 serie = serie.astype(str).str.strip().str.replace(r"\.0$", "", regex=True).str[:-1]
             saida[k] = _to_int(serie)
         elif c.tipo == "float":
-            saida[k] = _to_float(serie)
+            # Ressuprimento: o número vem como está na coluna — "1.307" é mil trezentos e sete (ponto = milhar)
+            saida[k] = serie.map(numero_br) if layout_key == "ressuprimento" else _to_float(serie)
         elif c.tipo == "date":
             saida[k] = _to_date(serie)
         else:
