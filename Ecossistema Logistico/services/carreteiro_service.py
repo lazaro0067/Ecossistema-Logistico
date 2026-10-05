@@ -59,9 +59,15 @@ def formatar_duracao(horas) -> str:
     return f"{sinal}{h}h {m:02d}min" if h else f"{sinal}{m}min"
 
 
+ETAPAS_OPCIONAIS = {"agendado"}  # viagens antigas (antes do agendamento no app) seguem sem ela
+
+
 def proxima_etapa(v: dict) -> str | None:
-    for chave in ORDEM:
+    for i, chave in enumerate(ORDEM):
         if not v.get(ETAPAS[chave]["coluna"]):
+            depois = any(v.get(ETAPAS[c]["coluna"]) for c in ORDEM[i + 1:])
+            if chave in ETAPAS_OPCIONAIS and depois:
+                continue
             return chave
     return None
 
@@ -159,6 +165,8 @@ def registrar_etapa(usuario: dict, viagem_id: int, etapa: str, geo: dict | None 
     esperada = proxima_etapa(v)
     if etapa not in ETAPAS or etapa == "inicio":
         raise RegraNegocioError("Etapa inválida.")
+    if etapa == "agendado":
+        raise RegraNegocioError("Preencha o dia, a hora e o produto da descarga para agendar.")
     if etapa != esperada:
         if v.get(ETAPAS[etapa]["coluna"]):
             raise RegraNegocioError(f"“{ETAPAS[etapa]['nome']}” já foi registrado.")
@@ -196,6 +204,8 @@ def desfazer_ultima(usuario: dict, viagem_id: int) -> str:
         campos = {ETAPAS[ultima]["coluna"]: None}
         if ultima == "apresentado":
             campos.update(apresentou_no_prazo=None, atraso_min=None)
+        if ultima == "agendado":
+            campos.update(desc_data=None, desc_hora=None, desc_tipo=None)
         repo.atualizar(viagem_id, **campos)
     repo.apagar_evento(viagem_id, ultima)
     integrar(viagem_id)
@@ -345,34 +355,105 @@ def _sincronizar_descarga(v: dict) -> None:
         if ag and ag["status"] not in ("Descarregado",):
             logistica_repo.atualizar_agendamento(ag["id"], status="Cancelado")
         return
-    if not v.get("ts_saida_cervejaria"):  # ainda não saiu (ou desfez a saída)
+    agendou = bool(v.get("desc_data"))
+    if not v.get("ts_saida_cervejaria") and not agendou:  # ainda não agendou nem saiu (ou desfez)
         if ag:
             if ag.get("criado_por") == ORIGEM_APP:
                 repo.apagar_agendamento(ag["id"])
             else:
                 logistica_repo.atualizar_agendamento(ag["id"], status="Agendado", viagem_id=None)
         return
-    status = "Descarregado" if v.get("ts_fim") else "Chegou" if v.get("ts_chegada_revenda") else "A caminho"
+    status = ("Descarregado" if v.get("ts_fim") else "Chegou" if v.get("ts_chegada_revenda")
+              else "A caminho" if v.get("ts_saida_cervejaria") else "Agendado")
     obs = _obs_descarga(v)
+    agenda = {}  # dia/hora/produto que o motorista informou valem sobre a previsão
+    if agendou:
+        agenda = {"data": v["desc_data"], "hora": v.get("desc_hora"), "tipo_carga": v.get("desc_tipo")}
     if not ag:
         hoje = tempo.hoje()
         ag = repo.agendamento_livre_da_placa(v["operacao_id"], v["placa"], hoje.isoformat(),
-                                             (hoje + dt.timedelta(days=2)).isoformat())
+                                             (hoje + dt.timedelta(days=3)).isoformat())
         if ag:
-            logistica_repo.atualizar_agendamento(ag["id"], viagem_id=v["id"], status=status,
+            logistica_repo.atualizar_agendamento(ag["id"], viagem_id=v["id"], status=status, **agenda,
                                                  observacao=((ag.get("observacao") or "") + " | " + obs).strip(" |"))
             return
-        prev = previsao_chegada(v) or tempo.parse_dt(v.get("ts_chegada_revenda"))
-        data = (prev or tempo.agora()).date().isoformat()
-        hora = _hora_meia(prev) if prev else None
-        aid = logistica_repo.inserir_agendamento(v["operacao_id"], data, hora, v["placa"], "A definir", None,
-                                                 obs, ORIGEM_APP)
+        if agendou:
+            data, hora = v["desc_data"], v.get("desc_hora")
+        else:
+            prev = previsao_chegada(v) or tempo.parse_dt(v.get("ts_chegada_revenda"))
+            data = (prev or tempo.agora()).date().isoformat()
+            hora = _hora_meia(prev) if prev else None
+        aid = logistica_repo.inserir_agendamento(v["operacao_id"], data, hora, v["placa"], "A definir",
+                                                 v.get("desc_tipo"), obs, ORIGEM_APP)
         logistica_repo.atualizar_agendamento(aid, viagem_id=v["id"], status=status)
         return
-    campos = {"status": status, "placa": v["placa"]}
+    campos = {"status": status, "placa": v["placa"], **agenda}
     if ag.get("criado_por") == ORIGEM_APP:
         campos["observacao"] = obs
     logistica_repo.atualizar_agendamento(ag["id"], **campos)
+
+
+def agendar_descarga(usuario: dict, viagem_id: int, data: dt.date | None, hora: dt.time | None,
+                     produto: str | None, geo: dict | None = None) -> dict:
+    """Motorista agenda (ou altera) a descarga na revenda: dia, hora e produto.
+    Vira na hora um agendamento na 🅿️ Descarga (tarefa do armazém) e avisa quem cuida do pátio."""
+    from config.settings import TIPOS_DESCARGA_APP
+
+    v = _viagem_do_usuario(usuario, viagem_id)
+    if not v.get("ts_carregado"):
+        raise RegraNegocioError("Confirme “Pedido carregado” antes de agendar a descarga.")
+    if v.get("ts_chegada_revenda"):
+        raise RegraNegocioError("Você já chegou na revenda — o agendamento não pode mais ser alterado.")
+    if not data:
+        raise RegraNegocioError("Escolha o dia da chegada na revenda.")
+    if data < tempo.hoje():
+        raise RegraNegocioError("O dia da chegada não pode ser no passado.")
+    if data > tempo.hoje() + dt.timedelta(days=15):
+        raise RegraNegocioError("Escolha um dia nos próximos 15 dias.")
+    if not hora:
+        raise RegraNegocioError("Escolha a hora prevista de chegada.")
+    if produto not in TIPOS_DESCARGA_APP:
+        raise RegraNegocioError("Escolha o produto: " + " ou ".join(TIPOS_DESCARGA_APP) + ".")
+    novo = not v.get("ts_agendado")
+    campos = {"desc_data": data.isoformat(), "desc_hora": f"{hora:%H:%M}", "desc_tipo": produto}
+    ts = agora_seg()
+    if novo:
+        if proxima_etapa(v) != "agendado":
+            raise RegraNegocioError("Agende a descarga depois de confirmar o carregamento.")
+        if not repo.marcar_etapa(viagem_id, "ts_agendado", ts, campos):
+            raise RegraNegocioError("A descarga já foi agendada.")
+        repo.registrar_evento(viagem_id, "agendado", ts, _geo_com_raio(v["operacao_id"], "agendado", geo))
+    else:
+        repo.atualizar(viagem_id, **campos)
+    integrar(viagem_id)
+    _avisar_armazem(repo.viagem(viagem_id), novo)
+    return repo.viagem(viagem_id)
+
+
+def _avisar_armazem(v: dict, novo: bool) -> None:
+    """Notificação (🔔) para quem cuida do pátio/armazém: nova descarga agendada pelo motorista."""
+    try:
+        from core.auth import pode_acessar_aba
+        from repositories import motoristas_repo, usuarios_repo
+
+        quando = f"{dt.date.fromisoformat(v['desc_data']):%d/%m} às {v.get('desc_hora') or '--:--'}"
+        titulo = (f"{'Nova descarga' if novo else 'Descarga alterada'}: {v['placa']} em {quando}")
+        texto = (f"{v['motorista']} · pedido {v['numero_pedido']} · {v.get('desc_tipo') or ''} · "
+                 f"{v.get('destino') or ''}. Veja em Armazém › Pátio / Descarga.")
+        agora = tempo.agora().strftime("%Y-%m-%d %H:%M:%S")
+        for u in usuarios_repo.listar(apenas_ativos=True):
+            if u["perfil"] == PERFIL_MOTORISTA:
+                continue
+            sessao = usuarios_repo.carregar_sessao(u["id"])
+            if v["operacao_id"] not in (sessao.get("operacoes") or [v["operacao_id"]]):
+                continue
+            pagina = ("armazem" if pode_acessar_aba(sessao, "armazem", "patio") else
+                      "puxada" if pode_acessar_aba(sessao, "puxada", "descarga") else None)
+            if pagina:
+                motoristas_repo.criar_notificacao(u["id"], "descarga", f"desc:{v['id']}:{agora}", titulo, texto,
+                                                  pagina, agora)
+    except Exception:
+        pass  # o aviso é um reforço; o agendamento já está no pátio
 
 
 def integrar(viagem_id: int) -> None:
@@ -417,7 +498,8 @@ def corrigir_viagem(viagem_id: int, campos: dict, usuario_nome: str = "") -> Non
     for chave in ORDEM:
         t = tempo.parse_dt(final.get(ETAPAS[chave]["coluna"]))
         if t is None:
-            faltou = faltou or chave
+            if chave not in ETAPAS_OPCIONAIS:
+                faltou = faltou or chave
             continue
         if faltou:
             raise RegraNegocioError(f"“{ETAPAS[chave]['nome']}” preenchido sem “{ETAPAS[faltou]['nome']}”.")

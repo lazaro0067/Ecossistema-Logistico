@@ -46,6 +46,7 @@ MODULOS = {
         "carreteiro": "🚛 App Carreteiro",
         "tmv_tma": "⏱️ TMV / TMA & Viagens",
         "remuneracao": "💵 Remuneração & Produtividade",
+        "disponibilidade": "🗓️ Disponibilidade de Placas",
     }},
     "ressuprimento": {"rotulo": "Ressuprimento", "icone": "🔄", "abas": {
         "bases": "📁 Atualização de Bases",
@@ -98,7 +99,7 @@ MODULO_ADMIN = "admin"
 # Pasta sem grupo definido (ou com poucas abas) mostra as telas direto.
 GRUPOS_ABAS = {
     "puxada": {
-        "🚛 Frota própria": ["carreteiro", "remuneracao", "tmv_tma"],
+        "🚛 Frota própria": ["carreteiro", "disponibilidade", "remuneracao", "tmv_tma"],
         "🚚 Frete spot": ["cotacao", "aprovacoes", "encerramento", "painel", "obz"],
         "🏭 Operação": ["descarga", "vinculos", "pedidos", "viagens"],
         "⚙️ Cadastros": ["cadastros"],
@@ -181,6 +182,7 @@ ETAPAS_VIAGEM = [
     ("apresentado", "Registre sua apresentação", "ts_apresentado", "🙋", "Apresentado"),
     ("chamado", "Chamado para carregar", "ts_chamado", "📣", "Chamado p/ carregar"),
     ("carregado", "Pedido carregado", "ts_carregado", "📦", "Pedido carregado"),
+    ("agendado", "Agendar descarga", "ts_agendado", "🗓️", "Descarga agendada"),
     ("saida", "Saída da cervejaria", "ts_saida_cervejaria", "🏭", "Saída cervejaria"),
     ("chegada", "Chegada na revenda", "ts_chegada_revenda", "🏁", "Chegada revenda"),
     ("fim", "Finalizar viagem", "ts_fim", "✅", "Viagem finalizada"),
@@ -190,6 +192,9 @@ TOLERANCIA_APRESENTACAO_MIN = 0   # minutos de tolerância após o horário agen
 APP_URL_PADRAO = "https://ecossistema-logistico-brlwuspuzz9lxealyzculu.streamlit.app"
 RAIO_REVENDA_PADRAO_M = 300       # raio (m) da revenda para validar chegada/saída por GPS
 DESFAZER_ETAPA_MIN = 15
+TIPOS_DESCARGA_APP = ["Retornável", "Descartável"]  # produto informado pelo motorista no agendamento
+DISPONIBILIDADE_DIAS = 3          # planejamento das placas: hoje + 3 dias
+STATUS_DISPONIBILIDADE = ["Disponível", "Programada", "Em viagem", "Manutenção", "Sem motorista", "Indisponível"]
 CNH_ALERTA_DIAS = 90              # começa a avisar o gestor 3 meses antes de a CNH vencer
 CNH_ALERTA_INTERVALO_DIAS = 7     # repete o aviso toda semana até renovar           # motorista pode desfazer a última etapa até X minutos depois
 

@@ -518,6 +518,18 @@ CREATE TABLE IF NOT EXISTS notificacoes (
     lida_em     TEXT
 );
 
+CREATE TABLE IF NOT EXISTS disponibilidade_placas (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id    INTEGER NOT NULL REFERENCES operacoes(id),
+    placa          TEXT NOT NULL,
+    data           TEXT NOT NULL,
+    status         TEXT NOT NULL,
+    observacao     TEXT,
+    atualizado_por TEXT,
+    dt_atualizacao TEXT,
+    UNIQUE (operacao_id, placa, data)
+);
+
 -- ============ CONTROLE ============
 CREATE TABLE IF NOT EXISTS _migracoes (
     id          TEXT PRIMARY KEY,
@@ -580,6 +592,14 @@ MIGRACOES: list[tuple[str, str]] = [
     ("016_trecho_proprio", """
         ALTER TABLE remuneracao_fabrica ADD COLUMN km REAL DEFAULT 0;
         ALTER TABLE remuneracao_fabrica ADD COLUMN tempo_padrao_h REAL DEFAULT 0;
+    """),
+    # App Carreteiro: o motorista agenda a descarga (dia, hora e produto) entre carregar e sair da cervejaria
+    ("017_agenda_descarga_app", """
+        ALTER TABLE viagens_carreteiro ADD COLUMN ts_agendado TEXT;
+        ALTER TABLE viagens_carreteiro ADD COLUMN desc_data TEXT;
+        ALTER TABLE viagens_carreteiro ADD COLUMN desc_hora TEXT;
+        ALTER TABLE viagens_carreteiro ADD COLUMN desc_tipo TEXT;
+        CREATE INDEX IF NOT EXISTS ix_disp_placa ON disponibilidade_placas(operacao_id, data);
     """),
 ]
 

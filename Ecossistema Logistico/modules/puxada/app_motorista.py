@@ -93,13 +93,28 @@ def tela_login() -> None:
             acesso = st.text_input("CPF, celular ou e-mail", placeholder="Só os números do CPF ou celular",
                                    autocomplete="username")
             senha = st.text_input("Senha", type="password", autocomplete="current-password")
+            lembrar = st.checkbox("Manter conectado neste celular", value=True,
+                                  help="Ao abrir o app de novo, você continua de onde parou sem digitar a senha.")
             if st.form_submit_button("Entrar", type="primary", **ui.LARGURA):
                 usuario = autenticar(acesso, senha)
                 if usuario:
                     session.logar(usuario)
+                    if lembrar:
+                        from core.auth import gerar_token
+
+                        token = gerar_token(usuario["id"])
+                        if token:
+                            st.query_params["k"] = token
                     st.rerun()
                 st.error("Acesso ou senha inválidos.")
     st.caption("Esqueceu a senha ou ainda não tem acesso? Fale com a equipe da Puxada da sua unidade.")
+
+
+def _sair() -> None:
+    session.sair()
+    if "k" in st.query_params:
+        del st.query_params["k"]
+    st.rerun()
 
 
 def tela_criar_senha(usuario: dict) -> None:
@@ -118,8 +133,7 @@ def tela_criar_senha(usuario: dict) -> None:
                     ui.avisar("Senha criada! Boa viagem. 🚛")
                     st.rerun()
     if st.button("Sair", key="car_sair_senha"):
-        session.sair()
-        st.rerun()
+        _sair()
 
 
 def tela_nao_motorista(usuario: dict) -> None:
@@ -132,8 +146,7 @@ def tela_nao_motorista(usuario: dict) -> None:
     if url:
         st.link_button("Abrir o sistema principal", url)
     if st.button("Sair", key="car_sair_outro"):
-        session.sair()
-        st.rerun()
+        _sair()
 
 
 def link_do_app() -> str:
@@ -179,17 +192,8 @@ def _topo(usuario: dict, mot: dict) -> None:
                     f'<span>App Carreteiro · {tema._e(tempo.agora().strftime("%d/%m/%Y %H:%M"))}</span></div>',
                     unsafe_allow_html=True)
     with c2:
-        with st.popover("👤 Conta"):
-            with st.form("car_senha", clear_on_submit=True):
-                atual = st.text_input("Senha atual", type="password")
-                nova = st.text_input("Nova senha", type="password")
-                conf = st.text_input("Confirme", type="password")
-                if st.form_submit_button("Trocar senha"):
-                    ui.acao(usuarios_service.trocar_propria_senha, usuario["id"], atual, nova, conf,
-                            sucesso="Senha alterada!")
-            if st.button("🚪 Sair", key="car_sair", **ui.LARGURA):
-                session.sair()
-                st.rerun()
+        if st.button("🚪 Sair", key="car_sair", **ui.LARGURA):
+            _sair()
 
 
 def _resumo(v: dict) -> None:
@@ -251,7 +255,8 @@ def _nova_viagem(usuario: dict, mot: dict, geo: dict | None) -> None:
                 enviar = st.form_submit_button("🟢  INICIAR VIAGEM", type="primary", **ui.LARGURA)
     if enviar:
         try:
-            svc.iniciar_viagem(usuario, pedido, data_ag, hora_ag, destino, placa, _gps(geo))
+            vid = svc.iniciar_viagem(usuario, pedido, data_ag, hora_ag, destino, placa, _gps(geo))
+            st.session_state[f"car_aberta_{vid}"] = True  # já abre a viagem para registrar as etapas
         except RegraNegocioError as e:
             st.error(str(e))
         else:
@@ -318,6 +323,12 @@ def _viagem(usuario: dict, v: dict, geo: dict | None) -> None:
     e = svc.ETAPAS[prox]
     if prox == "carregado" or v.get("ts_carregado"):
         _notas(usuario, v, obrigatorio=prox == "carregado")
+    if v.get("ts_agendado") and not v.get("ts_chegada_revenda"):
+        _agenda_resumo(usuario, v, geo)
+    if prox == "agendado":
+        _agendar(usuario, v, geo)
+        _desfazer(usuario, v)
+        return
 
     rotulo = f"{e['icone']}  {e['botao'].upper()}"
     with st.container(key="car_fim" if prox == "fim" else "car_etapa"):
@@ -339,6 +350,10 @@ def _viagem(usuario: dict, v: dict, geo: dict | None) -> None:
                 ui.avisar(f"{e['nome']} registrado às {tempo.agora().strftime('%H:%M')}.")
             st.rerun()
 
+    _desfazer(usuario, v)
+
+
+def _desfazer(usuario: dict, v: dict) -> None:
     ultima = svc.ultima_etapa(v)
     if ultima:
         with st.popover(f"↩️ Desfazer “{svc.ETAPAS[ultima]['nome']}”"):
@@ -347,20 +362,157 @@ def _viagem(usuario: dict, v: dict, geo: dict | None) -> None:
                 ui.acao(svc.desfazer_ultima, usuario, v["id"], sucesso="Etapa desfeita.")
 
 
+# --- Agendamento da descarga (entre carregar e sair da cervejaria) ------------------
+def _campos_agenda(v: dict, chave: str):
+    from config.settings import TIPOS_DESCARGA_APP
+
+    atual_data = dt.date.fromisoformat(v["desc_data"]) if v.get("desc_data") else tempo.hoje()
+    atual_hora = dt.datetime.strptime(v["desc_hora"], "%H:%M").time() if v.get("desc_hora") else None
+    c1, c2 = st.columns(2)
+    data = c1.date_input("📅 Dia da chegada na revenda *", value=atual_data, format="DD/MM/YYYY",
+                         min_value=tempo.hoje(), max_value=tempo.hoje() + dt.timedelta(days=15), key=f"{chave}_d")
+    hora = c2.time_input("🕒 Hora prevista *", value=atual_hora, step=dt.timedelta(minutes=30), key=f"{chave}_h")
+    produto = st.radio("📦 Produto *", TIPOS_DESCARGA_APP, horizontal=True, key=f"{chave}_p",
+                       index=TIPOS_DESCARGA_APP.index(v["desc_tipo"]) if v.get("desc_tipo") in TIPOS_DESCARGA_APP
+                       else None)
+    return data, hora, produto
+
+
+def _agendar(usuario: dict, v: dict, geo) -> None:
+    tema.secao("🗓️ Agendar a descarga na revenda",
+               "Informe quando você chega e o tipo de produto. O armazém recebe a tarefa na hora.")
+    with st.container(key="car_form"):
+        with st.form(f"car_agenda_{v['id']}"):
+            data, hora, produto = _campos_agenda(v, f"car_ag_{v['id']}")
+            with st.container(key="car_etapa"):
+                ok = st.form_submit_button("🗓️  AGENDAR DESCARGA", type="primary", **ui.LARGURA)
+    if ok:
+        try:
+            svc.agendar_descarga(usuario, v["id"], data, hora, produto, _gps(geo))
+        except RegraNegocioError as e:
+            st.error(str(e))
+        else:
+            ui.avisar(f"Descarga agendada para {data:%d/%m} às {hora:%H:%M}. O armazém já foi avisado.")
+            st.rerun()
+
+
+def _agenda_resumo(usuario: dict, v: dict, geo) -> None:
+    d = dt.date.fromisoformat(v["desc_data"])
+    st.markdown(f'<div class="car-nf">🗓️ <b>Descarga agendada:</b> {d:%d/%m/%Y} às {v.get("desc_hora") or "--:--"} · '
+                f'{tema._e(v.get("desc_tipo") or "")}</div>', unsafe_allow_html=True)
+    with st.expander("✏️ Editar agendamento da descarga"):
+        with st.form(f"car_agenda_ed_{v['id']}"):
+            data, hora, produto = _campos_agenda(v, f"car_aged_{v['id']}")
+            if st.form_submit_button("💾 Salvar alteração", type="primary", **ui.LARGURA):
+                try:
+                    svc.agendar_descarga(usuario, v["id"], data, hora, produto, _gps(geo))
+                except RegraNegocioError as e:
+                    st.error(str(e))
+                else:
+                    ui.avisar("Agendamento alterado. O armazém foi avisado.")
+                    st.rerun()
+
+
 def _horas(a, b) -> float | None:
     da, db = tempo.parse_dt(a), tempo.parse_dt(b)
     return (db - da).total_seconds() / 3600 if da and db else None
 
 
-def _historico(mot: dict) -> None:
-    df = repo.viagens_df(mot["operacao_id"], motorista_id=mot["id"])
-    df = df[df["status"] == repo.FINALIZADA].head(10) if not df.empty else df
-    if df.empty:
+AREAS = ["🚛 Viagem", "💵 Remuneração", "👤 Meus dados"]
+
+
+def _continuar(v: dict) -> bool:
+    """Ao abrir o app com viagem em andamento: mostra o pedido para tocar e voltar à etapa em que parou."""
+    if st.session_state.get(f"car_aberta_{v['id']}"):
+        return True
+    prox = svc.proxima_etapa(v)
+    ult = svc.ultima_etapa(v)
+    etapa = svc.ETAPAS[prox]["nome"] if prox else "concluída"
+    st.markdown(
+        f'<div class="car-viagem"><div class="lin"><span>Viagem em andamento</span><b>Pedido {tema._e(v["numero_pedido"])}'
+        f'</b></div><div class="lin"><span>Placa · destino</span><b>{tema._e(v["placa"])} · {tema._e(v.get("destino") or "")}'
+        f'</b></div><div class="lin"><span>Última etapa</span><b>{tema._e(svc.ETAPAS[ult]["nome"]) if ult else "—"} '
+        f'{_fmt(v.get(svc.ETAPAS[ult]["coluna"])) if ult else ""}</b></div><div class="lin"><span>Próxima etapa</span>'
+        f'<b>{tema._e(etapa)}</b></div></div>', unsafe_allow_html=True)
+    with st.container(key="car_verde"):
+        if st.button(f"▶️  CONTINUAR · PEDIDO {v['numero_pedido']}", key=f"car_cont_{v['id']}", type="primary",
+                     **ui.LARGURA):
+            st.session_state[f"car_aberta_{v['id']}"] = True
+            st.rerun()
+    return False
+
+
+def _area_viagem(usuario: dict, mot: dict) -> None:
+    geo = localizacao(key="geo_motorista")
+    if geo and geo.get("erro"):
+        st.caption("Sem GPS o app funciona normalmente — mas a Puxada não consegue confirmar a chegada na revenda.")
+    v = repo.viagem_ativa_motorista(mot["id"])
+    if v:
+        if _continuar(v):
+            _viagem(usuario, v, geo)
+    else:
+        _nova_viagem(usuario, mot, geo)
+
+
+def _area_remuneracao(mot: dict) -> None:
+    from repositories import logistica_repo
+    from services import motoristas_service
+
+    meses = sorted(set(logistica_repo.meses_vinculos(mot["operacao_id"])) | {tempo.mes_atual()}, reverse=True)
+    mes = st.selectbox("Mês", meses, format_func=ui.nome_mes, key="car_rem_mes")
+    r = motoristas_service.remuneracao(mot["operacao_id"], mes)
+    nome = mot["nome"].strip().lower()
+    linha = r["resumo"][r["resumo"]["motorista"].str.strip().str.lower() == nome] if not r["resumo"].empty else None
+    meu = linha.iloc[0].to_dict() if linha is not None and not linha.empty else {}
+    v = r["viagens"]
+    minhas = v[v["motorista"].fillna("").str.strip().str.lower() == nome] if not v.empty else v
+    fixo, variavel = float(meu.get("salario_fixo") or 0), float(meu.get("variavel") or 0)
+    st.markdown('<div class="car-viagem">' + "".join(
+        f'<div class="lin"><span>{a}</span><b>{b}</b></div>' for a, b in [
+            ("Viagens no mês", str(len(minhas))), ("Km rodados", ui.numero(meu.get("km") or 0)),
+            ("Variável (viagens)", ui.moeda(variavel)), ("Fixo", ui.moeda(fixo)),
+            ("Total previsto", f"<span style='color:#0ca30c'>{ui.moeda(fixo + variavel)}</span>")]) + "</div>",
+        unsafe_allow_html=True)
+    st.caption("Valores previstos pelas viagens lançadas — o fechamento oficial é feito pela Puxada/RH.")
+    if minhas.empty:
+        st.info("Nenhuma viagem neste mês.")
         return
-    with st.expander(f"🕘 Minhas últimas viagens ({len(df)})"):
-        for r in df.itertuples():
-            st.markdown(f"**{_fmt(r.ts_inicio)}** · Pedido {r.numero_pedido} · {r.placa} · {r.destino or ''} · "
-                        f"TMV {svc.formatar_duracao(_horas(r.ts_inicio, r.ts_fim))}")
+    tema.secao("Minhas viagens do mês")
+    for r_ in minhas.sort_values("data_puxada", ascending=False).to_dict("records"):
+        d = dt.date.fromisoformat(str(r_["data_puxada"])[:10]) if r_.get("data_puxada") else None
+        st.markdown(f'<div class="car-nf">📦 <b>{d:%d/%m}</b> · {tema._e(r_.get("fabrica") or "")} · Pedido '
+                    f'{tema._e(r_.get("numero_pedido") or "")} · <b>{ui.moeda(r_.get("valor") or 0)}</b></div>'
+                    if d else "", unsafe_allow_html=True)
+
+
+def _area_dados(usuario: dict, mot: dict) -> None:
+    from services.motoristas_service import status_cnh
+
+    _, cnh, _ = status_cnh(mot.get("cnh_validade"))
+    st.markdown('<div class="car-viagem">' + "".join(
+        f'<div class="lin"><span>{a}</span><b>{tema._e(b)}</b></div>' for a, b in [
+            ("Nome", mot["nome"]), ("Login (CPF)", usuario.get("login") or ""), ("Celular", mot.get("telefone") or "—"),
+            ("CNH", mot.get("cnh") or "—"), ("Validade da CNH", cnh)]) + "</div>", unsafe_allow_html=True)
+    st.caption("Algum dado errado? Fale com a Puxada para atualizar o cadastro.")
+    tema.secao("🔑 Trocar minha senha")
+    with st.form("car_senha", clear_on_submit=True):
+        atual = st.text_input("Senha atual", type="password")
+        nova = st.text_input("Nova senha", type="password")
+        conf = st.text_input("Confirme a nova senha", type="password")
+        if st.form_submit_button("Salvar nova senha", type="primary", **ui.LARGURA):
+            try:
+                usuarios_service.trocar_propria_senha(usuario["id"], atual, nova, conf)
+            except RegraNegocioError as e:
+                st.error(str(e))
+            else:
+                if "k" in st.query_params:  # o acesso lembrado antigo deixa de valer; gera um novo
+                    from core.auth import gerar_token
+
+                    st.query_params["k"] = gerar_token(usuario["id"])
+                ui.avisar("Senha alterada!")
+                st.rerun()
+    if st.button("🚪 Sair do app", key="car_sair_dados", **ui.LARGURA):
+        _sair()
 
 
 def render(usuario: dict) -> None:
@@ -369,8 +521,7 @@ def render(usuario: dict) -> None:
         st.markdown(_CSS, unsafe_allow_html=True)
         st.warning("Seu acesso ainda não está ligado a um motorista. Fale com a equipe da Puxada.")
         if st.button("🚪 Sair"):
-            session.sair()
-            st.rerun()
+            _sair()
         return
     _topo(usuario, mot)
     ui.mostrar_avisos()
@@ -382,13 +533,11 @@ def render(usuario: dict) -> None:
             (st.error if dias <= 30 else st.warning)(
                 f"🪪 Sua CNH {'venceu' if dias < 0 else 'vence em breve'}: {rotulo.split(' ', 1)[-1]}. "
                 "Renove e avise a Puxada para atualizar o cadastro.")
-    geo = localizacao(key="geo_motorista")
-    if geo and geo.get("erro"):
-        st.caption("Sem GPS o app funciona normalmente — mas a Puxada não consegue confirmar a chegada na revenda.")
-
-    v = repo.viagem_ativa_motorista(mot["id"])
-    if v:
-        _viagem(usuario, v, geo)
+    with st.container(key="nav_mod_motorista"):
+        area = ui._escolha("car_area", AREAS, AREAS[0])
+    if area == AREAS[1]:
+        _area_remuneracao(mot)
+    elif area == AREAS[2]:
+        _area_dados(usuario, mot)
     else:
-        _nova_viagem(usuario, mot, geo)
-    _historico(mot)
+        _area_viagem(usuario, mot)

@@ -4,7 +4,7 @@ import streamlit as st
 from core import session, tema, tempo, ui
 from repositories import motoristas_repo as repo
 
-ICONES = {"cnh": "🪪"}
+ICONES = {"cnh": "🪪", "descarga": "🅿️"}
 
 
 def render(usuario: dict, operacao_id: int | None) -> None:

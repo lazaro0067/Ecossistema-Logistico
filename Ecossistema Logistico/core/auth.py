@@ -85,3 +85,45 @@ def operacoes_permitidas(usuario: dict) -> list[dict]:
         return todas
     ids = set(usuario["operacoes"])
     return [o for o in todas if o["id"] in ids]
+
+
+# --- "Lembrar acesso" no link do motorista ------------------------------------
+# O token vai no endereço (?k=...). É assinado com a senha atual do usuário: trocar a senha
+# derruba todos os tokens antigos. Vale TOKEN_DIAS dias.
+TOKEN_DIAS = 30
+
+
+def _assinar(usuario_id: int, expira: int, senha_hash: str) -> str:
+    return hmac.new(senha_hash.encode(), f"{usuario_id}.{expira}".encode(), hashlib.sha256).hexdigest()[:32]
+
+
+def gerar_token(usuario_id: int) -> str | None:
+    import time
+
+    from repositories import usuarios_repo
+
+    u = usuarios_repo.buscar(usuario_id)
+    if not u:
+        return None
+    expira = int(time.time()) + TOKEN_DIAS * 86400
+    return f"{usuario_id}.{expira}.{_assinar(usuario_id, expira, u['senha_hash'])}"
+
+
+def entrar_por_token(token: str) -> dict | None:
+    """Devolve o usuário (sessão) se o token for válido, do próprio usuário ativo e não estiver vencido."""
+    import time
+
+    from repositories import usuarios_repo
+
+    try:
+        uid, expira, assinatura = str(token).split(".")
+        uid, expira = int(uid), int(expira)
+    except (ValueError, AttributeError):
+        return None
+    if expira < time.time():
+        return None
+    u = usuarios_repo.buscar(uid)
+    if not u or not u["ativo"] or not hmac.compare_digest(_assinar(uid, expira, u["senha_hash"]), assinatura):
+        return None
+    usuarios_repo.registrar_acesso(uid)
+    return usuarios_repo.carregar_sessao(uid)

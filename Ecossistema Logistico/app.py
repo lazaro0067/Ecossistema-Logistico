@@ -243,6 +243,14 @@ def app_carreteiro() -> None:
 
     session.iniciar()
     usuario = session.usuario()
+    if not usuario and st.query_params.get("k"):  # acesso lembrado neste celular
+        from core.auth import entrar_por_token
+
+        usuario = entrar_por_token(st.query_params.get("k"))
+        if usuario:
+            session.logar(usuario)
+        else:
+            del st.query_params["k"]
     ui.mostrar_avisos()
     if not usuario:
         app_motorista.tela_login()
