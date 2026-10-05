@@ -44,6 +44,24 @@ def criar_transportadora(nome, cnpj, contato):
         cadastros_repo.inserir_transportadora(_obrigatorio(nome, "o nome").upper(), cnpj.strip(), contato.strip())
 
 
+def atualizar_transportadora(tid, nome, cnpj, contato):
+    with _sem_duplicidade("Já existe uma transportadora com esse nome."):
+        cadastros_repo.atualizar_transportadora(tid, _obrigatorio(nome, "o nome").upper(), (cnpj or "").strip(),
+                                                (contato or "").strip())
+
+
+def atualizar_centro_custo(cid, nome):
+    with _sem_duplicidade("Já existe um centro de custo com esse nome."):
+        cadastros_repo.atualizar_centro_custo(cid, _obrigatorio(nome, "o nome"))
+
+
+def atualizar_od(od_id, nome, cidade, uf, tipo):
+    if tipo not in TIPOS_OD:
+        raise RegraNegocioError("Tipo inválido.")
+    with _sem_duplicidade("Já existe uma origem/destino com esse nome nesta operação."):
+        cadastros_repo.atualizar_od(od_id, _obrigatorio(nome, "o nome"), (cidade or "").strip(), (uf or "").strip(), tipo)
+
+
 def excluir_transportadora(tid):
     with _sem_duplicidade(""):
         cadastros_repo.excluir_transportadora(tid)

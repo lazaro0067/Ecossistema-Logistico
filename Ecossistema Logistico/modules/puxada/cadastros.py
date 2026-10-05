@@ -1,167 +1,184 @@
-"""Puxada › Cadastros centrais: trechos, origens/destinos, transportadoras, centros de custo,
-carretas, fábricas e motoristas. As tabelas de carretas/fábricas/motoristas editam direto na
-célula (✏️) e salvam sozinhas."""
-import pandas as pd
+"""Puxada › Cadastros — todos no mesmo padrão: ➕ novo no topo, tabela legível e ✏️ alterar/excluir no final.
+
+Trechos separados em dois:
+  • 🛣️ Frota própria — fábrica → revenda: valor da viagem do motorista, km e tempo padrão
+    (alimenta a 💵 Remuneração e a produtividade dos motoristas).
+  • 🚚 Spot (frete) — trechos contratados com transportadora: valor do frete, pedágio e aprovador
+    (alimenta o 📝 Solicitar Frete).
+"""
 import streamlit as st
 
 from config.settings import TIPOS_OD
 from core import ui
-from modules.componentes.autosave import editor_autosave
-from repositories import cadastros_repo, logistica_repo, usuarios_repo
+from modules.componentes.cadastro import Campo, tela
+from repositories import cadastros_repo, logistica_repo, motoristas_repo, usuarios_repo
 from services import cadastros_service as svc
 from services.erros import RegraNegocioError
 
 STATUS_CARRETA = ["Disponível", "Em Trânsito", "Manutenção", "Inativa"]
+PARTES = {
+    "proprio": "🛣️ Trechos frota própria",
+    "spot": "🚚 Trechos spot (frete)",
+    "fabricas": "🏭 Fábricas",
+    "carretas": "🚛 Carretas",
+    "motoristas": "👤 Motoristas",
+    "transp": "🏢 Transportadoras",
+    "od": "📍 Origens/Destinos",
+    "cc": "🏷️ Centros de custo",
+}
 
 
-def _excluir(rotulo: str, registros: list[dict], func, key: str, campo: str = "nome") -> None:
-    if not registros:
-        return
-    with st.popover(f"🗑️ Excluir {rotulo}"):
-        rid = ui.select_registro(rotulo.capitalize(), registros, campo, key=f"{key}_sel")
-        if st.button("Confirmar", key=f"{key}_btn") and rid:
-            ui.acao(func, rid, sucesso="Excluído.")
-
-
-def _obrig(v, nome):
-    v = (v or "").strip()
+def _txt(v, nome):
+    v = (v or "").strip() if isinstance(v, str) or v is None else str(v)
     if not v:
         raise RegraNegocioError(f"Informe {nome}.")
     return v
 
 
-def _aba_trechos(operacao_id: int) -> None:
-    origens = cadastros_repo.listar_od(operacao_id, "origem")
-    destinos = cadastros_repo.listar_od(operacao_id, "destino")
-    transps = cadastros_repo.listar_transportadoras()
-    aprovs = usuarios_repo.listar_aprovadores()
-    if not origens or not destinos:
-        st.info("Cadastre primeiro as **Origens/Destinos** (aba ao lado).")
-    with st.form("f_trecho", clear_on_submit=True):
-        st.caption("O trecho já leva transportadora, valor e aprovador — a solicitação de frete fica a um clique. "
-                   "Se o trecho já existir, os dados são atualizados.")
-        c1, c2, c3 = st.columns(3)
-        o = ui.select_registro("Origem", origens, container=c1, key="tr_o")
-        d = ui.select_registro("Destino", destinos, container=c2, key="tr_d")
-        tr = ui.select_registro("Transportadora", transps, container=c3, key="tr_t")
-        c4, c5, c6, c7, c8 = st.columns(5)
-        fr = c4.number_input("Frete (R$)", min_value=0.0, step=100.0)
-        ped = c5.number_input("Pedágio (R$)", min_value=0.0)
-        rem = c6.number_input("Remunerado (R$)", min_value=0.0)
-        km = c7.number_input("Distância (km)", min_value=0.0)
-        ap = ui.select_registro("Aprovador", aprovs, container=c8, key="tr_a")
-        if st.form_submit_button("💾 Salvar trecho", type="primary"):
-            ui.acao(svc.salvar_trecho, operacao_id, o, d, km, ped, rem, fr, tr, ap)
+# --- Trechos da frota própria ----------------------------------------------------
+def _trechos_proprios(operacao_id: int) -> None:
+    fabs = logistica_repo.fabricas_df()
+    if fabs.empty:
+        st.info("Cadastre primeiro as **🏭 Fábricas**.")
+        return
+    nomes = {int(r.id): r.nome for r in fabs.itertuples()}
+    df = motoristas_repo.trechos_proprios_df(operacao_id)
+
+    def salvar(tid, d):
+        fid = int(d["fabrica_id"])
+        args = (float(d["valor_viagem"] or 0), float(d["km"] or 0), float(d["tempo_padrao_h"] or 0))
+        if tid:
+            motoristas_repo.atualizar_trecho_proprio(tid, fid, *args)
+        else:
+            motoristas_repo.salvar_trecho_proprio(operacao_id, fid, *args)
+
+    tela(chave=f"tp_{operacao_id}", titulo="Trechos da frota própria", icone="🛣️", df=df,
+         descricao="Fábrica → revenda com carreta própria. O valor da viagem é a remuneração variável do motorista; "
+                   "km e tempo padrão medem a produtividade.",
+         campos=[Campo("fabrica_id", "Fábrica (origem)", "opcoes", True, nomes),
+                 Campo("valor_viagem", "Valor da viagem p/ motorista (R$)", "moeda", True, passo=10),
+                 Campo("km", "Distância (km)", "numero", passo=10),
+                 Campo("tempo_padrao_h", "Tempo padrão da viagem (h)", "numero", passo=0.5,
+                       ajuda="Ida e volta, para comparar com o TMV real.")],
+         salvar=salvar, excluir=motoristas_repo.excluir_trecho_proprio,
+         rotulo_registro=lambda r: f"{r['fabrica']} → revenda")
+
+
+# --- Trechos spot -------------------------------------------------------------------
+def _trechos_spot(operacao_id: int) -> None:
+    origens = {o["id"]: o["nome"] for o in cadastros_repo.listar_od(operacao_id, "origem")}
+    destinos = {o["id"]: o["nome"] for o in cadastros_repo.listar_od(operacao_id, "destino")}
+    transps = {t["id"]: t["nome"] for t in cadastros_repo.listar_transportadoras()}
+    aprovs = {a["id"]: a["nome"] for a in usuarios_repo.listar_aprovadores()}
     df = cadastros_repo.listar_trechos_df(operacao_id)
-    ui.tabela(df.drop(columns=["origem_id", "destino_id", "transportadora_id", "aprovador_id"]) if not df.empty else df,
-              vazio="Nenhum trecho cadastrado.", column_config={
-                  "valor_frete": st.column_config.NumberColumn("Frete", format="R$ %.2f"),
-                  "pedagio": st.column_config.NumberColumn("Pedágio", format="R$ %.2f"),
-                  "valor_remunerado": st.column_config.NumberColumn("Remunerado", format="R$ %.2f")})
-    if not df.empty:
-        regs = [{"id": r.id, "nome": f"{r.origem} ➔ {r.destino}"} for r in df.itertuples()]
-        _excluir("trecho", regs, svc.excluir_trecho, "del_tr")
-        ui.downloads(df, "trechos_frete", key="dl_trechos")
+
+    def salvar(tid, d):
+        if float(d["valor_frete"] or 0) <= 0:
+            raise RegraNegocioError("Informe o valor do frete do trecho.")
+        if d["origem_id"] == d["destino_id"]:
+            raise RegraNegocioError("Origem e destino não podem ser iguais.")
+        atual = df[df["id"] == tid].iloc[0].to_dict() if tid else {}
+        if tid and (atual["origem_id"], atual["destino_id"]) != (d["origem_id"], d["destino_id"]):
+            svc.excluir_trecho(tid)
+        svc.salvar_trecho(operacao_id, d["origem_id"], d["destino_id"], float(d["distancia_km"] or 0),
+                          float(d["pedagio"] or 0), float(atual.get("valor_remunerado") or 0),
+                          float(d["valor_frete"] or 0), d.get("transportadora_id"), d.get("aprovador_id"))
+
+    tela(chave=f"ts_{operacao_id}", titulo="Trechos spot (frete contratado)", icone="🚚", df=df,
+         descricao="Trechos com transportadora — já trazem valor, pedágio e aprovador para o 📝 Solicitar Frete.",
+         campos=[Campo("origem_id", "Origem", "opcoes", True, origens),
+                 Campo("destino_id", "Destino", "opcoes", True, destinos),
+                 Campo("transportadora_id", "Transportadora", "opcoes", False, transps),
+                 Campo("valor_frete", "Valor do frete (R$)", "moeda", True, passo=100),
+                 Campo("pedagio", "Pedágio (R$)", "moeda", passo=10),
+                 Campo("distancia_km", "Distância (km)", "numero", passo=10),
+                 Campo("aprovador_id", "Aprovador", "opcoes", False, aprovs)],
+         salvar=salvar, excluir=svc.excluir_trecho,
+         rotulo_registro=lambda r: f"{r['origem']} ➔ {r['destino']} · {r.get('transportadora') or 'sem transportadora'}")
 
 
-def _aba_carretas(operacao_id: int) -> None:
-    df = logistica_repo.carretas_df(operacao_id)
-
-    def alterar(linha, alt):
-        logistica_repo.salvar_carreta(operacao_id, int(linha["id"]), _obrig(alt.get("placa", linha["placa"]), "a placa").upper(),
-                                      alt.get("modelo", linha["modelo"]) or "", float(alt.get("capacidade_hl", linha["capacidade_hl"]) or 0),
-                                      alt.get("status", linha["status"]) or STATUS_CARRETA[0])
-
-    def incluir(n):
-        logistica_repo.salvar_carreta(operacao_id, None, _obrig(n.get("placa"), "a placa").upper(), n.get("modelo") or "",
-                                      float(n.get("capacidade_hl") or 0), n.get("status") or STATUS_CARRETA[0])
-
-    editor_autosave(df, f"ed_carretas_{operacao_id}", ["placa", "modelo", "capacidade_hl", "status"], alterar, incluir,
-                    lambda l: logistica_repo.excluir("carretas", int(l["id"])), column_config={
-                        "id": None, "placa": st.column_config.TextColumn("Placa ✏️", required=True),
-                        "modelo": "Modelo ✏️", "capacidade_hl": st.column_config.NumberColumn("Capacidade (HL) ✏️", min_value=0),
-                        "status": st.column_config.SelectboxColumn("Status ✏️", options=STATUS_CARRETA)})
-
-
-def _aba_fabricas(operacao_id: int) -> None:
-    from repositories import motoristas_repo
-
-    st.caption("💵 **Valor da viagem** = quanto o motorista recebe por viagem para cada fábrica nesta filial "
-               "(entra na aba 💵 Remuneração dos Motoristas).")
+# --- Demais cadastros ------------------------------------------------------------------
+def _fabricas() -> None:
     df = logistica_repo.fabricas_df()
-    valores = motoristas_repo.valores_viagem(operacao_id)
-    df["valor_viagem"] = df["id"].map(lambda i: valores.get(int(i), 0.0)) if not df.empty else []
+    tela(chave="fab", titulo="Fábricas (cervejarias)", icone="🏭", df=df,
+         descricao="Origem das viagens da frota própria, do App Carreteiro e do frete spot.",
+         campos=[Campo("nome", "Fábrica", obrigatorio=True), Campo("cidade", "Cidade"), Campo("uf", "UF")],
+         salvar=lambda fid, d: logistica_repo.salvar_fabrica(fid, _txt(d["nome"], "o nome"), d.get("cidade") or "",
+                                                             (d.get("uf") or "").upper()[:2]),
+         excluir=lambda fid: logistica_repo.excluir("fabricas", fid))
 
-    def _valor(fid, v):
-        if v is None:
-            return
-        if float(v or 0) < 0:
-            raise RegraNegocioError("O valor da viagem não pode ser negativo.")
-        motoristas_repo.salvar_valor_viagem(operacao_id, int(fid), float(v or 0))
 
-    def alterar(linha, alt):
-        if any(k in alt for k in ("nome", "cidade", "uf")):
-            logistica_repo.salvar_fabrica(int(linha["id"]), _obrig(alt.get("nome", linha["nome"]), "o nome"),
-                                          alt.get("cidade", linha["cidade"]) or "",
-                                          (alt.get("uf", linha["uf"]) or "").upper())
-        if "valor_viagem" in alt:
-            _valor(linha["id"], alt["valor_viagem"])
+def _carretas(operacao_id: int) -> None:
+    df = logistica_repo.carretas_df(operacao_id)
+    tela(chave=f"car_{operacao_id}", titulo="Carretas / placas da frota própria", icone="🚛", df=df,
+         campos=[Campo("placa", "Placa", obrigatorio=True), Campo("modelo", "Modelo"),
+                 Campo("capacidade_hl", "Capacidade (HL)", "numero", passo=10),
+                 Campo("status", "Status", "opcoes", True, STATUS_CARRETA, padrao=STATUS_CARRETA[0])],
+         salvar=lambda cid, d: logistica_repo.salvar_carreta(operacao_id, cid, _txt(d["placa"], "a placa").upper(),
+                                                             d.get("modelo") or "", float(d.get("capacidade_hl") or 0),
+                                                             d.get("status") or STATUS_CARRETA[0]),
+         excluir=lambda cid: logistica_repo.excluir("carretas", cid))
 
-    def incluir(n):
-        fid = logistica_repo.salvar_fabrica(None, _obrig(n.get("nome"), "o nome"), n.get("cidade") or "",
-                                            (n.get("uf") or "").upper())
-        if fid and n.get("valor_viagem"):
-            _valor(fid, n["valor_viagem"])
 
-    editor_autosave(df, f"ed_fabricas_{operacao_id}", ["nome", "cidade", "uf", "valor_viagem"], alterar, incluir,
-                    lambda l: logistica_repo.excluir("fabricas", int(l["id"])), column_config={
-                        "id": None, "nome": st.column_config.TextColumn("Fábrica ✏️", required=True),
-                        "cidade": "Cidade ✏️", "uf": st.column_config.TextColumn("UF ✏️", max_chars=2),
-                        "valor_viagem": st.column_config.NumberColumn("💵 Valor da viagem (R$) ✏️", min_value=0,
-                                                                      format="R$ %.2f")})
+def _transportadoras() -> None:
+    import pandas as pd
+
+    df = pd.DataFrame(cadastros_repo.listar_transportadoras())
+    tela(chave="transp", titulo="Transportadoras (frete spot)", icone="🏢", df=df,
+         campos=[Campo("nome", "Nome", obrigatorio=True), Campo("cnpj", "CNPJ"),
+                 Campo("contato", "Contato / e-mail / telefone")],
+         salvar=lambda tid, d: (svc.atualizar_transportadora(tid, d["nome"], d.get("cnpj"), d.get("contato")) if tid
+                                else svc.criar_transportadora(d["nome"], d.get("cnpj") or "", d.get("contato") or "")),
+         excluir=svc.excluir_transportadora)
+
+
+def _od(operacao_id: int) -> None:
+    import pandas as pd
+
+    df = pd.DataFrame(cadastros_repo.listar_od(operacao_id))
+    tela(chave=f"od_{operacao_id}", titulo="Origens e destinos (frete spot)", icone="📍", df=df,
+         descricao="As fábricas entram sozinhas como origem e a revenda como destino.",
+         campos=[Campo("nome", "Nome", obrigatorio=True), Campo("cidade", "Cidade"), Campo("uf", "UF"),
+                 Campo("tipo", "Tipo", "opcoes", True, TIPOS_OD, padrao=TIPOS_OD[0])],
+         salvar=lambda oid, d: (svc.atualizar_od(oid, d["nome"], d.get("cidade"), d.get("uf"), d["tipo"]) if oid
+                                else svc.criar_od(operacao_id, d["nome"], d.get("cidade") or "", d.get("uf") or "",
+                                                  d["tipo"])),
+         excluir=svc.excluir_od)
+
+
+def _centros_custo() -> None:
+    import pandas as pd
+
+    df = pd.DataFrame(cadastros_repo.listar_centros_custo())
+    tela(chave="cc", titulo="Centros de custo", icone="🏷️", df=df, por_linha=1,
+         campos=[Campo("nome", "Nome do centro de custo", obrigatorio=True)],
+         salvar=lambda cid, d: (svc.atualizar_centro_custo(cid, d["nome"]) if cid
+                                else svc.criar_centro_custo(d["nome"])),
+         excluir=svc.excluir_centro_custo)
 
 
 def render(usuario: dict, operacao_id: int) -> None:
-    abas = st.tabs(["🛣️ Trechos", "📍 Origens/Destinos", "🏢 Transportadoras", "🚛 Carretas", "🏭 Fábricas",
-                    "👤 Motoristas", "🏷️ Centros de Custo"])
-    with abas[0]:
-        _aba_trechos(operacao_id)
-
-    with abas[1]:
-        with st.form("f_od", clear_on_submit=True):
-            c1, c2, c3, c4 = st.columns([3, 3, 1, 3])
-            nome, cidade = c1.text_input("Nome (ex.: Cervejaria Anápolis)"), c2.text_input("Cidade")
-            uf, tipo = c3.text_input("UF", max_chars=2), c4.selectbox("Tipo", TIPOS_OD)
-            if st.form_submit_button("➕ Salvar"):
-                ui.acao(svc.criar_od, operacao_id, nome, cidade, uf, tipo)
-        ods = cadastros_repo.listar_od(operacao_id)
-        ui.tabela(pd.DataFrame(ods).drop(columns=["operacao_id"], errors="ignore"))
-        _excluir("origem/destino", ods, svc.excluir_od, "del_od")
-
-    with abas[2]:
-        with st.form("f_transp", clear_on_submit=True):
-            c1, c2, c3 = st.columns(3)
-            n, cnpj, cont = c1.text_input("Nome"), c2.text_input("CNPJ"), c3.text_input("Contato / e-mail / telefone")
-            if st.form_submit_button("➕ Salvar"):
-                ui.acao(svc.criar_transportadora, n, cnpj, cont)
-        regs = cadastros_repo.listar_transportadoras()
-        ui.tabela(pd.DataFrame(regs))
-        _excluir("transportadora", regs, svc.excluir_transportadora, "del_transp")
-
-    with abas[3]:
-        _aba_carretas(operacao_id)
-    with abas[4]:
-        _aba_fabricas(operacao_id)
-    with abas[5]:
+    try:
+        svc.garantir_od_padrao(operacao_id)
+    except Exception:
+        pass
+    with st.container(key="nav_cad_partes"):
+        chave = ui._escolha("cad_parte", list(PARTES), "proprio", formatar=PARTES.get, pills=True)
+    if chave == "proprio":
+        _trechos_proprios(operacao_id)
+    elif chave == "spot":
+        _trechos_spot(operacao_id)
+    elif chave == "fabricas":
+        _fabricas()
+    elif chave == "carretas":
+        _carretas(operacao_id)
+    elif chave == "motoristas":
         from modules.puxada import motoristas
 
         motoristas.render(operacao_id)
-
-    with abas[6]:
-        with st.form("f_cc", clear_on_submit=True):
-            n = st.text_input("Nome do centro de custo")
-            if st.form_submit_button("➕ Salvar"):
-                ui.acao(svc.criar_centro_custo, n)
-        regs = cadastros_repo.listar_centros_custo()
-        ui.tabela(pd.DataFrame(regs))
-        _excluir("centro de custo", regs, svc.excluir_centro_custo, "del_cc")
+    elif chave == "transp":
+        _transportadoras()
+    elif chave == "od":
+        _od(operacao_id)
+    else:
+        _centros_custo()

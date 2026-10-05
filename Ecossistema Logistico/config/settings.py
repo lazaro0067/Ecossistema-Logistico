@@ -33,19 +33,19 @@ _ABAS_REGISTRO = {"painel": "📊 Painel", "lancamentos": "➕ Lançamentos"}
 
 MODULOS = {
     "puxada": {"rotulo": "Puxada", "icone": "🚚", "abas": {
-        "cotacao": "📝 Solicitar Frete",
+        "cotacao": "📝 Solicitar Frete Spot",
         "aprovacoes": "✅ Aprovações",
         "encerramento": "🏁 Finalizar (CT-e/NFs)",
-        "painel": "📋 Painel & Histórico",
+        "painel": "📋 Painel do Frete Spot",
         "obz": "📊 OBZ Frete",
         "descarga": "🅿️ Descarga (Pátio)",
         "vinculos": "🔗 Vincular Pedido & NFs",
-        "viagens": "📅 Viagens do Mês",
+        "viagens": "📅 Viagens do Mês (Própria x Spot)",
         "pedidos": "📦 Pedidos Marcados",
         "cadastros": "⚙️ Cadastros",
         "carreteiro": "🚛 App Carreteiro",
         "tmv_tma": "⏱️ TMV / TMA & Viagens",
-        "remuneracao": "💵 Remuneração dos Motoristas",
+        "remuneracao": "💵 Remuneração & Produtividade",
     }},
     "ressuprimento": {"rotulo": "Ressuprimento", "icone": "🔄", "abas": {
         "bases": "📁 Atualização de Bases",
@@ -98,9 +98,9 @@ MODULO_ADMIN = "admin"
 # Pasta sem grupo definido (ou com poucas abas) mostra as telas direto.
 GRUPOS_ABAS = {
     "puxada": {
-        "🚚 Fretes": ["cotacao", "aprovacoes", "encerramento", "painel", "obz"],
-        "🚛 Operação": ["carreteiro", "descarga", "vinculos", "pedidos"],
-        "📊 Indicadores": ["tmv_tma", "viagens", "remuneracao"],
+        "🚛 Frota própria": ["carreteiro", "remuneracao", "tmv_tma"],
+        "🚚 Frete spot": ["cotacao", "aprovacoes", "encerramento", "painel", "obz"],
+        "🏭 Operação": ["descarga", "vinculos", "pedidos", "viagens"],
         "⚙️ Cadastros": ["cadastros"],
     },
     "ressuprimento": {

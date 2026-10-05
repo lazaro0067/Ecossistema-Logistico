@@ -576,6 +576,11 @@ MIGRACOES: list[tuple[str, str]] = [
     # Remove o ressuprimento diário trazido do sistema antigo (volumes sem a vírgula e iguais nas 3 filiais).
     # Esses registros têm a data de atualização no formato antigo DD/MM/AAAA. Basta reimportar o relatório.
     ("015_limpa_ressup_antigo", "DELETE FROM ressuprimento_diario WHERE dt_atualizacao LIKE '__/__/____%';"),
+    # Trechos da frota própria (fábrica → revenda): valor da viagem do motorista, km e tempo padrão
+    ("016_trecho_proprio", """
+        ALTER TABLE remuneracao_fabrica ADD COLUMN km REAL DEFAULT 0;
+        ALTER TABLE remuneracao_fabrica ADD COLUMN tempo_padrao_h REAL DEFAULT 0;
+    """),
 ]
 
 

@@ -89,3 +89,35 @@ def marcar_lida(usuario_id: int, nid: int | None, quando: str) -> None:
         execute("UPDATE notificacoes SET lida_em = ? WHERE id = ? AND usuario_id = ?", (quando, nid, usuario_id))
     else:
         execute("UPDATE notificacoes SET lida_em = ? WHERE usuario_id = ? AND lida_em IS NULL", (quando, usuario_id))
+
+
+# --- Trechos da frota própria (fábrica → revenda) ------------------------------------
+def trechos_proprios_df(operacao_id: int) -> pd.DataFrame:
+    return query_df("""SELECT r.id, r.fabrica_id, f.nome AS fabrica, f.cidade, f.uf, r.km, r.tempo_padrao_h,
+                              r.valor_viagem
+                       FROM remuneracao_fabrica r JOIN fabricas f ON f.id = r.fabrica_id
+                       WHERE r.operacao_id = ? ORDER BY f.nome""", (operacao_id,))
+
+
+def salvar_trecho_proprio(operacao_id: int, fabrica_id: int, valor: float, km: float, tempo_h: float) -> None:
+    if query_one("SELECT id FROM remuneracao_fabrica WHERE operacao_id = ? AND fabrica_id = ?",
+                 (operacao_id, fabrica_id)):
+        execute("UPDATE remuneracao_fabrica SET valor_viagem = ?, km = ?, tempo_padrao_h = ? "
+                "WHERE operacao_id = ? AND fabrica_id = ?", (valor, km, tempo_h, operacao_id, fabrica_id))
+    else:
+        execute("INSERT INTO remuneracao_fabrica (operacao_id, fabrica_id, valor_viagem, km, tempo_padrao_h) "
+                "VALUES (?, ?, ?, ?, ?)", (operacao_id, fabrica_id, valor, km, tempo_h))
+
+
+def excluir_trecho_proprio(tid: int) -> None:
+    execute("DELETE FROM remuneracao_fabrica WHERE id = ?", (tid,))
+
+
+def km_por_fabrica(operacao_id: int) -> dict[int, float]:
+    return {r["fabrica_id"]: float(r["km"] or 0) for r in query_all(
+        "SELECT fabrica_id, km FROM remuneracao_fabrica WHERE operacao_id = ?", (operacao_id,))}
+
+
+def atualizar_trecho_proprio(tid: int, fabrica_id: int, valor: float, km: float, tempo_h: float) -> None:
+    execute("UPDATE remuneracao_fabrica SET fabrica_id = ?, valor_viagem = ?, km = ?, tempo_padrao_h = ? WHERE id = ?",
+            (fabrica_id, valor, km, tempo_h, tid))

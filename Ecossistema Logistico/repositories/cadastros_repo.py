@@ -91,3 +91,17 @@ def salvar_trecho(operacao_id: int, origem_id: int, destino_id: int, km: float,
 
 def excluir_trecho(trecho_id: int) -> None:
     execute("DELETE FROM trechos WHERE id = ?", (trecho_id,))
+
+
+# --- Alterações ---------------------------------------------------------------
+def atualizar_transportadora(tid: int, nome: str, cnpj: str, contato: str) -> None:
+    execute("UPDATE transportadoras SET nome = ?, cnpj = ?, contato = ? WHERE id = ?", (nome, cnpj, contato, tid))
+
+
+def atualizar_centro_custo(cid: int, nome: str) -> None:
+    execute("UPDATE centros_custo SET nome = ? WHERE id = ?", (nome, cid))
+
+
+def atualizar_od(od_id: int, nome: str, cidade: str, uf: str, tipo: str) -> None:
+    execute("UPDATE origens_destinos SET nome = ?, cidade = ?, uf = ?, tipo = ? WHERE id = ?",
+            (nome, cidade, uf.upper(), tipo, od_id))

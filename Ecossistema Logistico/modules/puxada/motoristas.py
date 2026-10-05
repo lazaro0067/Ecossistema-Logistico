@@ -7,7 +7,6 @@ import streamlit as st
 
 from config.settings import CNH_ALERTA_DIAS
 from core import tema, ui
-from modules.componentes.autosave import editor_autosave
 from repositories import motoristas_repo as repo
 from services import carreteiro_service, motoristas_service as svc
 from services.erros import RegraNegocioError
@@ -134,55 +133,34 @@ def _acesso(df: pd.DataFrame) -> None:
             if st.button("🔒 Bloquear acesso" if ativo else "🔓 Desbloquear acesso", key=f"mot_bloq_{mid}", **ui.LARGURA):
                 ui.acao(carreteiro_service.bloquear_acesso, mid, not ativo,
                         sucesso="Acesso bloqueado." if ativo else "Acesso liberado.")
-        with st.popover("🗑️ Excluir motorista", **ui.LARGURA):
-            st.caption("Motorista com viagens lançadas não pode ser excluído — bloqueie o acesso.")
-            if st.button(f"Confirmar exclusão de {sel['nome'].split()[0]}", key=f"mot_excluir_{mid}"):
-                from database.connection import tipo_violacao
-                from repositories import logistica_repo
-
-                try:
-                    logistica_repo.excluir("motoristas", int(mid))
-                except Exception as e:
-                    st.error("Este motorista tem viagens lançadas e não pode ser excluído."
-                             if tipo_violacao(e) == "fk" else f"Não foi possível excluir: {e}")
-                else:
-                    ui.avisar("Motorista excluído.", "info")
-                    st.rerun()
 
 
 # --- 📋 Lista ---------------------------------------------------------------------------
 def _lista(operacao_id: int, df: pd.DataFrame, gestores: list[dict]) -> None:
-    st.caption("Clique na célula ✏️ para editar — salva sozinho. Senha e acesso ficam em **🔑 Acesso & senha**.")
-    nomes_gestor = {g["nome"]: g["id"] for g in gestores}
-    ed = df[["id", "nome", "cpf", "telefone", "cnh", "validade", "situacao_cnh", "gestor", "salario_fixo",
-             "situacao_acesso"]].copy()
-    ed["gestor"] = ed["gestor"].fillna(SEM_GESTOR)
-    ed["salario_fixo"] = pd.to_numeric(ed["salario_fixo"], errors="coerce").fillna(0.0)
-    for c in ("cpf", "telefone", "cnh"):
-        ed[c] = ed[c].fillna("")
+    from modules.componentes.cadastro import Campo, tela
 
-    def alterar(linha, alt):
-        atual = {**linha, **alt}
-        gestor = atual.get("gestor")
-        svc.salvar_motorista(operacao_id, int(linha["id"]), atual.get("nome"), atual.get("cpf") or "",
-                             atual.get("telefone") or "", atual.get("cnh") or "", atual.get("validade"),
-                             nomes_gestor.get(gestor) if gestor and gestor != SEM_GESTOR else None,
-                             atual.get("salario_fixo"))
+    opc_gestor = {g["id"]: g["nome"] for g in gestores}
 
-    editor_autosave(ed, f"ed_mot_{operacao_id}", ["nome", "cpf", "telefone", "cnh", "validade", "gestor",
-                                                  "salario_fixo"], alterar, column_config={
-        "id": None,
-        "nome": st.column_config.TextColumn("Motorista ✏️", required=True, width="medium"),
-        "cpf": st.column_config.TextColumn("CPF ✏️"),
-        "telefone": st.column_config.TextColumn("Celular ✏️"),
-        "cnh": st.column_config.TextColumn("Nº CNH ✏️"),
-        "validade": st.column_config.DateColumn("Validade CNH ✏️", format="DD/MM/YYYY"),
-        "situacao_cnh": st.column_config.TextColumn("Situação da CNH", width="medium"),
-        "gestor": st.column_config.SelectboxColumn("Gestor ✏️", options=[SEM_GESTOR, *nomes_gestor], width="medium"),
-        "salario_fixo": st.column_config.NumberColumn("Salário fixo ✏️", format="R$ %.2f", min_value=0),
-        "situacao_acesso": st.column_config.TextColumn("App")})
+    def salvar(mid, d):
+        svc.salvar_motorista(operacao_id, mid, d["nome"], d.get("cpf") or "", d.get("telefone") or "",
+                             d.get("cnh") or "", d.get("cnh_validade"), d.get("gestor_id"), d.get("salario_fixo"))
+
+    tela(chave=f"mot_{operacao_id}", titulo="Motoristas da filial", icone="👤", df=df, permitir_novo=False,
+         descricao="Para incluir use ➕ Novo motorista; senha e acesso ficam em 🔑 Acesso & senha.",
+         campos=[Campo("nome", "Motorista", obrigatorio=True), Campo("cpf", "CPF"), Campo("telefone", "Celular"),
+                 Campo("cnh", "Nº CNH"), Campo("cnh_validade", "Validade CNH", "data", na_tabela=False),
+                 Campo("gestor_id", "Gestor", "opcoes", False, opc_gestor),
+                 Campo("salario_fixo", "Salário fixo", "moeda", passo=100)],
+         colunas_extras=[("situacao_cnh", "Situação da CNH"), ("situacao_acesso", "App")],
+         salvar=salvar, excluir=lambda mid: logistica_repo_excluir(mid))
     ui.downloads(df[["nome", "cpf", "telefone", "cnh", "cnh_validade", "situacao_cnh", "gestor", "salario_fixo",
                      "situacao_acesso"]], "motoristas", key="dl_motoristas")
+
+
+def logistica_repo_excluir(mid: int) -> None:
+    from repositories import logistica_repo
+
+    logistica_repo.excluir("motoristas", int(mid))
 
 
 def render(operacao_id: int) -> None:

@@ -149,6 +149,7 @@ def remuneracao(operacao_id: int, mes_ano: str) -> dict:
     """{"resumo": por motorista, "viagens": detalhe com valor, "sem_valor": fábricas sem valor, "fabricas": [...] }"""
     mots = repo.lista_df(operacao_id)
     valores = repo.valores_viagem(operacao_id)
+    kms = repo.km_por_fabrica(operacao_id)
     fabricas = logistica_repo.fabricas_df()
     fab_por_nome = {_norm(r.nome): r for r in fabricas.itertuples()}
     v = repo.viagens_mes(operacao_id, mes_ano)
@@ -157,8 +158,10 @@ def remuneracao(operacao_id: int, mes_ano: str) -> dict:
         v["motorista"] = v["motorista"].fillna("—")
         v["valor"] = [valores.get(fab_por_nome[_norm(f)].id, 0.0) if _norm(f) in fab_por_nome else 0.0
                       for f in v["fabrica"]]
+        v["km"] = [kms.get(fab_por_nome[_norm(f)].id, 0.0) if _norm(f) in fab_por_nome else 0.0
+                   for f in v["fabrica"]]
     else:
-        v = v.assign(valor=pd.Series(dtype=float))
+        v = v.assign(valor=pd.Series(dtype=float), km=pd.Series(dtype=float))
     sem_valor = sorted({f for f, val in zip(v["fabrica"], v["valor"]) if not val}) if not v.empty else []
 
     linhas = []
@@ -167,6 +170,7 @@ def remuneracao(operacao_id: int, mes_ano: str) -> dict:
         minhas = v[v["motorista"].map(_norm) == _norm(r["nome"])] if not v.empty else v
         linhas.append({"motorista": r["nome"], "salario_fixo": float(r.get("salario_fixo") or 0),
                        "viagens": len(minhas), "variavel": float(minhas["valor"].sum()) if len(minhas) else 0.0,
+                       "km": float(minhas["km"].sum()) if len(minhas) else 0.0,
                        **{f"fab::{f}": int((minhas["fabrica"] == f).sum()) for f in sorted(v["fabrica"].unique())}}
                       if not v.empty else {"motorista": r["nome"], "salario_fixo": float(r.get("salario_fixo") or 0),
                                            "viagens": 0, "variavel": 0.0})
@@ -175,7 +179,7 @@ def remuneracao(operacao_id: int, mes_ano: str) -> dict:
         for nome in sorted({n for n in v["motorista"] if _norm(n) not in nomes_cadastro}):
             minhas = v[v["motorista"] == nome]
             linhas.append({"motorista": f"{nome} (não cadastrado)", "salario_fixo": 0.0, "viagens": len(minhas),
-                           "variavel": float(minhas["valor"].sum()),
+                           "variavel": float(minhas["valor"].sum()), "km": float(minhas["km"].sum()),
                            **{f"fab::{f}": int((minhas["fabrica"] == f).sum()) for f in sorted(v["fabrica"].unique())}})
     resumo = pd.DataFrame(linhas)
     if resumo.empty:

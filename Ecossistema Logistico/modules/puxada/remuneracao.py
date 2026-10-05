@@ -29,28 +29,30 @@ def render(usuario: dict, operacao_id: int) -> None:
     c1, c2 = st.columns([1, 3])
     mes = ui.seletor_mes("Mês", meses, key="rem_mes", container=c1)
     c2.caption("Variável = viagens do mês (pedidos vinculados — manuais e do App Carreteiro) × valor da viagem "
-               "de cada fábrica. O valor e o salário fixo ficam em **⚙️ Cadastros** (Fábricas e Motoristas).")
+               "de cada fábrica. O valor fica em **⚙️ Cadastros › 🛣️ Trechos frota própria** e o salário fixo em **👤 Motoristas**.")
     r = svc.remuneracao(operacao_id, mes)
     resumo, viagens = r["resumo"], r["viagens"]
     if r["sem_valor"]:
         st.warning("💵 Fábricas sem valor de viagem nesta filial (contam R$ 0,00): **" + ", ".join(r["sem_valor"])
-                   + "**. Cadastre em ⚙️ Cadastros › 🏭 Fábricas.")
+                   + "**. Cadastre em ⚙️ Cadastros › 🛣️ Trechos frota própria.")
     if resumo.empty:
         st.info("Nenhum motorista cadastrado e nenhuma viagem no mês.")
         return
 
     fabs = r["fabricas"]
     vis = resumo.rename(columns={f"fab::{f}": f"🏭 {f}" for f in fabs})
-    ordem = ["motorista", "salario_fixo", "viagens", *[f"🏭 {f}" for f in fabs], "variavel", "total"]
+    ordem = ["motorista", "salario_fixo", "viagens", *[f"🏭 {f}" for f in fabs], "km", "variavel", "total"]
     vis = vis[[c for c in ordem if c in vis.columns]]
     cfg = {"motorista": "Motorista", "salario_fixo": st.column_config.NumberColumn("Fixo (nominal)", **R),
            "viagens": st.column_config.NumberColumn("Viagens", format="%d"),
+           "km": st.column_config.NumberColumn("Km rodados", format="%.0f"),
            "variavel": st.column_config.NumberColumn("Variável", **R),
            "total": st.column_config.NumberColumn("Total", **R),
            **{f"🏭 {f}": st.column_config.NumberColumn(f"🏭 {f}", format="%d") for f in fabs}}
     vv = _vis_viagens(viagens)
     fixo, variavel = float(resumo["salario_fixo"].sum()), float(resumo["variavel"].sum())
     n_viagens = int(resumo["viagens"].sum())
+    km_total = float(resumo["km"].sum()) if "km" in resumo else 0.0
     com_viagem = resumo[resumo["viagens"] > 0]
 
     tema.kpis([
@@ -66,6 +68,10 @@ def render(usuario: dict, operacao_id: int) -> None:
          "dados": vis.sort_values("salario_fixo", ascending=False), "colunas": cfg},
         {"titulo": "Total (fixo + variável)", "valor": ui.moeda(fixo + variavel), "icone": "💰", "status": "info",
          "dados": vis, "colunas": cfg},
+        {"titulo": "Produtividade", "valor": f"{ui.numero(n_viagens / len(com_viagem), 1)} viagens"
+         if len(com_viagem) else "—", "icone": "📈", "status": "info",
+         "detalhe": (f"por motorista · {ui.numero(km_total)} km rodados" if km_total else "por motorista no mês"),
+         "dados": vis.sort_values("viagens", ascending=False), "colunas": cfg},
     ], key="kp_rem")
 
     tema.secao(f"Remuneração por motorista — {ui.nome_mes(mes)}",

@@ -90,6 +90,21 @@ div[class*="st-key-nav_mod_"] [data-testid="stButtonGroup"] button {{ font-weigh
 div[class*="st-key-nav_mod_"] [data-testid="stElementContainer"]:first-child [data-testid="stButtonGroup"] button {{
     min-height:2.6rem; padding:0 1.1rem; }}
 
+/* tabelas de leitura dos cadastros */
+.eco-tab {{ overflow:auto; border:1px solid #d9d8d0; border-radius:12px; background:#fff; margin:.4rem 0 .8rem;
+    box-shadow: 0 1px 2px rgba(11,31,58,.04); }}
+.eco-tab table {{ width:100%; border-collapse:collapse; font-size:.92rem; }}
+.eco-tab thead th {{ position:sticky; top:0; background:#eef3fa; color:{NAVY}; font-weight:800; text-align:left;
+    padding:.6rem .8rem; border-bottom:2px solid #c9d6ea; white-space:nowrap; z-index:1; }}
+.eco-tab tbody td {{ padding:.55rem .8rem; border-bottom:1px solid #e6e5df; color:{TINTA}; }}
+.eco-tab tbody tr:nth-child(even) td {{ background:#fafaf8; }}
+.eco-tab tbody tr:hover td {{ background:#f0f6ff; }}
+div[class*="st-key-cad_alt_"] {{ background:#fffdf6; border:1px dashed #e9c46a; border-radius:14px;
+    padding:.8rem 1rem .6rem; margin-top:.6rem; }}
+.eco-alt-titulo {{ font-weight:800; color:{TINTA}; margin-bottom:.2rem; }}
+/* cabeçalho das tabelas editáveis em destaque */
+[data-testid="stDataFrame"], [data-testid="stDataEditor"] {{ border:1px solid #d9d8d0; border-radius:10px; }}
+
 /* cards clicáveis: o botão invisível cobre o card inteiro */
 div[class*="st-key-kpic_"] {{ position:relative !important; gap:0 !important; height:100%; cursor:pointer; }}
 div[class*="st-key-kpic_"] [data-testid="stMarkdown"],
