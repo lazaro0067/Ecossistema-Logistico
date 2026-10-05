@@ -295,7 +295,30 @@ def numero_br(v) -> float:
         return 0.0
 
 
+_PONTO_DECIMAL = re.compile(r"-?\d+\.\d{1,2}|-?\d+\.\d{4,}|-?\d{4,}\.\d+|-?0\.\d+")
+
+
+def _numero_ponto(v) -> float:
+    """Número com ponto decimal (ex.: 2441.990)."""
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return 0.0
+    if isinstance(v, (int, float)):
+        return float(v)
+    try:
+        return float(re.sub(r"[R$\s]", "", str(v)))
+    except ValueError:
+        return numero_br(v)
+
+
 def _to_float(s: pd.Series) -> pd.Series:
+    """Converte a coluna olhando todos os valores juntos: se nenhum tem vírgula e algum mostra ponto como
+    decimal (2441.99 / 2441.990 / 0.5), o ponto é decimal em todos — "441.990" vira 441,99 e não 441 mil."""
+    textos = s.dropna().map(lambda v: v if isinstance(v, (int, float)) else str(v).strip())
+    textos = textos[textos.map(lambda v: isinstance(v, str) and v != "")]
+    limpos = textos.map(lambda v: re.sub(r"[R$\s]", "", v))
+    if not limpos.empty and not limpos.str.contains(",").any() and limpos.map(
+            lambda v: bool(_PONTO_DECIMAL.fullmatch(v))).any():
+        return s.map(_numero_ponto)
     return s.map(numero_br)
 
 
@@ -459,10 +482,15 @@ def _gravar_multi_operacao(df: pd.DataFrame, operacao_padrao: int | None, agora:
     df["volume_sellin_hl"] = df["volume_real_hl"]  # o original usa o HL puxado como realizado
     df["dt_atualizacao"] = agora
     df = df.drop(columns=["operacao"], errors="ignore")
-    # soma linhas repetidas da mesma filial/dia/cesta
-    df = df.groupby(["operacao_id", "data", "cesta"], as_index=False).agg(
-        volume_real_hl=("volume_real_hl", "sum"), volume_sellin_hl=("volume_sellin_hl", "sum"),
-        dt_atualizacao=("dt_atualizacao", "last"))
+    # um valor por revenda + data + indicador (como no sistema original: vale a última linha do arquivo)
+    df["cesta"] = df["cesta"].astype(str).str.strip()
+    df = df[df["cesta"].ne("") & df["data"].notna()]
+    df = df.drop_duplicates(subset=["operacao_id", "data", "cesta"], keep="last")
+    # o período que o arquivo traz substitui o que estava gravado (limpa importações erradas)
+    from database.connection import execute as _exec
+    for op_id, g in df.groupby("operacao_id"):
+        _exec("DELETE FROM ressuprimento_diario WHERE operacao_id = ? AND data >= ? AND data <= ?",
+              (int(op_id), str(g["data"].min()), str(g["data"].max())))
     n = upsert("ressuprimento_diario", _registros(df), ["operacao_id", "data", "cesta"])
     if sem_op:
         from core import ui  # aviso amigável sem quebrar a importação

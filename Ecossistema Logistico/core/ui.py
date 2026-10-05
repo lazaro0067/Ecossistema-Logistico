@@ -104,10 +104,43 @@ def abas_modulo(usuario: dict, modulo: str, renderizadores: dict, *args) -> None
     if not permitidas:
         st.warning("Você não tem acesso a nenhuma pasta deste módulo.")
         return
+    from config.settings import GRUPOS_ABAS
+
     rotulos = MODULOS[modulo]["abas"]
-    for aba, chave in zip(st.tabs([rotulos[a] for a in permitidas]), permitidas):
-        with aba:
-            renderizadores[chave](*args)
+    grupos = {g: [a for a in abas if a in permitidas] for g, abas in GRUPOS_ABAS.get(modulo, {}).items()}
+    sem_grupo = [a for a in permitidas if not any(a in v for v in grupos.values())]
+    if sem_grupo:
+        grupos["📂 Outros"] = sem_grupo
+    grupos = {g: v for g, v in grupos.items() if v}
+    if len(grupos) <= 1:
+        grupos = {"": permitidas}
+
+    with st.container(key=f"nav_mod_{modulo}"):
+        grupo = _escolha(f"nav_{modulo}_grupo", list(grupos), list(grupos)[0]) if len(grupos) > 1 else ""
+        abas = grupos[grupo]
+        aba = _escolha(f"nav_{modulo}_{grupo}_aba", abas, abas[0], formatar=rotulos.get, pills=True) \
+            if len(abas) > 1 else abas[0]
+    renderizadores[aba](*args)
+
+
+def _escolha(chave: str, opcoes: list, padrao, formatar=None, pills: bool = False):
+    """Seletor de grupo/tela que lembra a última escolha (clicar de novo na mesma não "desmarca")."""
+    lembrada = f"{chave}__ultima"
+    atual = st.session_state.get(lembrada, padrao)
+    if atual not in opcoes:
+        atual = padrao
+    if st.session_state.get(chave) not in opcoes:
+        st.session_state[chave] = atual
+    widget = getattr(st, "pills" if pills else "segmented_control", None)
+    if widget is None:  # Streamlit antigo
+        valor = st.radio("Tela" if pills else "Grupo", opcoes, key=chave, horizontal=True, format_func=formatar or str,
+                         label_visibility="collapsed")
+    else:
+        valor = widget("Tela" if pills else "Grupo", opcoes, key=chave, format_func=formatar or str, selection_mode="single",
+                       label_visibility="collapsed")
+    valor = valor if valor in opcoes else atual
+    st.session_state[lembrada] = valor
+    return valor
 
 
 # --- Mensagens que sobrevivem ao st.rerun() ------------------------------

@@ -82,6 +82,14 @@ h1, h2, h3 {{ letter-spacing: -0.01em; color:{TINTA}; }}
 .eco-kpi .rot {{ font-size:.8rem; color:{TINTA_2}; font-weight:600; display:flex; gap:.4rem; align-items:center; }}
 .eco-kpi .val {{ font-size:1.6rem; font-weight:750; color:{TINTA}; margin:.25rem 0 .1rem; line-height:1.15; }}
 .eco-kpi .det {{ font-size:.78rem; color:{TINTA_2}; min-height:1.1rem; }}
+/* navegação por estrutura (grupos e telas de cada pasta) */
+div[class*="st-key-nav_mod_"] {{ background:#fff; border:1px solid {BORDA}; border-radius:16px;
+    padding:.7rem .8rem .55rem; margin:.2rem 0 1rem; box-shadow: 0 1px 2px rgba(11,31,58,.04); gap:.45rem; }}
+div[class*="st-key-nav_mod_"] [data-testid="stButtonGroup"] {{ flex-wrap: wrap; }}
+div[class*="st-key-nav_mod_"] [data-testid="stButtonGroup"] button {{ font-weight:600; }}
+div[class*="st-key-nav_mod_"] [data-testid="stElementContainer"]:first-child [data-testid="stButtonGroup"] button {{
+    min-height:2.6rem; padding:0 1.1rem; }}
+
 /* cards clicáveis: o botão invisível cobre o card inteiro */
 div[class*="st-key-kpic_"] {{ position:relative; gap:0 !important; height:100%; }}
 div[class*="st-key-kpic_"] [data-testid="stElementContainer"]:has(.eco-kpi),

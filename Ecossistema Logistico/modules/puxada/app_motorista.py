@@ -136,15 +136,34 @@ def tela_nao_motorista(usuario: dict) -> None:
         st.rerun()
 
 
-def link_do_app() -> str | None:
-    """Endereço do App Carreteiro para mandar aos motoristas."""
+def link_do_app() -> str:
+    """Endereço do App Carreteiro para mandar aos motoristas.
+    Ordem: Secret CARRETEIRO_URL (app separado) → Secret APP_URL → endereço aberto agora → endereço padrão."""
+    from config.settings import APP_URL_PADRAO
     from core.segredos import segredo
 
     proprio = (segredo("CARRETEIRO_URL") or "").strip()
     if proprio:
         return proprio
     url = (segredo("APP_URL") or "").strip().rstrip("/")
-    return f"{url}/?app=motorista" if url else None
+    if not url:
+        try:
+            host = st.context.headers.get("host") or ""
+        except Exception:
+            host = ""
+        url = f"https://{host}" if host and "localhost" not in host and "127.0.0.1" not in host else APP_URL_PADRAO
+    return f"{url}/?app=motorista"
+
+
+def link_whatsapp(texto: str, telefone: str | None = None) -> str:
+    """Link do WhatsApp com a mensagem pronta (para o número do motorista, se houver)."""
+    from urllib.parse import quote
+
+    numero = "".join(c for c in str(telefone or "") if c.isdigit())
+    if len(numero) in (10, 11):
+        numero = "55" + numero
+    destino = numero if len(numero) in (12, 13) else ""
+    return f"https://wa.me/{destino}?text={quote(texto)}"
 
 
 def _fmt(ts) -> str:

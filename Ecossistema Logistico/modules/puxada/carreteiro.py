@@ -241,21 +241,19 @@ def _acessos(operacao_id: int) -> None:
     if df.empty:
         st.info("Cadastre os motoristas em **⚙️ Cadastros › 👤 Motoristas** e volte aqui para criar o acesso.")
         return
-    from modules.puxada.app_motorista import link_do_app
+    from modules.puxada.app_motorista import link_do_app, link_whatsapp
 
     link = link_do_app()
-    if link:
-        st.success(f"📲 **Link do App Carreteiro** (o mesmo para as três operações): {link}")
-        st.caption("Mande pelo WhatsApp. No celular, o motorista pode usar “Adicionar à tela inicial” para abrir como app.")
-    else:
-        st.info("📲 **Link do App Carreteiro:** endereço do sistema + `/?app=motorista` "
-                "(ex.: https://seu-sistema.streamlit.app/?app=motorista). Cadastre `APP_URL` nos Secrets para o link "
-                "aparecer pronto aqui — ou publique o `app_carreteiro.py` como app separado e informe `CARRETEIRO_URL`.")
     nova = st.session_state.pop("car_senha_nova", None)
     if nova:
-        st.success(f"Acesso de **{nova['nome']}** pronto. Passe ao motorista (a senha aparece só agora):")
-        st.code(f"Login: {nova['login']}\nSenha provisória: {nova['senha']}", language=None)
-        st.caption("No primeiro acesso ele cria a própria senha.")
+        tel = next((r["telefone"] for r in df.to_dict("records") if r["nome"] == nova["nome"]), None)
+        msg = (f"Olá, {nova['nome'].split()[0]}! Seu acesso ao App Carreteiro do Grupo Lima:\n\n"
+               f"🔗 {link}\n👤 Login: {nova['login']}\n🔑 Senha provisória: {nova['senha']}\n\n"
+               "No primeiro acesso você cria a sua senha. Dica: no celular, use “Adicionar à tela inicial”.")
+        st.success(f"Acesso de **{nova['nome']}** pronto. A senha aparece só agora — envie ao motorista:")
+        st.code(msg, language=None)
+        st.link_button(f"📲 Enviar para {nova['nome'].split()[0]} pelo WhatsApp", link_whatsapp(msg, tel),
+                       type="primary")
     ui.tabela(df.drop(columns=["usuario_id"]).assign(ultimo_acesso=df["ultimo_acesso"].fillna("")), column_config={
         "id": None, "nome": "Motorista", "cnh": "CNH", "telefone": "Telefone", "acesso": "Login",
         "situacao": "Situação", "ultimo_acesso": "Último acesso"})
@@ -297,6 +295,12 @@ def _acessos(operacao_id: int) -> None:
         ativo = sel["situacao"] == "Ativo"
         if b2.button("🔒 Bloquear" if ativo else "🔓 Desbloquear", key="car_ac_bloq"):
             ui.acao(svc.bloquear_acesso, mid2, not ativo, sucesso="Acesso bloqueado." if ativo else "Acesso liberado.")
+        msg = (f"Olá, {sel['nome'].split()[0]}! Link do App Carreteiro do Grupo Lima:\n{link}\n\n"
+               f"Login: {sel['acesso']} (use a senha que você criou).")
+        st.link_button(f"📲 Mandar o link para {sel['nome'].split()[0]} pelo WhatsApp",
+                       link_whatsapp(msg, sel.get("telefone")), **ui.LARGURA)
+        if not sel.get("telefone"):
+            st.caption("Sem telefone no cadastro — o WhatsApp abre para você escolher o contato.")
 
 
 # --- Revenda (GPS) --------------------------------------------------------------------
@@ -329,7 +333,23 @@ def _revenda(operacao_id: int) -> None:
         st.map(pd.DataFrame({"lat": [lat], "lon": [lon]}), zoom=15, size=float(raio))
 
 
+def _painel_link() -> None:
+    """Link do App Carreteiro sempre à mão: copiar, abrir ou mandar pelo WhatsApp."""
+    from modules.puxada.app_motorista import link_do_app, link_whatsapp
+
+    link = link_do_app()
+    with st.expander("📲 Link do App Carreteiro — copiar ou enviar pelo WhatsApp", expanded=False):
+        st.caption("O mesmo link para os motoristas das três operações. Toque no ícone ⧉ à direita para copiar.")
+        st.code(link, language=None)
+        msg = (f"🚛 App Carreteiro — Grupo Lima\nRegistre cada etapa da sua viagem por aqui:\n{link}\n\n"
+               "Entre com o seu CPF/celular e a senha que a Puxada te passou.")
+        c1, c2 = st.columns(2)
+        c1.link_button("📲 Enviar pelo WhatsApp", link_whatsapp(msg), type="primary", **ui.LARGURA)
+        c2.link_button("🔗 Abrir o app", link, **ui.LARGURA)
+
+
 def render(usuario: dict, operacao_id: int) -> None:
+    _painel_link()
     abas = st.tabs(["📡 Ao vivo", "🗂️ Viagens & NFs", "🔑 Acessos dos motoristas", "📍 Revenda (GPS)"])
     with abas[0]:
         _ao_vivo(operacao_id)

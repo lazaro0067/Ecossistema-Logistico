@@ -93,6 +93,38 @@ MODULOS = {
 }
 MODULO_ADMIN = "admin"
 
+# Navegação: as abas de cada pasta ficam agrupadas por estrutura (clica no grupo e depois na tela).
+# Pasta sem grupo definido (ou com poucas abas) mostra as telas direto.
+GRUPOS_ABAS = {
+    "puxada": {
+        "🚚 Fretes": ["cotacao", "aprovacoes", "encerramento", "painel", "obz"],
+        "🚛 Operação": ["carreteiro", "descarga", "vinculos", "pedidos"],
+        "📊 Indicadores": ["tmv_tma", "viagens"],
+        "⚙️ Cadastros": ["cadastros"],
+    },
+    "ressuprimento": {
+        "📁 Bases": ["bases"],
+        "📦 Estoque": ["estoque", "politica"],
+        "🛒 Marcação": ["sugestao", "diario"],
+        "📈 Acompanhamento": ["cestas", "metas"],
+    },
+    "vendas": {
+        "🛍️ Comercial": ["comercial"],
+        "🎯 Metas & ABC": ["metas", "abc"],
+        "📥 Importar": ["importar"],
+    },
+    "armazem": {
+        "🏥 Saúde & Estoque": ["saude", "produtos"],
+        "📘 Book DPO": ["fundamentos", "manter", "melhorar"],
+        "🏗️ Estrutura & Pátio": ["estrutura", "patio"],
+    },
+    "financeiro": {
+        "💳 Contas": ["diario", "contas", "vencimentos"],
+        "📊 Caixa & Saúde": ["fluxo", "analise"],
+        "📒 OBZ": ["painel", "lancamentos"],
+    },
+}
+
 # --- Operações (filiais) criadas no primeiro acesso ----------------------
 OPERACOES_PADRAO = [
     ("Lima Rio Verde", "12.345.678/0001-90", "Rio Verde", "GO"),
@@ -153,6 +185,8 @@ ETAPAS_VIAGEM = [
     ("fim", "Finalizar viagem", "ts_fim", "✅", "Viagem finalizada"),
 ]
 TOLERANCIA_APRESENTACAO_MIN = 0   # minutos de tolerância após o horário agendado
+# endereço publicado do sistema (usado se APP_URL não estiver nos Secrets)
+APP_URL_PADRAO = "https://ecossistema-logistico-brlwuspuzz9lxealyzculu.streamlit.app"
 RAIO_REVENDA_PADRAO_M = 300       # raio (m) da revenda para validar chegada/saída por GPS
 DESFAZER_ETAPA_MIN = 15           # motorista pode desfazer a última etapa até X minutos depois
 

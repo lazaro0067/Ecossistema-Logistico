@@ -19,14 +19,15 @@ def _arvore_permissoes(chave: str, atuais: list[str]) -> list[str]:
             tem_inteira = mod in atuais
             abas_atuais = [a for a in info["abas"] if f"{mod}.{a}" in atuais]
             inteira = st.checkbox(f"{info['icone']} **{info['rotulo']}** — pasta inteira",
-                                  value=tem_inteira, key=f"{chave}_p_{mod}")
+                                  value=tem_inteira, key=f"{chave}_p_{mod}",
+                                  help="Acesso a todas as abas, inclusive as que forem criadas no futuro.")
+            abas_marcadas = [aba for aba, rotulo in info["abas"].items()
+                             if st.checkbox(f"↳ {rotulo}", value=aba in abas_atuais or tem_inteira,
+                                            key=f"{chave}_p_{mod}_{aba}")]
             if inteira:
                 escolhidas.append(mod)
-                st.caption("Acesso a todas as abas, inclusive as que forem criadas no futuro.")
             else:
-                for aba, rotulo in info["abas"].items():
-                    if st.checkbox(rotulo, value=aba in abas_atuais, key=f"{chave}_p_{mod}_{aba}"):
-                        escolhidas.append(f"{mod}.{aba}")
+                escolhidas += [f"{mod}.{aba}" for aba in abas_marcadas]
     return escolhidas
 
 
@@ -34,42 +35,43 @@ def _form_usuario(existente: dict | None, operacoes: list[dict]) -> None:
     u = existente or {}
     chave = f"u{u.get('id', 'novo')}_{st.session_state.get('_adm_ver', 0)}"
 
-    st.markdown("**Dados de acesso** — o e-mail é o login")
-    c1, c2, c3 = st.columns(3)
-    email = c1.text_input("E-mail (login) *", value=u.get("email") or "", key=f"{chave}_email",
-                          placeholder="nome@grupolima.com.br")
-    nome = c2.text_input("Nome completo *", value=u.get("nome", ""), key=f"{chave}_nome")
-    smtp_ok = email_service.configurado()
-    rot_senha = ("Nova senha (vazio = manter)" if existente else
-                 "Senha inicial (vazio = gerar e enviar por e-mail)" if smtp_ok else "Senha inicial (vazio = gerar)")
-    senha = c3.text_input(rot_senha, type="password", key=f"{chave}_senha")
-    c5, c6 = st.columns([2, 1])
-    cargo = c5.text_input("Cargo", value=u.get("cargo") or "", key=f"{chave}_cargo")
-    perfil = c6.selectbox("Perfil", PERFIS, index=PERFIS.index(u.get("perfil", "Operacional")),
-                          key=f"{chave}_perfil",
-                          help="Master: acesso total e gestão de acessos. Gestor: define metas. "
-                               "Operacional: usa as pastas liberadas.")
-    c7, c8, c9, c10 = st.columns(4)
-    aprov = c7.checkbox("Aprova fretes", value=bool(u.get("e_aprovador")), key=f"{chave}_aprov")
-    alcada = c8.number_input("Alçada (R$)", min_value=0.0, value=float(u.get("alcada") or 0), step=1000.0,
-                             key=f"{chave}_alc", disabled=not aprov)
-    ativo = c9.checkbox("Usuário ativo", value=bool(u.get("ativo", 1)), key=f"{chave}_ativo")
-    trocar = c10.checkbox("Exigir troca de senha", value=bool(u.get("trocar_senha", 1)), key=f"{chave}_troca",
-                          help="No próximo login o usuário cria a própria senha.")
+    with st.form(f"{chave}_form", border=False):
+        st.markdown("**Dados de acesso** — o e-mail é o login")
+        c1, c2, c3 = st.columns(3)
+        email = c1.text_input("E-mail (login) *", value=u.get("email") or "", key=f"{chave}_email",
+                              placeholder="nome@grupolima.com.br")
+        nome = c2.text_input("Nome completo *", value=u.get("nome", ""), key=f"{chave}_nome")
+        smtp_ok = email_service.configurado()
+        rot_senha = ("Nova senha (vazio = manter)" if existente else
+                     "Senha inicial (vazio = gerar e enviar por e-mail)" if smtp_ok else "Senha inicial (vazio = gerar)")
+        senha = c3.text_input(rot_senha, type="password", key=f"{chave}_senha")
+        c5, c6 = st.columns([2, 1])
+        cargo = c5.text_input("Cargo", value=u.get("cargo") or "", key=f"{chave}_cargo")
+        perfil = c6.selectbox("Perfil", PERFIS, index=PERFIS.index(u.get("perfil", "Operacional")),
+                              key=f"{chave}_perfil",
+                              help="Master: acesso total e gestão de acessos. Gestor: define metas. "
+                                   "Operacional: usa as pastas liberadas.")
+        c7, c8, c9, c10 = st.columns(4)
+        aprov = c7.checkbox("Aprova fretes", value=bool(u.get("e_aprovador")), key=f"{chave}_aprov")
+        alcada = c8.number_input("Alçada (R$)", min_value=0.0, value=float(u.get("alcada") or 0), step=1000.0,
+                                 key=f"{chave}_alc", help="Só vale se “Aprova fretes” estiver marcado.")
+        ativo = c9.checkbox("Usuário ativo", value=bool(u.get("ativo", 1)), key=f"{chave}_ativo")
+        trocar = c10.checkbox("Exigir troca de senha", value=bool(u.get("trocar_senha", 1)), key=f"{chave}_troca",
+                              help="No próximo login o usuário cria a própria senha.")
 
-    nomes_op = {o["id"]: o["nome"] for o in operacoes}
-    ops = st.multiselect("🏢 Operações que pode acessar (vazio = todas)", list(nomes_op),
-                         default=[o for o in u.get("operacoes", []) if o in nomes_op],
-                         format_func=nomes_op.get, key=f"{chave}_ops")
+        nomes_op = {o["id"]: o["nome"] for o in operacoes}
+        ops = st.multiselect("🏢 Operações que pode acessar (vazio = todas)", list(nomes_op),
+                             default=[o for o in u.get("operacoes", []) if o in nomes_op],
+                             format_func=nomes_op.get, key=f"{chave}_ops")
 
-    st.markdown("**📁 Permissões por pasta**")
-    if perfil == PERFIL_MASTER:
-        st.info("Perfil Master acessa todas as pastas e a Gestão de Acessos.")
-        permissoes = []
-    else:
+        st.markdown("**📁 Permissões por pasta** — marque a pasta inteira ou só as telas (↳). "
+                    "Nada é gravado até clicar em **Salvar**.")
         permissoes = _arvore_permissoes(chave, u.get("modulos", []))
-
-    if st.button("💾 Salvar usuário", type="primary", key=f"{chave}_salvar"):
+        st.caption("Perfil Master acessa todas as pastas, independentemente das marcações.")
+        salvar = st.form_submit_button("💾 Salvar usuário", type="primary")
+    if salvar:
+        if perfil == PERFIL_MASTER:
+            permissoes = []
         try:
             res = usuarios_service.salvar_usuario(
                 id=u.get("id"), nome=nome, senha=senha, email=email, cargo=cargo, perfil=perfil,
