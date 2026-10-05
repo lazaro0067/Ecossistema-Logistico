@@ -91,18 +91,21 @@ div[class*="st-key-nav_mod_"] [data-testid="stElementContainer"]:first-child [da
     min-height:2.6rem; padding:0 1.1rem; }}
 
 /* cards clicáveis: o botão invisível cobre o card inteiro */
-div[class*="st-key-kpic_"] {{ position:relative; gap:0 !important; height:100%; }}
-div[class*="st-key-kpic_"] [data-testid="stElementContainer"]:has(.eco-kpi),
+div[class*="st-key-kpic_"] {{ position:relative !important; gap:0 !important; height:100%; cursor:pointer; }}
 div[class*="st-key-kpic_"] [data-testid="stMarkdown"],
 div[class*="st-key-kpic_"] [data-testid="stMarkdownContainer"] {{ height:100%; }}
 div[class*="st-key-kpic_"] .eco-kpi {{ height:100%; margin:0; transition: transform .12s ease, box-shadow .12s ease; }}
 div[class*="st-key-kpic_"]:hover .eco-kpi {{ transform: translateY(-2px); border-color: var(--cor);
     box-shadow: 0 12px 24px -14px rgba(11,31,58,.45); }}
-div[class*="st-key-kpic_"] [data-testid="stElementContainer"]:has(.stButton) {{ position:absolute; inset:0; z-index:3; margin:0; }}
-div[class*="st-key-kpic_"] .stButton, div[class*="st-key-kpic_"] .stButton button {{ width:100%; height:100%; }}
-div[class*="st-key-kpic_"] .stButton button {{ opacity:0; cursor:pointer; }}
-.eco-kpi .ver {{ font-size:.72rem; font-weight:700; color:{TINTA_3}; margin-top:.4rem; letter-spacing:.01em; }}
-div[class*="st-key-kpic_"]:hover .eco-kpi .ver {{ color: var(--cor); }}
+div[class*="st-key-kpic_"]:active .eco-kpi {{ transform: translateY(0); }}
+/* o botão do card (classe st-key-kpib_...) fica invisível por cima do card inteiro */
+div[class*="st-key-kpib_"],
+div[class*="st-key-kpic_"] [data-testid="stElementContainer"]:has(.stButton) {{
+    position:absolute !important; inset:0 !important; z-index:3; margin:0 !important; width:100% !important;
+    height:100% !important; }}
+div[class*="st-key-kpib_"] > div, div[class*="st-key-kpib_"] .stButton,
+div[class*="st-key-kpib_"] button {{ width:100% !important; height:100% !important; }}
+div[class*="st-key-kpib_"] button {{ opacity:0 !important; cursor:pointer; border:none; }}
 .eco-kpis-row {{ margin:.3rem 0 1rem; }}
 .eco-selo {{ display:inline-flex; align-items:center; gap:.3rem; padding:.12rem .5rem; border-radius:999px;
     font-size:.72rem; font-weight:700; margin-top:.35rem; }}
@@ -174,7 +177,7 @@ def _card_html(c: dict, clicavel: bool = False) -> str:
     status = c.get("status", "info")
     cor = STATUS.get(status, STATUS["neutro"])[0]
     selo_html = selo(status, c.get("selo")) if c.get("selo") or status not in ("info",) else ""
-    ver = f'<div class="ver">🔎 ver {_e(c.get("ver") or "detalhes")} ›</div>' if clicavel else ""
+    ver = ""
     return (f'<div class="eco-kpi" style="--cor:{cor}">'
             f'<div class="rot">{_e(c.get("icone", ""))} {_e(c["titulo"])}</div>'
             f'<div class="val">{_e(c["valor"])}</div>'
@@ -208,7 +211,7 @@ def kpis(cards: list[dict], key: str | None = None) -> None:
                     continue
                 with st.container(key=f"kpic_{base}_{i}"):
                     st.markdown(_card_html(c, clicavel=True), unsafe_allow_html=True)
-                    if st.button(f"Ver {c['titulo']}", key=f"kpib_{base}_{i}", help=f"Ver detalhes: {c['titulo']}"):
+                    if st.button(f"Abrir {c['titulo']}", key=f"kpib_{base}_{i}"):
                         clicado = c
     st.markdown('<div class="eco-kpis-row"></div>', unsafe_allow_html=True)
     if clicado is not None:

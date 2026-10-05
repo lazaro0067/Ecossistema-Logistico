@@ -175,7 +175,9 @@ def migrar_principal(c) -> None:
                   for r in _linhas(c, "SELECT * FROM pedidos_marcados") if op(r.get("operacao"))]
         _log("pedidos marcados", substituir("pedidos_marcados", "1 = 1", (), linhas, None))
 
-    if _tem_tabela(c, "gestao_ressuprimento_diario"):
+    # O ressuprimento diário do sistema antigo NÃO é migrado: os volumes foram gravados com a vírgula
+    # perdida (ex.: 878,5435 HL virou 8.785.435) e repetidos nas 3 filiais. Reimporte o relatório diário.
+    if False and _tem_tabela(c, "gestao_ressuprimento_diario"):
         _log("ressuprimento diário", upsert("ressuprimento_diario", [
             {"operacao_id": op(r.get("operacao")), "data": r.get("data_registro"), "cesta": r.get("cesta"),
              "volume_sellin_hl": r.get("volume_sellin_hl"), "volume_real_hl": r.get("volume_real_hl"),

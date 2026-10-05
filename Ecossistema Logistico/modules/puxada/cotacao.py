@@ -37,6 +37,12 @@ def render(usuario: dict, operacao_id: int) -> None:
     _kpis(operacao_id)
     if ui.somente_leitura(operacao_id):
         return
+    from services import cadastros_service
+
+    try:
+        cadastros_service.garantir_od_padrao(operacao_id)  # fábricas = origens, revenda = destino
+    except Exception:
+        pass
     trechos = cadastros_repo.listar_trechos_df(operacao_id)
     transps = cadastros_repo.listar_transportadoras()
     ccs = cadastros_repo.listar_centros_custo()
@@ -52,7 +58,8 @@ def render(usuario: dict, operacao_id: int) -> None:
         origens = cadastros_repo.listar_od(operacao_id, "origem")
         destinos = cadastros_repo.listar_od(operacao_id, "destino")
         if not origens or not destinos or not transps:
-            st.warning("Cadastre origens, destinos e transportadoras em **⚙️ Cadastros** antes de cotar.")
+            st.warning("Cadastre as **fábricas** (viram origens automaticamente) em **⚙️ Cadastros › 🏭 Fábricas** "
+                       "antes de cotar. A revenda já entra como destino.")
             return
         c1, c2 = st.columns(2)
         o = ui.select_registro("Origem", origens, container=c1, key="cot_o")

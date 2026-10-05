@@ -573,6 +573,9 @@ MIGRACOES: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS ix_notif_usuario ON notificacoes(usuario_id, lida_em);
         CREATE INDEX IF NOT EXISTS ix_notif_chave ON notificacoes(usuario_id, chave, criado_em);
     """),
+    # Remove o ressuprimento diário trazido do sistema antigo (volumes sem a vírgula e iguais nas 3 filiais).
+    # Esses registros têm a data de atualização no formato antigo DD/MM/AAAA. Basta reimportar o relatório.
+    ("015_limpa_ressup_antigo", "DELETE FROM ressuprimento_diario WHERE dt_atualizacao LIKE '__/__/____%';"),
 ]
 
 

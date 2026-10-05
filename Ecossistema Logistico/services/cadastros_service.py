@@ -60,6 +60,36 @@ def excluir_centro_custo(cid):
 
 
 # --- Origens/Destinos e Trechos ------------------------------------------
+def garantir_od_padrao(operacao_id: int) -> int:
+    """Para cotar frete sem cadastro duplicado: as fábricas viram ORIGENS e a própria revenda vira DESTINO
+    (só cria o que ainda não existe). Sem nenhuma transportadora, cria "FROTA PRÓPRIA". Devolve quantos criou."""
+    import unicodedata
+
+    from repositories import logistica_repo, operacoes_repo
+
+    if not operacao_id or operacoes_repo.e_consolidada(operacao_id):
+        return 0
+
+    def n(t):
+        return unicodedata.normalize("NFKD", str(t or "")).encode("ascii", "ignore").decode().lower().strip()
+
+    existentes = {n(o["nome"]) for o in cadastros_repo.listar_od(operacao_id)}
+    criados = 0
+    for f in logistica_repo.fabricas_df().to_dict("records"):
+        if n(f["nome"]) not in existentes:
+            cadastros_repo.inserir_od(operacao_id, f["nome"], f.get("cidade") or "", f.get("uf") or "", "Apenas Origem")
+            existentes.add(n(f["nome"]))
+            criados += 1
+    op = operacoes_repo.buscar(operacao_id)
+    if op and n(op["nome"]) not in existentes:
+        cadastros_repo.inserir_od(operacao_id, op["nome"], op.get("cidade") or "", op.get("uf") or "", "Apenas Destino")
+        criados += 1
+    if not cadastros_repo.listar_transportadoras():
+        cadastros_repo.inserir_transportadora("FROTA PRÓPRIA", "", "")
+        criados += 1
+    return criados
+
+
 def criar_od(operacao_id, nome, cidade, uf, tipo):
     if tipo not in TIPOS_OD:
         raise RegraNegocioError("Tipo inválido.")

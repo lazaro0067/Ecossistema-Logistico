@@ -472,10 +472,18 @@ def _login_motorista(acesso: str) -> str:
     return digitos
 
 
-def salvar_acesso_motorista(motorista_id: int, acesso: str) -> dict:
-    """Cria (ou atualiza o login de) o acesso do motorista. Devolve {"login", "senha"} (senha só se nova)."""
+def salvar_acesso_motorista(motorista_id: int, acesso: str, senha: str | None = None,
+                            confirmacao: str | None = None) -> dict:
+    """Cria (ou atualiza o login de) o acesso do motorista.
+    Com `senha`, o motorista já entra com ela (CPF + senha). Sem senha, gera uma provisória e ele troca no 1º acesso.
+    Devolve {"login", "senha"} — "senha" só quando foi gerada uma provisória."""
     from core.auth import hash_senha
-    from services.usuarios_service import gerar_senha_provisoria
+    from services.usuarios_service import _checar_senha, gerar_senha_provisoria
+
+    if senha:
+        _checar_senha(senha)
+        if confirmacao is not None and senha != confirmacao:
+            raise RegraNegocioError("A confirmação não confere com a senha.")
 
     mot = repo.motorista(motorista_id)
     if not mot:
@@ -490,13 +498,29 @@ def salvar_acesso_motorista(motorista_id: int, acesso: str) -> dict:
     if mot.get("usuario_id") and usuarios_repo.buscar(mot["usuario_id"]):
         atual = usuarios_repo.buscar(mot["usuario_id"])
         dados.update(id=atual["id"], trocar_senha=atual.get("trocar_senha") or 0, ativo=atual["ativo"])
-        usuarios_repo.salvar(dados, [], [mot["operacao_id"]])
+        if senha:
+            dados["trocar_senha"] = 0
+        usuarios_repo.salvar(dados, [], [mot["operacao_id"]], senha_hash=hash_senha(senha) if senha else None)
         return {"login": login, "senha": None}
-    senha = gerar_senha_provisoria()
-    dados["trocar_senha"] = 1
-    uid = usuarios_repo.salvar(dados, [], [mot["operacao_id"]], senha_hash=hash_senha(senha))
+    provisoria = None if senha else gerar_senha_provisoria()
+    dados["trocar_senha"] = 0 if senha else 1
+    uid = usuarios_repo.salvar(dados, [], [mot["operacao_id"]], senha_hash=hash_senha(senha or provisoria))
     repo.vincular_usuario(motorista_id, uid)
-    return {"login": login, "senha": senha}
+    return {"login": login, "senha": provisoria}
+
+
+def definir_senha_motorista(motorista_id: int, senha: str, confirmacao: str) -> None:
+    """A Puxada define a senha do motorista (ele entra direto com CPF + essa senha)."""
+    from core.auth import hash_senha
+    from services.usuarios_service import _checar_senha
+
+    mot = repo.motorista(motorista_id)
+    if not mot or not mot.get("usuario_id"):
+        raise RegraNegocioError("Este motorista ainda não tem acesso. Crie o acesso primeiro.")
+    _checar_senha(senha or "")
+    if senha != confirmacao:
+        raise RegraNegocioError("A confirmação não confere com a senha.")
+    usuarios_repo.trocar_senha(mot["usuario_id"], hash_senha(senha), exigir_troca=False)
 
 
 def nova_senha_motorista(motorista_id: int) -> str:
