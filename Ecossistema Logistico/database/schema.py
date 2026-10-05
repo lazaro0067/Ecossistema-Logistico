@@ -518,6 +518,15 @@ CREATE TABLE IF NOT EXISTS notificacoes (
     lida_em     TEXT
 );
 
+CREATE TABLE IF NOT EXISTS metas_centro_custo (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id     INTEGER NOT NULL REFERENCES operacoes(id),
+    centro_custo_id INTEGER NOT NULL REFERENCES centros_custo(id) ON DELETE CASCADE,
+    mes_ano         TEXT NOT NULL,
+    valor_meta      REAL DEFAULT 0,
+    UNIQUE (operacao_id, centro_custo_id, mes_ano)
+);
+
 CREATE TABLE IF NOT EXISTS disponibilidade_placas (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     operacao_id    INTEGER NOT NULL REFERENCES operacoes(id),

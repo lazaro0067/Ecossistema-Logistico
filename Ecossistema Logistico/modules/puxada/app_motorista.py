@@ -418,7 +418,7 @@ def _horas(a, b) -> float | None:
     return (db - da).total_seconds() / 3600 if da and db else None
 
 
-AREAS = ["🚛 Viagem", "💵 Remuneração", "👤 Meus dados"]
+AREAS = ["🚛 Viagem", "💵 Minhas variáveis", "🧾 Minhas viagens", "👤 Meus dados"]
 
 
 def _continuar(v: dict) -> bool:
@@ -454,35 +454,91 @@ def _area_viagem(usuario: dict, mot: dict) -> None:
         _nova_viagem(usuario, mot, geo)
 
 
-def _area_remuneracao(mot: dict) -> None:
-    from repositories import logistica_repo
+MESES_PT = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro",
+            "Novembro", "Dezembro"]
+
+
+def _anos(mot: dict) -> list[int]:
+    from database.connection import query_one
+
+    r = query_one("""SELECT MIN(a) AS a FROM (
+                       SELECT MIN(substr(ts_inicio, 1, 4)) AS a FROM viagens_carreteiro WHERE motorista_id = ?
+                       UNION ALL SELECT MIN(substr(data_puxada, 1, 4)) FROM vinculos_pedidos
+                       WHERE operacao_id = ? AND lower(trim(motorista)) = lower(trim(?))) x""",
+                  (mot["id"], mot["operacao_id"], mot["nome"]))
+    atual = tempo.hoje().year
+    primeiro = int(r["a"]) if r and r.get("a") and str(r["a"]).isdigit() else atual
+    return list(range(atual, min(primeiro, atual) - 1, -1))
+
+
+def _meses_do_ano(ano: int) -> list[int]:
+    hoje = tempo.hoje()
+    ultimo = hoje.month if ano == hoje.year else 12
+    return list(range(ultimo, 0, -1))  # mais recente primeiro
+
+
+def _area_variaveis(mot: dict) -> None:
     from services import motoristas_service
 
-    meses = sorted(set(logistica_repo.meses_vinculos(mot["operacao_id"])) | {tempo.mes_atual()}, reverse=True)
-    mes = st.selectbox("Mês", meses, format_func=ui.nome_mes, key="car_rem_mes")
-    r = motoristas_service.remuneracao(mot["operacao_id"], mes)
+    ano = st.selectbox("Ano", _anos(mot), key="car_var_ano")
     nome = mot["nome"].strip().lower()
-    linha = r["resumo"][r["resumo"]["motorista"].str.strip().str.lower() == nome] if not r["resumo"].empty else None
-    meu = linha.iloc[0].to_dict() if linha is not None and not linha.empty else {}
-    v = r["viagens"]
-    minhas = v[v["motorista"].fillna("").str.strip().str.lower() == nome] if not v.empty else v
-    fixo, variavel = float(meu.get("salario_fixo") or 0), float(meu.get("variavel") or 0)
-    st.markdown('<div class="car-viagem">' + "".join(
-        f'<div class="lin"><span>{a}</span><b>{b}</b></div>' for a, b in [
-            ("Viagens no mês", str(len(minhas))), ("Km rodados", ui.numero(meu.get("km") or 0)),
-            ("Variável (viagens)", ui.moeda(variavel)), ("Fixo", ui.moeda(fixo)),
-            ("Total previsto", f"<span style='color:#0ca30c'>{ui.moeda(fixo + variavel)}</span>")]) + "</div>",
-        unsafe_allow_html=True)
-    st.caption("Valores previstos pelas viagens lançadas — o fechamento oficial é feito pela Puxada/RH.")
-    if minhas.empty:
-        st.info("Nenhuma viagem neste mês.")
+    total_ano, linhas = 0.0, []
+    for m in _meses_do_ano(ano):
+        mes = f"{ano}-{m:02d}"
+        r = motoristas_service.remuneracao(mot["operacao_id"], mes)
+        res = r["resumo"]
+        meu = res[res["motorista"].str.strip().str.lower() == nome] if not res.empty else res
+        meu = meu.iloc[0].to_dict() if not meu.empty else {}
+        v = r["viagens"]
+        minhas = v[v["motorista"].fillna("").str.strip().str.lower() == nome] if not v.empty else v
+        variavel = float(meu.get("variavel") or 0)
+        total_ano += variavel
+        linhas.append((m, meu, minhas, variavel))
+    st.markdown(f'<div class="car-viagem"><div class="lin"><span>Variável em {ano}</span>'
+                f'<b style="color:#0ca30c">{ui.moeda(total_ano)}</b></div></div>', unsafe_allow_html=True)
+    st.caption("Toque no mês para abrir. Valores previstos pelas viagens lançadas — o fechamento oficial é da Puxada/RH.")
+    for m, meu, minhas, variavel in linhas:
+        fixo = float(meu.get("salario_fixo") or 0)
+        with st.expander(f"{MESES_PT[m - 1]} · {len(minhas)} viagem(ns) · variável {ui.moeda(variavel)}",
+                         expanded=False):
+            st.markdown('<div class="car-viagem">' + "".join(
+                f'<div class="lin"><span>{a}</span><b>{b}</b></div>' for a, b in [
+                    ("Viagens", str(len(minhas))), ("Km rodados", ui.numero(meu.get("km") or 0)),
+                    ("Variável", ui.moeda(variavel)), ("Fixo", ui.moeda(fixo)),
+                    ("Total previsto", f"<span style='color:#0ca30c'>{ui.moeda(fixo + variavel)}</span>")]) +
+                "</div>", unsafe_allow_html=True)
+            if not minhas.empty:
+                por_fab = minhas.groupby(minhas["fabrica"].fillna("—")).agg(
+                    viagens=("valor", "size"), valor=("valor", "sum")).reset_index()
+                for f in por_fab.to_dict("records"):
+                    st.markdown(f'<div class="car-nf">🏭 <b>{tema._e(f["fabrica"])}</b> · {f["viagens"]} viagem(ns) · '
+                                f'<b>{ui.moeda(f["valor"])}</b></div>', unsafe_allow_html=True)
+
+
+def _area_viagens(mot: dict) -> None:
+    ano = st.selectbox("Ano", _anos(mot), key="car_via_ano")
+    df = repo.viagens_df(mot["operacao_id"], f"{ano}-01-01", f"{ano}-12-31", motorista_id=mot["id"])
+    if df.empty:
+        st.info(f"Nenhuma viagem registrada no app em {ano}.")
         return
-    tema.secao("Minhas viagens do mês")
-    for r_ in minhas.sort_values("data_puxada", ascending=False).to_dict("records"):
-        d = dt.date.fromisoformat(str(r_["data_puxada"])[:10]) if r_.get("data_puxada") else None
-        st.markdown(f'<div class="car-nf">📦 <b>{d:%d/%m}</b> · {tema._e(r_.get("fabrica") or "")} · Pedido '
-                    f'{tema._e(r_.get("numero_pedido") or "")} · <b>{ui.moeda(r_.get("valor") or 0)}</b></div>'
-                    if d else "", unsafe_allow_html=True)
+    df["mes"] = df["ts_inicio"].str[5:7].astype(int)
+    st.caption("Toque no mês para ver as viagens.")
+    for m in _meses_do_ano(ano):
+        doms = df[df["mes"] == m]
+        if doms.empty:
+            continue
+        fin = doms[doms["status"] == repo.FINALIZADA]
+        tmvs = [h for h in (_horas(a, b) for a, b in zip(fin["ts_inicio"], fin["ts_fim"])) if h is not None]
+        tmv = svc.formatar_duracao(sum(tmvs) / len(tmvs)) if tmvs else "—"
+        with st.expander(f"{MESES_PT[m - 1]} · {len(doms)} viagem(ns) · TMV médio {tmv}"):
+            for r in doms.to_dict("records"):
+                icone = {"Finalizada": "✅", "Em viagem": "🚛"}.get(r["status"], "⛔")
+                tempo_v = svc.formatar_duracao(_horas(r["ts_inicio"], r["ts_fim"])) if r.get("ts_fim") else r["status"]
+                st.markdown(f'<div class="car-nf">{icone} <b>{_fmt(r["ts_inicio"])}</b> · Pedido '
+                            f'{tema._e(r["numero_pedido"])} · {tema._e(r.get("destino") or "")} · {tema._e(r["placa"])}'
+                            f'<br><span style="color:#6b6a65">TMV {tempo_v} · {int(r.get("qtd_nfs") or 0)} NF(s)'
+                            f'{" · descarga " + tema._e(r.get("desc_tipo")) if r.get("desc_tipo") else ""}</span></div>',
+                            unsafe_allow_html=True)
 
 
 def _area_dados(usuario: dict, mot: dict) -> None:
@@ -536,8 +592,10 @@ def render(usuario: dict) -> None:
     with st.container(key="nav_mod_motorista"):
         area = ui._escolha("car_area", AREAS, AREAS[0])
     if area == AREAS[1]:
-        _area_remuneracao(mot)
+        _area_variaveis(mot)
     elif area == AREAS[2]:
+        _area_viagens(mot)
+    elif area == AREAS[3]:
         _area_dados(usuario, mot)
     else:
         _area_viagem(usuario, mot)

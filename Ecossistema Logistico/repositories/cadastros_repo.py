@@ -105,3 +105,26 @@ def atualizar_centro_custo(cid: int, nome: str) -> None:
 def atualizar_od(od_id: int, nome: str, cidade: str, uf: str, tipo: str) -> None:
     execute("UPDATE origens_destinos SET nome = ?, cidade = ?, uf = ?, tipo = ? WHERE id = ?",
             (nome, cidade, uf.upper(), tipo, od_id))
+
+
+# --- Metas mensais por centro de custo ---------------------------------------------
+def metas_centro_custo_df(operacao_id: int, mes_ano: str) -> pd.DataFrame:
+    """Centros de custo com a meta do mês e o realizado (frete spot aprovado/finalizado do mês)."""
+    return query_df("""
+        SELECT cc.id, cc.nome,
+               COALESCE((SELECT m.valor_meta FROM metas_centro_custo m WHERE m.centro_custo_id = cc.id
+                         AND m.operacao_id = ? AND m.mes_ano = ?), 0) AS meta,
+               COALESCE((SELECT SUM(c.valor_negociado) FROM cotacoes_frete c WHERE c.centro_custo_id = cc.id
+                         AND c.operacao_id = ? AND substr(c.data_frete, 1, 7) = ?
+                         AND c.status IN ('Aprovado', 'Finalizado')), 0) AS realizado
+        FROM centros_custo cc ORDER BY cc.nome""", (operacao_id, mes_ano, operacao_id, mes_ano))
+
+
+def salvar_meta_centro_custo(operacao_id: int, cc_id: int, mes_ano: str, valor: float) -> None:
+    if query_one("SELECT id FROM metas_centro_custo WHERE operacao_id = ? AND centro_custo_id = ? AND mes_ano = ?",
+                 (operacao_id, cc_id, mes_ano)):
+        execute("UPDATE metas_centro_custo SET valor_meta = ? WHERE operacao_id = ? AND centro_custo_id = ? "
+                "AND mes_ano = ?", (valor, operacao_id, cc_id, mes_ano))
+    else:
+        execute("INSERT INTO metas_centro_custo (operacao_id, centro_custo_id, mes_ano, valor_meta) "
+                "VALUES (?, ?, ?, ?)", (operacao_id, cc_id, mes_ano, valor))

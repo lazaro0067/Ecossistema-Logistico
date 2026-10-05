@@ -146,15 +146,74 @@ def _od(operacao_id: int) -> None:
          excluir=svc.excluir_od)
 
 
-def _centros_custo() -> None:
+def _centros_custo(operacao_id: int) -> None:
     import pandas as pd
 
-    df = pd.DataFrame(cadastros_repo.listar_centros_custo())
-    tela(chave="cc", titulo="Centros de custo", icone="🏷️", df=df, por_linha=1,
-         campos=[Campo("nome", "Nome do centro de custo", obrigatorio=True)],
-         salvar=lambda cid, d: (svc.atualizar_centro_custo(cid, d["nome"]) if cid
-                                else svc.criar_centro_custo(d["nome"])),
-         excluir=svc.excluir_centro_custo)
+    from core import tema
+    from modules.componentes.autosave import editor_autosave
+
+    mes_atual = ui.mes_atual()
+
+    def salvar(cid, d):
+        if cid:
+            svc.atualizar_centro_custo(cid, d["nome"])
+        else:
+            svc.criar_centro_custo(d["nome"])
+            cid = next(c["id"] for c in cadastros_repo.listar_centros_custo() if c["nome"] == d["nome"].strip())
+        if d.get("meta") is not None:
+            cadastros_repo.salvar_meta_centro_custo(operacao_id, int(cid), mes_atual, float(d["meta"] or 0))
+
+    df = cadastros_repo.metas_centro_custo_df(operacao_id, mes_atual)
+    tela(chave="cc", titulo="Centros de custo", icone="🏷️", df=df, por_linha=2,
+         descricao=f"A coluna Meta é a de {ui.nome_mes(mes_atual)}. Os outros meses ficam em 🎯 Metas por mês, abaixo.",
+         campos=[Campo("nome", "Nome do centro de custo", obrigatorio=True),
+                 Campo("meta", f"Meta de {ui.nome_mes(mes_atual)} (R$)", "moeda", passo=500),
+                 Campo("realizado", "Realizado no mês (R$)", "moeda", no_form=False)],
+         salvar=salvar, excluir=svc.excluir_centro_custo)
+
+    tema.secao("🎯 Metas por mês", "Meta de gasto de frete spot por centro de custo. Realizado = fretes aprovados e "
+               "finalizados do mês com esse centro de custo. Edite a meta direto na tabela — salva sozinho.")
+    meses = sorted({mes_atual} | {f"{int(mes_atual[:4]) + (int(mes_atual[5:]) + i - 1) // 12}-"
+                                  f"{(int(mes_atual[5:]) + i - 1) % 12 + 1:02d}" for i in range(-6, 7)}, reverse=True)
+    c1, c2 = st.columns([1, 2])
+    mes = c1.selectbox("Mês", meses, index=meses.index(mes_atual), format_func=ui.nome_mes, key="cc_meta_mes")
+    tab = cadastros_repo.metas_centro_custo_df(operacao_id, mes)
+    if tab.empty:
+        st.info("Cadastre um centro de custo acima para lançar as metas.")
+        return
+    ano, m = int(mes[:4]), int(mes[5:])
+    anterior = f"{ano - 1}-12" if m == 1 else f"{ano}-{m - 1:02d}"
+    if c2.button(f"📋 Copiar as metas de {ui.nome_mes(anterior)}", key="cc_copiar"):
+        for r in cadastros_repo.metas_centro_custo_df(operacao_id, anterior).to_dict("records"):
+            if r["meta"]:
+                cadastros_repo.salvar_meta_centro_custo(operacao_id, int(r["id"]), mes, float(r["meta"]))
+        ui.avisar("Metas copiadas.")
+        st.rerun()
+    meta, real = float(tab["meta"].sum()), float(tab["realizado"].sum())
+    tab["ating"] = (tab["realizado"] / tab["meta"].where(tab["meta"] > 0) * 100).round(1)
+    tab["saldo"] = tab["meta"] - tab["realizado"]
+    acima = tab[tab["realizado"] > tab["meta"].where(tab["meta"] > 0)]
+    tema.kpis([
+        {"titulo": f"Meta de {ui.nome_mes(mes)}", "valor": ui.moeda(meta), "icone": "🎯", "status": "info"},
+        {"titulo": "Realizado", "valor": ui.moeda(real), "icone": "💸",
+         "status": tema.status_atingimento(real / meta * 100, invertido=True) if meta else "neutro",
+         "detalhe": f"{ui.pct(real / meta * 100)} da meta" if meta else "sem meta"},
+        {"titulo": "Saldo", "valor": ui.moeda(meta - real), "icone": "💰",
+         "status": ("bom" if meta >= real else "critico") if meta else "neutro"},
+        {"titulo": "Centros acima da meta", "valor": len(acima), "icone": "🔺",
+         "status": "critico" if len(acima) else "bom", "dados": acima[["nome", "meta", "realizado", "saldo"]]},
+    ], key=f"kp_cc_{mes}")
+
+    def alterar(linha, alt):
+        if "meta" in alt:
+            cadastros_repo.salvar_meta_centro_custo(operacao_id, int(linha["id"]), mes, float(alt["meta"] or 0))
+
+    editor_autosave(tab, f"ed_cc_meta_{operacao_id}_{mes}", ["meta"], alterar, column_config={
+        "id": None, "nome": "Centro de custo",
+        "meta": st.column_config.NumberColumn("Meta ✏️", format="R$ %.2f", min_value=0),
+        "realizado": st.column_config.NumberColumn("Realizado", format="R$ %.2f"),
+        "ating": st.column_config.ProgressColumn("Atingido", format="%.0f%%", min_value=0, max_value=120),
+        "saldo": st.column_config.NumberColumn("Saldo", format="R$ %.2f")})
 
 
 def render(usuario: dict, operacao_id: int) -> None:
@@ -181,4 +240,4 @@ def render(usuario: dict, operacao_id: int) -> None:
     elif chave == "od":
         _od(operacao_id)
     else:
-        _centros_custo()
+        _centros_custo(operacao_id)
