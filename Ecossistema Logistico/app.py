@@ -280,10 +280,15 @@ def _alertas(usuario: dict) -> None:
 def main() -> None:
     tema.aplicar()
     try:
-        _preparar_banco(_destino_banco())
-        if not st.session_state.get("_banco_ok"):
-            init_db()  # garante as tabelas uma vez por sessão (barato e idempotente)
-            st.session_state["_banco_ok"] = True
+        from database.schema import MIGRACOES
+
+        # a última migração entra na chave: depois de um deploy com tabela/coluna nova, o banco é
+        # atualizado na hora — mesmo com o app e a sessão já abertos
+        versao = MIGRACOES[-1][0]
+        _preparar_banco(f"{_destino_banco()}|{versao}")
+        if st.session_state.get("_banco_ok") != versao:
+            init_db()  # garante as tabelas uma vez por sessão e por versão (barato e idempotente)
+            st.session_state["_banco_ok"] = versao
     except Exception as e:
         st.error(f"Não foi possível conectar ao banco de dados: {e}")
         st.stop()
