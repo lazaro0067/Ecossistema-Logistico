@@ -236,6 +236,41 @@ def kpis(cards: list[dict], key: str | None = None) -> None:
             detalhe(clicado["titulo"], clicado["dados"], clicado.get("colunas"))
 
 
+_NOMES = {"data": "Data", "hora": "Hora", "placa": "Placa", "slot": "Doca", "tipo_carga": "Produto",
+          "status": "Status", "observacao": "Observação", "criado_por": "Criado por", "motorista": "Motorista",
+          "pedido_app": "Pedido", "numero_pedido": "Pedido", "fabrica": "Fábrica", "nome": "Nome", "valor": "Valor",
+          "descricao": "Descrição", "cod": "Código", "data_puxada": "Data", "notas_fiscais": "NFs", "meta": "Meta",
+          "realizado": "Realizado", "saldo": "Saldo", "operacao": "Filial", "mes_ano": "Mês", "categoria": "Categoria"}
+
+
+def _legivel(df, colunas: dict | None):
+    """Detalhamento fácil de ler: sem colunas técnicas (id), nomes em português, datas DD/MM/AAAA e sem 'None'."""
+    import re
+
+    import pandas as pd
+
+    colunas = dict(colunas or {})
+    df = df.copy()
+    tecnicas = [c for c in df.columns if (c == "id" or str(c).endswith("_id")) and c not in colunas]
+    df = df.drop(columns=tecnicas)
+    for c in df.columns:
+        if pd.api.types.is_object_dtype(df[c]) or pd.api.types.is_string_dtype(df[c]):
+            serie = df[c]
+            amostra = serie.dropna().astype(str)
+            if len(amostra) and amostra.str.fullmatch(r"\d{4}-\d{2}-\d{2}").all():
+                df[c] = pd.to_datetime(serie, errors="coerce").dt.strftime("%d/%m/%Y")
+            elif len(amostra) and amostra.str.fullmatch(r"\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?").all():
+                df[c] = pd.to_datetime(serie, errors="coerce").dt.strftime("%d/%m/%Y %H:%M")
+            df[c] = df[c].where(df[c].notna(), "")
+            df[c] = df[c].map(lambda v: "" if v is None or str(v) in ("None", "nan", "NaT") else v)
+    novos = {}
+    for c in df.columns:
+        if c in colunas or not isinstance(c, str) or not re.fullmatch(r"[a-z0-9_]+", c):
+            continue
+        novos[c] = _NOMES.get(c) or c.replace("_", " ").capitalize()
+    return df.rename(columns=novos), colunas
+
+
 @st.dialog("🔎 Detalhamento", width="large")
 def _dialogo_detalhe(titulo: str, df, colunas: dict | None) -> None:
     from core.ui import LARGURA
@@ -245,6 +280,7 @@ def _dialogo_detalhe(titulo: str, df, colunas: dict | None) -> None:
         st.info("Nenhum registro.")
         return
     st.caption(f"{len(df)} registro(s)")
+    df, colunas = _legivel(df, colunas)
     st.dataframe(df, hide_index=True, column_config=colunas, **LARGURA)
     csv = df.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig")
     nome = "".join(ch if ch.isalnum() else "_" for ch in str(titulo).lower())[:40] or "detalhe"

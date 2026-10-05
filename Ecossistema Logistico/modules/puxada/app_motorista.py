@@ -41,6 +41,12 @@ _CSS = f"""
 .car-passo .nm {{ flex: 1; }}
 .car-passo .hr {{ color: #52514e; font-size: .88rem; font-variant-numeric: tabular-nums; }}
 .car-passo.pend .nm {{ color: #898781; }}
+.car-jans {{ display:grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap:.45rem; margin:.3rem 0 .7rem; }}
+.car-jan {{ border-radius:12px; padding:.5rem .6rem; border:1.5px solid; display:flex; flex-direction:column; gap:.1rem; }}
+.car-jan b {{ font-size:1rem; }} .car-jan span {{ font-size:.82rem; font-weight:700; }} .car-jan i {{ font-size:.72rem; font-style:normal; opacity:.8; }}
+.car-jan.ok {{ background:#ecfdf3; border-color:#34c27a; color:#0f5132; }}
+.car-jan.cheia {{ background:#fdecec; border-color:#e5484d; color:#8a1c1f; }}
+.car-jan.fim {{ background:#f2f2f0; border-color:#d0cfc8; color:#77766f; }}
 .car-nf {{ background: #f7f7f5; border-radius: 12px; padding: .55rem .8rem; margin: .3rem 0; font-size: .92rem; }}
 .st-key-car_verde button {{ background: {VERDE} !important; border-color: {VERDE} !important; min-height: 3.6rem;
     border-radius: 14px !important; box-shadow: 0 8px 18px -8px rgba(12,163,12,.7); }}
@@ -320,6 +326,12 @@ def _viagem(usuario: dict, v: dict, geo: dict | None) -> None:
     prox = svc.proxima_etapa(v)
     if prox is None:
         return
+    _etapa_atual(usuario, v, geo, prox)
+    st.markdown("<div style='height:.6rem'></div>", unsafe_allow_html=True)
+    _cancelar(usuario, v)
+
+
+def _etapa_atual(usuario: dict, v: dict, geo: dict | None, prox: str) -> None:
     e = svc.ETAPAS[prox]
     if prox == "carregado" or v.get("ts_carregado"):
         _notas(usuario, v, obrigatorio=prox == "carregado")
@@ -363,54 +375,116 @@ def _desfazer(usuario: dict, v: dict) -> None:
 
 
 # --- Agendamento da descarga (entre carregar e sair da cervejaria) ------------------
-def _campos_agenda(v: dict, chave: str):
+def _chips_janelas(js: list[dict]) -> None:
+    """Quadro das janelas do dia: verde = tem vaga, vermelho = lotada, cinza = já passou."""
+    itens = []
+    for j in js:
+        if j["passou"]:
+            cls, txt = "fim", "encerrada"
+        elif j["livres"] <= 0:
+            cls, txt = "cheia", "lotada"
+        else:
+            cls, txt = "ok", f"{j['livres']} de {j['slots']} vaga{'s' if int(j['slots']) > 1 else ''}"
+        prod = f"<i>{tema._e(j['produto'])}</i>" if j.get("produto") else ""
+        itens.append(f'<div class="car-jan {cls}"><b>{tema._e(j["rotulo"])}</b><span>{txt}</span>{prod}</div>')
+    st.markdown(f'<div class="car-jans">{"".join(itens)}</div>', unsafe_allow_html=True)
+
+
+def _form_agenda(usuario: dict, v: dict, chave: str, botao: str, sucesso: str, geo) -> None:
+    """Dia + produto + janela (com as vagas de agora). Sem janelas cadastradas: hora livre."""
     from config.settings import TIPOS_DESCARGA_APP
+    from services import janelas_service
 
     atual_data = dt.date.fromisoformat(v["desc_data"]) if v.get("desc_data") else tempo.hoje()
-    atual_hora = dt.datetime.strptime(v["desc_hora"], "%H:%M").time() if v.get("desc_hora") else None
+    atual_data = max(atual_data, tempo.hoje())
     c1, c2 = st.columns(2)
     data = c1.date_input("📅 Dia da chegada na revenda *", value=atual_data, format="DD/MM/YYYY",
                          min_value=tempo.hoje(), max_value=tempo.hoje() + dt.timedelta(days=15), key=f"{chave}_d")
-    hora = c2.time_input("🕒 Hora prevista *", value=atual_hora, step=dt.timedelta(minutes=30), key=f"{chave}_h")
-    produto = st.radio("📦 Produto *", TIPOS_DESCARGA_APP, horizontal=True, key=f"{chave}_p",
+    produto = c2.radio("📦 Produto *", TIPOS_DESCARGA_APP, horizontal=True, key=f"{chave}_p",
                        index=TIPOS_DESCARGA_APP.index(v["desc_tipo"]) if v.get("desc_tipo") in TIPOS_DESCARGA_APP
                        else None)
-    return data, hora, produto
+    hora = janela_id = None
+    pode = True
+    if janelas_service.tem_janelas(v["operacao_id"]):
+        if not produto:
+            st.caption("Escolha o produto para ver as janelas com vaga.")
+            pode = False
+        else:
+            js = janelas_service.janelas_do_dia(v["operacao_id"], data, produto, ignorar_viagem=v["id"])
+            if not js:
+                st.warning(f"A revenda não recebe {produto.lower()} em {data:%d/%m} ({janelas_service.DIAS[data.weekday()]}). "
+                           "Escolha outro dia.")
+                pode = False
+            else:
+                st.markdown(f"**🕒 Janelas de {data:%d/%m}** · vagas de agora ({tempo.agora():%H:%M})")
+                _chips_janelas(js)
+                livres = [j for j in js if j["livres"] > 0 and not j["passou"]]
+                if not livres:
+                    st.error("Todas as janelas deste dia estão lotadas. Escolha outro dia.")
+                    pode = False
+                else:
+                    ids = [j["id"] for j in livres]
+                    nomes = {j["id"]: f"{j['rotulo']}  ·  {j['livres']} vaga(s)" for j in livres}
+                    atual = v.get("desc_janela_id") if v.get("desc_data") == data.isoformat() else None
+                    janela_id = st.radio("Escolha a janela de chegada *", ids, format_func=nomes.get,
+                                         index=ids.index(atual) if atual in ids else None,
+                                         key=f"{chave}_j_{data}_{produto}")
+            if st.button("🔄 Atualizar vagas", key=f"{chave}_upd"):
+                st.rerun()
+    else:
+        atual_hora = dt.datetime.strptime(v["desc_hora"], "%H:%M").time() if v.get("desc_hora") else None
+        hora = st.time_input("🕒 Hora prevista *", value=atual_hora, step=dt.timedelta(minutes=30), key=f"{chave}_h")
+    with st.container(key="car_etapa" if botao.startswith("🗓️") else f"{chave}_salvar"):
+        ok = st.button(botao, key=f"{chave}_ok", type="primary", disabled=not pode, **ui.LARGURA)
+    if ok:
+        try:
+            nova = svc.agendar_descarga(usuario, v["id"], data, hora, produto, _gps(geo), janela_id=janela_id)
+        except RegraNegocioError as e:
+            st.error(str(e))
+        else:
+            ui.avisar(sucesso.format(data=f"{data:%d/%m}", hora=nova.get("desc_hora") or ""))
+            st.rerun()
 
 
 def _agendar(usuario: dict, v: dict, geo) -> None:
     tema.secao("🗓️ Agendar a descarga na revenda",
-               "Informe quando você chega e o tipo de produto. O armazém recebe a tarefa na hora.")
+               "Escolha o dia, o produto e a janela com vaga. O armazém recebe a tarefa na hora.")
     with st.container(key="car_form"):
-        with st.form(f"car_agenda_{v['id']}"):
-            data, hora, produto = _campos_agenda(v, f"car_ag_{v['id']}")
-            with st.container(key="car_etapa"):
-                ok = st.form_submit_button("🗓️  AGENDAR DESCARGA", type="primary", **ui.LARGURA)
-    if ok:
-        try:
-            svc.agendar_descarga(usuario, v["id"], data, hora, produto, _gps(geo))
-        except RegraNegocioError as e:
-            st.error(str(e))
-        else:
-            ui.avisar(f"Descarga agendada para {data:%d/%m} às {hora:%H:%M}. O armazém já foi avisado.")
-            st.rerun()
+        _form_agenda(usuario, v, f"car_ag_{v['id']}", "🗓️  AGENDAR DESCARGA",
+                     "Descarga agendada para {data} às {hora}. O armazém já foi avisado.", geo)
 
 
 def _agenda_resumo(usuario: dict, v: dict, geo) -> None:
+    from services import janelas_service
+    from repositories import logistica_repo
+
     d = dt.date.fromisoformat(v["desc_data"])
-    st.markdown(f'<div class="car-nf">🗓️ <b>Descarga agendada:</b> {d:%d/%m/%Y} às {v.get("desc_hora") or "--:--"} · '
+    jan = janelas_service.janela_de_agendamento(logistica_repo.janelas(v["operacao_id"], False), v["desc_data"],
+                                                v.get("desc_hora"), v.get("desc_janela_id"))
+    quando = f"janela {jan}" if jan else f"às {v.get('desc_hora') or '--:--'}"
+    st.markdown(f'<div class="car-nf">🗓️ <b>Descarga agendada:</b> {d:%d/%m/%Y} · {quando} · '
                 f'{tema._e(v.get("desc_tipo") or "")}</div>', unsafe_allow_html=True)
     with st.expander("✏️ Editar agendamento da descarga"):
-        with st.form(f"car_agenda_ed_{v['id']}"):
-            data, hora, produto = _campos_agenda(v, f"car_aged_{v['id']}")
-            if st.form_submit_button("💾 Salvar alteração", type="primary", **ui.LARGURA):
-                try:
-                    svc.agendar_descarga(usuario, v["id"], data, hora, produto, _gps(geo))
-                except RegraNegocioError as e:
-                    st.error(str(e))
-                else:
-                    ui.avisar("Agendamento alterado. O armazém foi avisado.")
-                    st.rerun()
+        _form_agenda(usuario, v, f"car_aged_{v['id']}", "💾 Salvar alteração",
+                     "Agendamento alterado para {data} às {hora}. O armazém foi avisado.", geo)
+
+
+def _cancelar(usuario: dict, v: dict) -> None:
+    """Cancelar o pedido em qualquer etapa — pede a justificativa."""
+    with st.popover("❌ Cancelar este pedido", **ui.LARGURA):
+        st.markdown(f"**Cancelar o pedido {tema._e(v['numero_pedido'])}?**")
+        st.caption("A Puxada e o armazém recebem o aviso com a sua justificativa, e a vaga da descarga é liberada.")
+        just = st.text_area("Justificativa *", key=f"car_cancel_txt_{v['id']}", max_chars=400,
+                            placeholder="Ex.: pedido cancelado pela cervejaria, carreta quebrou, ...")
+        if st.button("Confirmar cancelamento", key=f"car_cancel_ok_{v['id']}", type="primary", **ui.LARGURA):
+            try:
+                svc.cancelar_pelo_motorista(usuario, v["id"], just)
+            except RegraNegocioError as e:
+                st.error(str(e))
+            else:
+                st.session_state.pop(f"car_aberta_{v['id']}", None)
+                ui.avisar(f"Pedido {v['numero_pedido']} cancelado. A Puxada foi avisada.", "info")
+                st.rerun()
 
 
 def _horas(a, b) -> float | None:

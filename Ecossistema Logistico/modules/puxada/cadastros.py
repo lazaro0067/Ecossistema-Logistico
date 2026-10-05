@@ -25,6 +25,7 @@ PARTES = {
     "transp": "🏢 Transportadoras",
     "od": "📍 Origens/Destinos",
     "cc": "🏷️ Centros de custo",
+    "janelas": "🕒 Janelas de descarga",
 }
 
 
@@ -239,5 +240,9 @@ def render(usuario: dict, operacao_id: int) -> None:
         _transportadoras()
     elif chave == "od":
         _od(operacao_id)
+    elif chave == "janelas":
+        from modules.puxada import descarga
+
+        descarga.janelas_cadastro(operacao_id)
     else:
         _centros_custo(operacao_id)

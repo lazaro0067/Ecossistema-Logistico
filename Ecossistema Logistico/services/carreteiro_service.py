@@ -205,7 +205,7 @@ def desfazer_ultima(usuario: dict, viagem_id: int) -> str:
         if ultima == "apresentado":
             campos.update(apresentou_no_prazo=None, atraso_min=None)
         if ultima == "agendado":
-            campos.update(desc_data=None, desc_hora=None, desc_tipo=None)
+            campos.update(desc_data=None, desc_hora=None, desc_tipo=None, desc_janela_id=None)
         repo.atualizar(viagem_id, **campos)
     repo.apagar_evento(viagem_id, ultima)
     integrar(viagem_id)
@@ -368,7 +368,8 @@ def _sincronizar_descarga(v: dict) -> None:
     obs = _obs_descarga(v)
     agenda = {}  # dia/hora/produto que o motorista informou valem sobre a previsão
     if agendou:
-        agenda = {"data": v["desc_data"], "hora": v.get("desc_hora"), "tipo_carga": v.get("desc_tipo")}
+        agenda = {"data": v["desc_data"], "hora": v.get("desc_hora"), "tipo_carga": v.get("desc_tipo"),
+                  "janela_id": v.get("desc_janela_id")}
     if not ag:
         hoje = tempo.hoje()
         ag = repo.agendamento_livre_da_placa(v["operacao_id"], v["placa"], hoje.isoformat(),
@@ -385,7 +386,8 @@ def _sincronizar_descarga(v: dict) -> None:
             hora = _hora_meia(prev) if prev else None
         aid = logistica_repo.inserir_agendamento(v["operacao_id"], data, hora, v["placa"], "A definir",
                                                  v.get("desc_tipo"), obs, ORIGEM_APP)
-        logistica_repo.atualizar_agendamento(aid, viagem_id=v["id"], status=status)
+        logistica_repo.atualizar_agendamento(aid, viagem_id=v["id"], status=status,
+                                             janela_id=v.get("desc_janela_id") if agendou else None)
         return
     campos = {"status": status, "placa": v["placa"], **agenda}
     if ag.get("criado_por") == ORIGEM_APP:
@@ -394,7 +396,7 @@ def _sincronizar_descarga(v: dict) -> None:
 
 
 def agendar_descarga(usuario: dict, viagem_id: int, data: dt.date | None, hora: dt.time | None,
-                     produto: str | None, geo: dict | None = None) -> dict:
+                     produto: str | None, geo: dict | None = None, janela_id: int | None = None) -> dict:
     """Motorista agenda (ou altera) a descarga na revenda: dia, hora e produto.
     Vira na hora um agendamento na 🅿️ Descarga (tarefa do armazém) e avisa quem cuida do pátio."""
     from config.settings import TIPOS_DESCARGA_APP
@@ -410,12 +412,20 @@ def agendar_descarga(usuario: dict, viagem_id: int, data: dt.date | None, hora: 
         raise RegraNegocioError("O dia da chegada não pode ser no passado.")
     if data > tempo.hoje() + dt.timedelta(days=15):
         raise RegraNegocioError("Escolha um dia nos próximos 15 dias.")
-    if not hora:
-        raise RegraNegocioError("Escolha a hora prevista de chegada.")
     if produto not in TIPOS_DESCARGA_APP:
         raise RegraNegocioError("Escolha o produto: " + " ou ".join(TIPOS_DESCARGA_APP) + ".")
+    from services import janelas_service
+
+    if janelas_service.tem_janelas(v["operacao_id"]):
+        # a revenda trabalha com janelas: a vaga é conferida na hora de gravar (pode ter acabado de lotar)
+        j = janelas_service.validar_reserva(v["operacao_id"], data, janela_id, produto, ignorar_viagem=viagem_id)
+        hora_txt, janela_id = j["hora_inicio"], j["id"]
+    else:
+        if not hora:
+            raise RegraNegocioError("Escolha a hora prevista de chegada.")
+        hora_txt, janela_id = f"{hora:%H:%M}", None
     novo = not v.get("ts_agendado")
-    campos = {"desc_data": data.isoformat(), "desc_hora": f"{hora:%H:%M}", "desc_tipo": produto}
+    campos = {"desc_data": data.isoformat(), "desc_hora": hora_txt, "desc_tipo": produto, "desc_janela_id": janela_id}
     ts = agora_seg()
     if novo:
         if proxima_etapa(v) != "agendado":
@@ -529,6 +539,47 @@ def cancelar_viagem(viagem_id: int, motivo: str, usuario_nome: str) -> None:
     repo.atualizar(viagem_id, status=repo.CANCELADA,
                    observacao=f"Cancelada por {usuario_nome} em {tempo.agora_str()}: {motivo.strip()}")
     integrar(viagem_id)
+
+
+def cancelar_pelo_motorista(usuario: dict, viagem_id: int, justificativa: str) -> None:
+    """O motorista cancela o pedido em qualquer etapa — a justificativa é obrigatória.
+    A vaga da descarga é liberada e a Puxada/armazém recebem o aviso (🔔)."""
+    v = _viagem_do_usuario(usuario, viagem_id)
+    if v["status"] != repo.EM_VIAGEM:
+        raise RegraNegocioError("Esta viagem não está mais em andamento.")
+    just = re.sub(r"\s+", " ", (justificativa or "").strip())
+    if len(just) < 10:
+        raise RegraNegocioError("Escreva a justificativa do cancelamento (pelo menos 10 letras).")
+    etapa = ultima_etapa(v)
+    repo.atualizar(viagem_id, status=repo.CANCELADA,
+                   observacao=(f"Cancelada pelo motorista {v['motorista']} em {tempo.agora_str()} "
+                               f"(após “{ETAPAS[etapa]['nome'] if etapa else 'início'}”): {just}"))
+    repo.registrar_evento(viagem_id, "cancelado", agora_seg(), None)
+    integrar(viagem_id)
+    _avisar_cancelamento(v, just)
+
+
+def _avisar_cancelamento(v: dict, justificativa: str) -> None:
+    try:
+        from core.auth import pode_acessar_aba
+        from repositories import motoristas_repo
+
+        agora = tempo.agora().strftime("%Y-%m-%d %H:%M:%S")
+        titulo = f"Pedido {v['numero_pedido']} cancelado pelo motorista"
+        texto = f"{v['motorista']} · placa {v['placa']} · {v.get('destino') or ''}. Justificativa: {justificativa}"
+        for u in usuarios_repo.listar(apenas_ativos=True):
+            if u["perfil"] == PERFIL_MOTORISTA:
+                continue
+            sessao = usuarios_repo.carregar_sessao(u["id"])
+            if v["operacao_id"] not in (sessao.get("operacoes") or [v["operacao_id"]]):
+                continue
+            pagina = ("puxada" if pode_acessar_aba(sessao, "puxada", "carreteiro") else
+                      "armazem" if pode_acessar_aba(sessao, "armazem", "patio") else None)
+            if pagina:
+                motoristas_repo.criar_notificacao(u["id"], "cancelamento", f"cancel:{v['id']}", titulo, texto,
+                                                  pagina, agora)
+    except Exception:
+        pass
 
 
 def salvar_revenda(operacao_id: int, lat, lon, raio_m) -> None:

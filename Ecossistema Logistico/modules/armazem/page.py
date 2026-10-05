@@ -151,9 +151,7 @@ def aba_melhorar(usuario: dict, operacao_id: int) -> None:
 
 
 def aba_patio(usuario: dict, operacao_id: int) -> None:
-    c1, _ = st.columns([1, 3])
-    dia = c1.date_input("Dia", value=tempo.hoje(), format="DD/MM/YYYY", key="arm_patio_dia")
-    descarga.painel_dia(operacao_id, dia, editar=not ui.somente_leitura(operacao_id), key="arm")
+    descarga.tela_patio(usuario, operacao_id, "arm")
 
 
 # --- Capacidade & áreas -----------------------------------------------------

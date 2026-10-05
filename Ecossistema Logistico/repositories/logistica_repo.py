@@ -50,7 +50,8 @@ def salvar_motorista(operacao_id: int, mid: int | None, nome: str, cnh: str, tel
 
 
 def excluir(tabela: str, rid: int) -> None:
-    if tabela not in {"carretas", "fabricas", "motoristas", "agendamentos_descarga", "vinculos_pedidos"}:
+    if tabela not in {"carretas", "fabricas", "motoristas", "agendamentos_descarga", "vinculos_pedidos",
+                      "janelas_descarga"}:
         raise ValueError(tabela)
     execute(f"DELETE FROM {tabela} WHERE id = ?", (rid,))
 
@@ -60,7 +61,7 @@ def agendamentos_df(operacao_id: int, de: str | None = None, ate: str | None = N
     f_sql, ids = operacoes_repo.filtro("operacao_id", operacao_id)
     f_sql = f_sql.replace("operacao_id", "a.operacao_id", 1)
     sql, p = (f"""SELECT a.id, a.data, a.hora, a.placa, a.slot, a.tipo_carga, a.status, a.observacao, a.criado_por,
-                         a.viagem_id, m.nome AS motorista, v.numero_pedido AS pedido_app
+                         a.viagem_id, a.janela_id, m.nome AS motorista, v.numero_pedido AS pedido_app
                   FROM agendamentos_descarga a
                   LEFT JOIN viagens_carreteiro v ON v.id = a.viagem_id
                   LEFT JOIN motoristas m ON m.id = v.motorista_id
@@ -91,6 +92,34 @@ def atualizar_agendamento(aid: int, **campos) -> None:
     campos["dt_atualizacao"] = tempo.agora_str()
     execute(f"UPDATE agendamentos_descarga SET {', '.join(k + ' = ?' for k in campos)} WHERE id = ?",
             (*campos.values(), aid))
+
+
+def agendamentos_ativos_dia(operacao_id: int, data: str) -> list[dict]:
+    """Agendamentos que ocupam vaga no dia (cancelado e no-show liberam a vaga)."""
+    return query_all("""SELECT id, hora, janela_id, viagem_id, tipo_carga FROM agendamentos_descarga
+                        WHERE operacao_id = ? AND data = ? AND status NOT IN ('Cancelado', 'No-show')""",
+                     (operacao_id, data))
+
+
+# --- Janelas de descarga ------------------------------------------------------
+def janelas(operacao_id: int, apenas_ativas: bool = True) -> list[dict]:
+    sql = "SELECT * FROM janelas_descarga WHERE operacao_id = ?" + (" AND ativo = 1" if apenas_ativas else "")
+    return query_all(sql + " ORDER BY hora_inicio, hora_fim", (operacao_id,))
+
+
+def janelas_df(operacao_id: int) -> pd.DataFrame:
+    return query_df("SELECT * FROM janelas_descarga WHERE operacao_id = ? ORDER BY hora_inicio, hora_fim",
+                    (operacao_id,))
+
+
+def salvar_janela(operacao_id: int, jid: int | None, inicio: str, fim: str, slots: int, dias: str,
+                  produto: str | None, ativo: bool = True) -> None:
+    if jid:
+        execute("""UPDATE janelas_descarga SET hora_inicio = ?, hora_fim = ?, slots = ?, dias = ?, produto = ?,
+                   ativo = ? WHERE id = ?""", (inicio, fim, slots, dias, produto, 1 if ativo else 0, jid))
+    else:
+        execute("""INSERT INTO janelas_descarga (operacao_id, hora_inicio, hora_fim, slots, dias, produto, ativo)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""", (operacao_id, inicio, fim, slots, dias, produto, 1 if ativo else 0))
 
 
 # --- Vínculos de pedidos / viagens -------------------------------------------

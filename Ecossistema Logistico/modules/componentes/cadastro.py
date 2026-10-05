@@ -24,7 +24,7 @@ from services.erros import RegraNegocioError
 class Campo:
     chave: str
     rotulo: str
-    tipo: str = "texto"            # texto | numero | moeda | data | opcoes | senha | inteiro
+    tipo: str = "texto"            # texto | numero | moeda | data | opcoes | multi | senha | inteiro
     obrigatorio: bool = False
     opcoes: Any = None             # lista ou dict {valor: rótulo} (tipo "opcoes")
     ajuda: str | None = None
@@ -55,6 +55,8 @@ def _formatar(campo: Campo, v) -> str:
         return d.strftime("%d/%m/%Y") if d is not None and not pd.isna(d) else str(v)
     if campo.tipo == "opcoes":
         return str(_rotulo_opcao(campo, v))
+    if campo.tipo == "multi":
+        return ", ".join(str(_rotulo_opcao(campo, x)) for x in (v if isinstance(v, (list, tuple)) else [v]))
     return str(v)
 
 
@@ -96,6 +98,11 @@ def _widget(campo: Campo, valor, chave: str, container):
         return container.selectbox(rot, opcoes, index=opcoes.index(atual) if atual in opcoes else 0, key=chave,
                                    format_func=lambda x: ui.PLACEHOLDER if x is None else str(_rotulo_opcao(campo, x)),
                                    help=campo.ajuda)
+    if campo.tipo == "multi":
+        opcoes = list(campo.opcoes) if isinstance(campo.opcoes, dict) else list(campo.opcoes or [])
+        atual = valor if isinstance(valor, (list, tuple)) else (campo.padrao or [])
+        return container.multiselect(rot, opcoes, default=[x for x in atual if x in opcoes], key=chave,
+                                     format_func=lambda x: str(_rotulo_opcao(campo, x)), help=campo.ajuda)
     if campo.tipo == "senha":
         return container.text_input(rot, type="password", key=chave, help=campo.ajuda)
     v = "" if valor is None or (isinstance(valor, float) and pd.isna(valor)) else str(valor)
@@ -132,7 +139,7 @@ def _salvar_seguro(salvar, rid, dados) -> None:
 
 def _checar(campos: list[Campo], dados: dict) -> None:
     for c in campos:
-        if c.obrigatorio and c.no_form and dados.get(c.chave) in (None, ""):
+        if c.obrigatorio and c.no_form and (dados.get(c.chave) in (None, "") or dados.get(c.chave) == []):
             raise RegraNegocioError(f"Preencha: {c.rotulo}.")
 
 

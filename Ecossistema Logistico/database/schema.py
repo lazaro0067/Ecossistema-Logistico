@@ -336,6 +336,19 @@ CREATE TABLE IF NOT EXISTS agendamentos_descarga (
     dt_atualizacao TEXT
 );
 
+-- Janelas de descarga da revenda: em cada intervalo cabem N carretas (slots).
+-- dias = dias da semana em que a janela vale (0=seg … 6=dom, separados por vírgula).
+CREATE TABLE IF NOT EXISTS janelas_descarga (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id INTEGER NOT NULL REFERENCES operacoes(id),
+    hora_inicio TEXT NOT NULL,
+    hora_fim    TEXT NOT NULL,
+    slots       INTEGER NOT NULL DEFAULT 1,
+    dias        TEXT NOT NULL DEFAULT '0,1,2,3,4,5',
+    produto     TEXT,
+    ativo       INTEGER DEFAULT 1
+);
+
 CREATE TABLE IF NOT EXISTS vinculos_pedidos (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     operacao_id       INTEGER NOT NULL REFERENCES operacoes(id),
@@ -609,6 +622,12 @@ MIGRACOES: list[tuple[str, str]] = [
         ALTER TABLE viagens_carreteiro ADD COLUMN desc_hora TEXT;
         ALTER TABLE viagens_carreteiro ADD COLUMN desc_tipo TEXT;
         CREATE INDEX IF NOT EXISTS ix_disp_placa ON disponibilidade_placas(operacao_id, data);
+    """),
+    # Janelas de descarga com slots: o motorista escolhe a janela e a vaga é consumida
+    ("018_janelas_descarga", """
+        ALTER TABLE agendamentos_descarga ADD COLUMN janela_id INTEGER;
+        ALTER TABLE viagens_carreteiro ADD COLUMN desc_janela_id INTEGER;
+        CREATE INDEX IF NOT EXISTS ix_janela_op ON janelas_descarga(operacao_id);
     """),
 ]
 
