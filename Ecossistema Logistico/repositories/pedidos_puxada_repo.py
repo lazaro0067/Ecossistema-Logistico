@@ -54,12 +54,15 @@ def numero_existe(operacao_id: int, numero: str, ignorar_id: int | None) -> bool
     return bool(r)
 
 
-def salvar(operacao_id: int, pid: int | None, dados: dict, usuario: str) -> int:
+def salvar(operacao_id: int, pid: int | None, dados: dict, usuario: str, resumo: str | None = None,
+           reabrir: bool = False) -> int:
     agora = tempo.agora_str()
     valores = [dados.get(c) for c in CAMPOS]
     if pid:
-        execute(f"UPDATE pedidos_puxada SET {', '.join(c + ' = ?' for c in CAMPOS)}, atualizado_em = ? WHERE id = ?",
-                (*valores, agora, pid))
+        extra = ", status = 'Aberto', finalizado_por = NULL, finalizado_em = NULL" if reabrir else ""
+        execute(f"""UPDATE pedidos_puxada SET {', '.join(c + ' = ?' for c in CAMPOS)}, atualizado_em = ?,
+                    editado_por = ?, editado_em = ?, editado_resumo = ?{extra} WHERE id = ?""",
+                (*valores, agora, usuario, agora, resumo, pid))
         return pid
     return execute(f"""INSERT INTO pedidos_puxada (operacao_id, {', '.join(CAMPOS)}, status, criado_por, criado_em,
                        atualizado_em) VALUES (?, {', '.join('?' * len(CAMPOS))}, 'Aberto', ?, ?, ?)""",

@@ -64,11 +64,54 @@ def nome_mes(mes_ano: str) -> str:
 
 
 # --- Tabelas e botões ----------------------------------------------------
-def tabela(df: pd.DataFrame, vazio: str = "Nenhum registro encontrado.", **kwargs) -> None:
+def tabela(df: pd.DataFrame, vazio: str = "Nenhum registro encontrado.", baixar: bool | str = True,
+           **kwargs) -> None:
+    """Tabela de leitura + botão "⬇️ Baixar relatório" (Excel) logo abaixo. baixar=False desliga;
+    baixar="nome" dá nome ao arquivo."""
     if df is None or df.empty:
         st.info(vazio)
         return
     st.dataframe(df, hide_index=True, **LARGURA, **kwargs)
+    if baixar:
+        _baixar_tabela(df, baixar if isinstance(baixar, str) else "relatorio")
+
+
+def _assinatura(df: pd.DataFrame) -> str:
+    import hashlib
+
+    return hashlib.md5(f"{list(df.columns)}|{len(df)}".encode()).hexdigest()[:10]
+
+
+def _baixar_tabela(df: pd.DataFrame, nome: str) -> None:
+    import io
+
+    sig = _assinatura(df)
+    st.session_state["_tb_ultima"] = sig  # ui.downloads logo depois da mesma tabela não repete o botão
+    stamp = tempo.agora().strftime("%Y%m%d_%H%M")
+    try:
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine="openpyxl") as w:
+            df.to_excel(w, index=False, sheet_name="Dados")
+        dados, ext = buf.getvalue(), "xlsx"
+        mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    except Exception:
+        dados, ext, mime = df.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig"), "csv", "text/csv"
+    for n in range(50):  # a mesma tabela pode aparecer mais de uma vez na tela
+        try:
+            st.download_button("⬇️ Baixar relatório", dados, file_name=f"{nome}_{stamp}.{ext}", mime=mime,
+                               key=f"tbdl_{sig}_{n}", on_click="ignore")
+            return
+        except TypeError:  # Streamlit sem on_click="ignore"
+            try:
+                st.download_button("⬇️ Baixar relatório", dados, file_name=f"{nome}_{stamp}.{ext}", mime=mime,
+                                   key=f"tbdl_{sig}_{n}")
+                return
+            except Exception as e:
+                if "key" not in str(e).lower() and "duplicate" not in str(e).lower():
+                    return
+        except Exception as e:
+            if "key" not in str(e).lower() and "duplicate" not in str(e).lower():
+                return
 
 
 def botao(rotulo: str, key: str | None = None, **kwargs) -> bool:
@@ -207,6 +250,9 @@ def downloads(df: pd.DataFrame, nome: str, key: str | None = None) -> None:
     import io
 
     if df is None or df.empty:
+        return
+    if st.session_state.get("_tb_ultima") == _assinatura(df):
+        st.session_state["_tb_ultima"] = None  # a tabela logo acima já tem o botão de baixar
         return
     k = key or nome
     stamp = tempo.agora().strftime("%Y%m%d_%H%M")

@@ -53,3 +53,6 @@ def editor_autosave(df: pd.DataFrame, key: str, editaveis: list[str],
         column_config=column_config, **ui.LARGURA, **extra,
     )
     st.caption("💾 As alterações são salvas automaticamente.")
+    if not base.empty:
+        vis = base.drop(columns=[c for c, v in (column_config or {}).items() if v is None and c in base.columns])
+        ui._baixar_tabela(vis, "relatorio")

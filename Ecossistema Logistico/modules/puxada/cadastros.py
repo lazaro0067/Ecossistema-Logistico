@@ -8,7 +8,7 @@ Trechos separados em dois:
 """
 import streamlit as st
 
-from config.settings import TIPOS_OD
+from config.settings import SUGESTAO_PEDIDO, TIPOS_OD
 from core import ui
 from modules.componentes.cadastro import Campo, tela
 from repositories import cadastros_repo, logistica_repo, motoristas_repo, usuarios_repo
@@ -79,23 +79,26 @@ def _trechos_spot(operacao_id: int) -> None:
         if d["origem_id"] == d["destino_id"]:
             raise RegraNegocioError("Origem e destino não podem ser iguais.")
         atual = df[df["id"] == tid].iloc[0].to_dict() if tid else {}
-        if tid and (atual["origem_id"], atual["destino_id"]) != (d["origem_id"], d["destino_id"]):
-            svc.excluir_trecho(tid)
         svc.salvar_trecho(operacao_id, d["origem_id"], d["destino_id"], float(d["distancia_km"] or 0),
                           float(d["pedagio"] or 0), float(atual.get("valor_remunerado") or 0),
-                          float(d["valor_frete"] or 0), d.get("transportadora_id"), d.get("aprovador_id"))
+                          float(d["valor_frete"] or 0), d.get("transportadora_id"), d.get("aprovador_id"),
+                          d.get("tipo"), int(tid) if tid else None)
 
     tela(chave=f"ts_{operacao_id}", titulo="Trechos spot (frete contratado)", icone="🚚", df=df,
-         descricao="Trechos com transportadora — já trazem valor, pedágio e aprovador para o 📝 Solicitar Frete.",
-         campos=[Campo("origem_id", "Origem", "opcoes", True, origens),
+         descricao="Um valor por fábrica + transportadora + tipo de carga. No 📝 Solicitar Frete, escolher a fábrica, "
+                   "a transportadora e o tipo já traz o frete cadastrado.",
+         campos=[Campo("origem_id", "Origem (fábrica)", "opcoes", True, origens),
                  Campo("destino_id", "Destino", "opcoes", True, destinos),
                  Campo("transportadora_id", "Transportadora", "opcoes", False, transps),
+                 Campo("tipo", "Tipo de carga", "opcoes", True, {t: f"{'♻️' if t == 'Retornável' else '🥫'} {t}"
+                                                                for t in SUGESTAO_PEDIDO}),
                  Campo("valor_frete", "Valor do frete (R$)", "moeda", True, passo=100),
                  Campo("pedagio", "Pedágio (R$)", "moeda", passo=10),
                  Campo("distancia_km", "Distância (km)", "numero", passo=10),
                  Campo("aprovador_id", "Aprovador", "opcoes", False, aprovs)],
          salvar=salvar, excluir=svc.excluir_trecho,
-         rotulo_registro=lambda r: f"{r['origem']} ➔ {r['destino']} · {r.get('transportadora') or 'sem transportadora'}")
+         rotulo_registro=lambda r: f"{r['origem']} ➔ {r['destino']} · {r.get('transportadora') or 'sem transportadora'}"
+                                   f" · {r.get('tipo') or 'sem tipo'}")
 
 
 # --- Demais cadastros ------------------------------------------------------------------

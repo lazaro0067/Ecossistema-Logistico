@@ -17,19 +17,52 @@ def _agora() -> str:
     return tempo.agora_str()
 
 
-def valor_tabela(operacao_id: int, origem_id: int | None, destino_id: int | None) -> float | None:
-    """Valor de frete cadastrado no trecho (referência para a negociação)."""
+def trecho_cadastrado(operacao_id: int, origem_id: int | None, destino_id: int | None,
+                      transportadora_id: int | None = None, tipo: str | None = None) -> dict | None:
     if not origem_id or not destino_id:
         return None
-    t = cadastros_repo.buscar_trecho(operacao_id, origem_id, destino_id)
-    return float(t["valor_frete"]) if t else None
+    return cadastros_repo.buscar_trecho(operacao_id, origem_id, destino_id, transportadora_id, tipo)
+
+
+def valor_tabela(operacao_id: int, origem_id: int | None, destino_id: int | None,
+                 transportadora_id: int | None = None, tipo: str | None = None) -> float | None:
+    """Valor de frete cadastrado no trecho (fábrica + transportadora + tipo) — referência da negociação."""
+    t = trecho_cadastrado(operacao_id, origem_id, destino_id, transportadora_id, tipo)
+    return float(t["valor_frete"]) if t and t.get("valor_frete") else None
+
+
+def divergencia(negociado, tabela) -> tuple[float, float] | None:
+    """(diferença em R$, diferença em %) do negociado contra o cadastrado; None se não há cadastro."""
+    try:
+        neg, tab = float(negociado or 0), float(tabela or 0)
+    except (TypeError, ValueError):
+        return None
+    if tab <= 0:
+        return None
+    return neg - tab, (neg - tab) / tab * 100
+
+
+def texto_divergencia(negociado, tabela) -> str:
+    d = divergencia(negociado, tabela)
+    if d is None:
+        return "sem frete cadastrado"
+    rs, pct = d
+    if abs(rs) < 0.01:
+        return "igual ao cadastrado"
+    return f"{'🔺 MAIOR' if rs > 0 else '🔻 MENOR'} que o cadastrado em R$ {abs(rs):,.2f} ({abs(pct):.1f}%)".replace(
+        ",", "X").replace(".", ",").replace("X", ".")
 
 
 def criar_cotacao(*, operacao_id: int, solicitante_id: int, origem_id: int, destino_id: int,
                   transportadora_id: int, centro_custo_id: int | None, aprovador_id: int,
-                  data_frete: dt.date, motivo: str, valor_negociado: float, observacao: str) -> int:
+                  data_frete: dt.date, motivo: str, valor_negociado: float, observacao: str,
+                  tipo_carga: str | None = None) -> int:
+    from config.settings import SUGESTAO_PEDIDO
+
     if not all([origem_id, destino_id, transportadora_id, aprovador_id]):
         raise RegraNegocioError("Preencha origem, destino, transportadora e aprovador.")
+    if tipo_carga not in SUGESTAO_PEDIDO:
+        raise RegraNegocioError("Escolha se a carga é Retornável ou Descartável.")
     if origem_id == destino_id:
         raise RegraNegocioError("Origem e destino não podem ser iguais.")
     if valor_negociado <= 0:
@@ -49,7 +82,8 @@ def criar_cotacao(*, operacao_id: int, solicitante_id: int, origem_id: int, dest
         transportadora_id=transportadora_id, centro_custo_id=centro_custo_id,
         data_requisicao=tempo.hoje().isoformat(), data_frete=data_frete.isoformat(),
         motivo=motivo, valor_negociado=float(valor_negociado),
-        valor_tabela=valor_tabela(operacao_id, origem_id, destino_id),
+        valor_tabela=valor_tabela(operacao_id, origem_id, destino_id, transportadora_id, tipo_carga),
+        tipo_carga=tipo_carga,
         solicitante_id=solicitante_id, aprovador_id=aprovador_id,
         observacao=observacao.strip(), status=StatusFrete.PENDENTE,
     ))
@@ -66,10 +100,17 @@ def _pode_decidir(usuario: dict, cot: dict) -> None:
         raise RegraNegocioError("Valor acima da sua alçada de aprovação.")
 
 
-def aprovar(cotacao_id: int, usuario: dict) -> None:
+def aprovar(cotacao_id: int, usuario: dict, justificativa: str | None = None) -> None:
+    """Valor diferente do frete cadastrado só é aprovado com justificativa (fica no relatório)."""
     cot = fretes_repo.buscar(cotacao_id)
     _pode_decidir(usuario, cot)
-    fretes_repo.atualizar(cotacao_id, status=StatusFrete.APROVADO, decidido_em=_agora())
+    just = (justificativa or "").strip()
+    d = divergencia(cot["valor_negociado"], cot.get("valor_tabela"))
+    if d is not None and abs(d[0]) >= 0.01 and len(just) < 10:
+        raise RegraNegocioError(f"O valor está {texto_divergencia(cot['valor_negociado'], cot['valor_tabela'])}. "
+                                "Escreva a justificativa da aprovação (pelo menos 10 letras).")
+    fretes_repo.atualizar(cotacao_id, status=StatusFrete.APROVADO, decidido_em=_agora(),
+                          justificativa_aprovacao=(f"{just} — {usuario.get('nome') or ''}" if just else None))
 
 
 def rejeitar(cotacao_id: int, usuario: dict, motivo: str) -> None:

@@ -1,6 +1,7 @@
 """Acesso a dados: cadastro completo dos motoristas, valor da viagem por fábrica e notificações."""
 import pandas as pd
 
+from core import tempo
 from database.connection import execute, query_all, query_df, query_one
 from repositories import operacoes_repo
 
@@ -121,3 +122,46 @@ def km_por_fabrica(operacao_id: int) -> dict[int, float]:
 def atualizar_trecho_proprio(tid: int, fabrica_id: int, valor: float, km: float, tempo_h: float) -> None:
     execute("UPDATE remuneracao_fabrica SET fabrica_id = ?, valor_viagem = ?, km = ?, tempo_padrao_h = ? WHERE id = ?",
             (fabrica_id, valor, km, tempo_h, tid))
+
+
+# --- Disponibilidade: última viagem finalizada, viagem em andamento e férias -----------------
+def ultimas_viagens(operacao_id: int) -> dict[int, dict]:
+    """Por motorista: a viagem finalizada mais recente (base da interjornada)."""
+    linhas = query_all("""SELECT v.motorista_id, v.ts_fim, v.numero_pedido, v.placa, v.destino
+                          FROM viagens_carreteiro v
+                          WHERE v.operacao_id = ? AND v.ts_fim IS NOT NULL AND v.status <> 'Cancelada'
+                          ORDER BY v.ts_fim""", (operacao_id,))
+    return {r["motorista_id"]: r for r in linhas}  # a última sobrescreve
+
+
+def viagens_ativas(operacao_id: int) -> dict[int, dict]:
+    linhas = query_all("""SELECT motorista_id, id, numero_pedido, placa, destino, ts_inicio, desc_data, desc_hora
+                          FROM viagens_carreteiro WHERE operacao_id = ? AND status = 'Em viagem'""", (operacao_id,))
+    return {r["motorista_id"]: r for r in linhas}
+
+
+def ferias_df(operacao_id: int) -> pd.DataFrame:
+    return query_df("""SELECT f.id, f.motorista_id, m.nome AS motorista, f.inicio, f.fim, f.observacao, f.criado_por,
+                              f.criado_em
+                       FROM ferias_motoristas f JOIN motoristas m ON m.id = f.motorista_id
+                       WHERE f.operacao_id = ? ORDER BY f.inicio DESC""", (operacao_id,))
+
+
+def ferias_periodo(operacao_id: int, de: str, ate: str) -> list[dict]:
+    return query_all("""SELECT * FROM ferias_motoristas WHERE operacao_id = ? AND inicio <= ? AND fim >= ?""",
+                     (operacao_id, ate, de))
+
+
+def salvar_ferias(operacao_id: int, fid: int | None, motorista_id: int, inicio: str, fim: str, obs: str | None,
+                  usuario: str) -> None:
+    if fid:
+        execute("UPDATE ferias_motoristas SET motorista_id = ?, inicio = ?, fim = ?, observacao = ? WHERE id = ?",
+                (motorista_id, inicio, fim, obs, fid))
+    else:
+        execute("""INSERT INTO ferias_motoristas (operacao_id, motorista_id, inicio, fim, observacao, criado_por, criado_em)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""", (operacao_id, motorista_id, inicio, fim, obs, usuario,
+                                                     tempo.agora_str()))
+
+
+def excluir_ferias(fid: int) -> None:
+    execute("DELETE FROM ferias_motoristas WHERE id = ?", (fid,))

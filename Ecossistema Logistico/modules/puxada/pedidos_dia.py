@@ -36,6 +36,8 @@ _CSS = """
 .pp-emb div b { display:block; font-size:1rem; color:#0B1F3A; }
 .pp-emb div.zero b { color:#c3c2bc; }
 .pp-ag { display:flex; flex-direction:column; gap:.05rem; font-size:.78rem; color:#3d3c39; margin:.15rem 0 .3rem; }
+.pp-edit { background:#fff6d6; border:1px solid #f0c94d; border-radius:9px; padding:.35rem .5rem; margin:.35rem 0;
+    font-size:.76rem; color:#7a5300; } .pp-edit span { color:#5f4a12; }
 .pp-rod { font-size:.74rem; color:#77766f; margin-top:.4rem; }
 .pp-placas { display:flex; flex-wrap:wrap; gap:.4rem; margin:.3rem 0 .8rem; }
 .pp-placa { border:1.5px solid var(--c); border-radius:10px; padding:.3rem .6rem; font-size:.8rem; background:#fff; }
@@ -80,12 +82,17 @@ def _card(r: dict, com_filial: bool = False) -> str:
               f'</span></div>')
     fab = f" · 🏭 {_e(r['fabrica'])}" if isinstance(r.get("fabrica"), str) and r.get("fabrica") else ""
     obs = f"<br>📝 {_e(r.get('observacao'))}" if isinstance(r.get("observacao"), str) and r.get("observacao") else ""
+    editado = ""
+    if isinstance(r.get("editado_em"), str) and r.get("editado_em"):
+        quando = tempo.parse_dt(r["editado_em"])
+        editado = (f'<div class="pp-edit">✏️ <b>Editado</b> por {_e(r.get("editado_por"))} em '
+                   f'{quando:%d/%m às %H:%M}<br><span>{_e(r.get("editado_resumo"))}</span></div>' if quando else "")
     return (f'<div class="pp-card {"cancelado" if r["status"] == "Cancelado" else ""}" style="--c:{cor};--f:{fundo}">'
             f'<div class="pp-top"><b>🚛 {_e(r["placa"])}</b><span class="pp-st">{svc.STATUS_ICONE.get(r["status"], "")} '
             f'{_e(r["status"])}</span></div><div class="pp-ped">Pedido <b>{_e(r["numero_pedido"])}</b>{fab} · '
             f'{_e(svc.rotulo_dia(dt.date.fromisoformat(str(r["data"])[:10])))}</div>'
             f'<span class="pp-tipo">{ICONE_TIPO.get(r["tipo"], "")} {_e(r["tipo"])} · {_f(r.get("paletes"))} palete(s)</span>'
-            f'{agenda}{corpo}<div class="pp-rod">{filial}lançado por {_e(r.get("criado_por"))}{fim}{obs}</div></div>')
+            f'{editado}{agenda}{corpo}<div class="pp-rod">{filial}lançado por {_e(r.get("criado_por"))}{fim}{obs}</div></div>')
 
 
 def _cards(df: pd.DataFrame, com_filial: bool = False) -> None:
@@ -181,8 +188,20 @@ def _form(usuario: dict, operacao_id: int, d: dt.date, atual: dict | None, chave
     m1, m2, m3 = st.columns([1.5, 1.3, 1])
     mot_atual = (atual or {}).get("motorista_id")
     mot_atual = int(mot_atual) if mot_atual and int(mot_atual) in nomes_mot else None
-    ids_mot = list(nomes_mot)
-    motorista_id = m1.selectbox("👤 Motorista *", ids_mot, format_func=nomes_mot.get, key=f"{chave}_mot",
+    from services import disp_motoristas_service as dms
+
+    gm = dms.grade(operacao_id)
+    sit = {int(r["id"]): r for r in gm[gm["data"] == d].to_dict("records")} if not gm.empty else {}
+    ids_mot = sorted(nomes_mot, key=lambda i: (sit.get(i, {}).get("status", "Disponível") != "Disponível", nomes_mot[i]))
+
+    def rot_mot(i):
+        s_ = sit.get(i)
+        if not s_:
+            return nomes_mot[i]
+        extra = f" · {s_['detalhe']}" if s_["status"] != "Disponível" or "a partir" in str(s_["detalhe"]) else ""
+        return f"{dms.ICONES.get(s_['status'], '')} {nomes_mot[i]} · {s_['status']}{extra}"
+
+    motorista_id = m1.selectbox("👤 Motorista *", ids_mot, format_func=rot_mot, key=f"{chave}_mot",
                                 index=ids_mot.index(mot_atual) if mot_atual else None,
                                 placeholder="Selecione o motorista...")
     h_atual = (atual or {}).get("hora_agendamento")
@@ -195,6 +214,11 @@ def _form(usuario: dict, operacao_id: int, d: dt.date, atual: dict | None, chave
                               "deslocamento_h": desl})
         m3.markdown(f"**🚦 Sair da revenda até**  \n{pz:%d/%m %H:%M}" if desl else
                     "**🚦 Prazo de saída**  \nsem deslocamento cadastrado")
+        if motorista_id and pz:
+            s_mot = dms.no_momento(operacao_id, int(motorista_id), pz)
+            if s_mot["status"] != "Disponível":
+                st.warning(f"⚠️ {nomes_mot[int(motorista_id)]} estará **{s_mot['status']}** na saída "
+                           f"({pz:%d/%m %H:%M}): {s_mot['detalhe']}.")
         if not desl:
             m3.caption("Informe em ⚙️ Cadastros › 🏭 Fábricas.")
     sug = info.get(placa, {}).get("sugestao")
@@ -224,7 +248,8 @@ def _form(usuario: dict, operacao_id: int, d: dt.date, atual: dict | None, chave
             st.error(str(e))
         else:
             st.session_state[f"pp_form_v_{operacao_id}"] = st.session_state.get(f"pp_form_v_{operacao_id}", 0) + 1
-            ui.avisar(f"Pedido {numero} salvo — já aparece para o Ressuprimento e o Armazém.")
+            ui.avisar(f"Pedido {numero} {'editado — a edição aparece sinalizada' if atual else 'salvo — já aparece'} "
+                      "para o Ressuprimento e o Armazém.")
             st.rerun()
 
 
@@ -262,20 +287,24 @@ def render(usuario: dict, operacao_id: int) -> None:
         st.info("Nenhum pedido lançado para este dia.")
         return
     _cards(df)
-    abertos = df[df["status"] == "Aberto"]
+    abertos = df[df["status"] != "Cancelado"]
     if not abertos.empty:
         with st.container(key="cad_alt_pp"):
-            st.markdown('<div class="eco-alt-titulo">✏️ Alterar ou cancelar pedido</div>', unsafe_allow_html=True)
-            nomes = {int(r["id"]): f"{r['placa']} · pedido {r['numero_pedido']} · {r['tipo']}"
+            st.markdown('<div class="eco-alt-titulo">✏️ Editar ou cancelar pedido</div>', unsafe_allow_html=True)
+            st.caption("A edição fica sinalizada para o Armazém e o Ressuprimento (quem editou, quando e o que mudou). "
+                       "Pedido já finalizado volta para Aberto para o armazém conferir de novo.")
+            nomes = {int(r["id"]): f"{'✅ ' if r['status'] == 'Finalizado' else ''}{r['placa']} · pedido "
+                                   f"{r['numero_pedido']} · {r['tipo']}"
                      + (f" · {r['fabrica']}" if isinstance(r.get("fabrica"), str) else "")
                      for r in abertos.to_dict("records")}
             pid = st.selectbox("Pedido", [None, *nomes], key=f"pp_alt_{d}",
                                format_func=lambda i: "Selecione..." if i is None else nomes[i])
             if pid:
                 _form(usuario, operacao_id, d, repo.pedido(pid), f"pp_a_{pid}_{v}")
-                with st.popover("⛔ Cancelar este pedido"):
-                    if st.button("Confirmar cancelamento", key=f"pp_cancel_{pid}", type="primary"):
-                        ui.acao(svc.cancelar, pid, usuario.get("nome") or "", sucesso="Pedido cancelado.")
+                if repo.pedido(pid)["status"] == "Aberto":
+                    with st.popover("⛔ Cancelar este pedido"):
+                        if st.button("Confirmar cancelamento", key=f"pp_cancel_{pid}", type="primary"):
+                            ui.acao(svc.cancelar, pid, usuario.get("nome") or "", sucesso="Pedido cancelado.")
     ui.downloads(svc.tabela(df), f"pedidos_puxada_{d}", key=f"dl_pp_{d}")
 
 

@@ -48,6 +48,7 @@ MODULOS = {
         "remuneracao": "💵 Remuneração & Produtividade",
         "disponibilidade": "🗓️ Disponibilidade de Placas",
         "pedidos_dia": "📋 Pedidos D0 / D+1 / D+2",
+        "disp_motoristas": "👤 Disponibilidade de Motoristas",
     }},
     "ressuprimento": {"rotulo": "Ressuprimento", "icone": "🔄", "abas": {
         "bases": "📁 Atualização de Bases",
@@ -103,7 +104,7 @@ MODULO_ADMIN = "admin"
 # Pasta sem grupo definido (ou com poucas abas) mostra as telas direto.
 GRUPOS_ABAS = {
     "puxada": {
-        "🚛 Frota própria": ["carreteiro", "disponibilidade", "pedidos_dia", "remuneracao", "tmv_tma"],
+        "🚛 Frota própria": ["carreteiro", "disponibilidade", "disp_motoristas", "pedidos_dia", "remuneracao", "tmv_tma"],
         "🚚 Frete spot": ["cotacao", "aprovacoes", "encerramento", "painel", "obz"],
         "🏭 Operação": ["descarga", "vinculos", "pedidos", "viagens"],
         "⚙️ Cadastros": ["cadastros"],
@@ -203,6 +204,7 @@ SUGESTAO_PEDIDO = ["Retornável", "Descartável"]
 # Retornável: paletes por embalagem (chave da coluna → rótulo)
 EMBALAGENS_RETORNAVEL = {"p600_ambar": "600 ml Âmbar", "p600_verde": "600 ml Verde", "p1l": "1 Litro", "p300": "300 ml"}
 STATUS_PEDIDO_PUXADA = ["Aberto", "Finalizado", "Cancelado"]
+INTERJORNADA_H = 11              # descanso mínimo entre o fim de uma viagem e o início da próxima (CLT)
 CNH_ALERTA_DIAS = 90              # começa a avisar o gestor 3 meses antes de a CNH vencer
 CNH_ALERTA_INTERVALO_DIAS = 7     # repete o aviso toda semana até renovar           # motorista pode desfazer a última etapa até X minutos depois
 

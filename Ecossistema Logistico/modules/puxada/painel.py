@@ -19,14 +19,20 @@ def render(usuario: dict, operacao_id: int) -> None:
     if df.empty:
         st.info("Nenhuma cotação com esses filtros.")
         return
-    colunas = ["id", "status", "data_frete", "origem", "destino", "transportadora", "motivo",
-               "valor_negociado", "valor_tabela", "centro_custo", "solicitante", "aprovador",
-               "numero_cte", "motivo_rejeicao"]
+    df["diferenca"] = (df["valor_negociado"] - df["valor_tabela"]).where(df["valor_tabela"].notna())
+    df["diferenca_pct"] = (df["diferenca"] / df["valor_tabela"] * 100).where(df["valor_tabela"] > 0)
+    colunas = ["id", "status", "data_frete", "origem", "destino", "transportadora", "tipo_carga", "motivo",
+               "valor_negociado", "valor_tabela", "diferenca", "diferenca_pct", "justificativa_aprovacao",
+               "centro_custo", "solicitante", "aprovador", "numero_cte", "motivo_rejeicao"]
     fmt = {"valor_negociado": st.column_config.NumberColumn("Negociado", format="R$ %.2f"),
-           "valor_tabela": st.column_config.NumberColumn("Tabela", format="R$ %.2f")}
+           "valor_tabela": st.column_config.NumberColumn("Cadastrado", format="R$ %.2f"),
+           "diferenca": st.column_config.NumberColumn("Diferença", format="R$ %.2f"),
+           "diferenca_pct": st.column_config.NumberColumn("Dif. %", format="%.1f%%"),
+           "tipo_carga": "Carga", "justificativa_aprovacao": "Justificativa (valor ≠ cadastrado)"}
     pend_df = df[df["status"] == StatusFrete.PENDENTE][colunas]
     pend = len(pend_df)
     acima = df[df["valor_tabela"].notna() & (df["valor_negociado"] > df["valor_tabela"])]
+    abaixo = df[df["valor_tabela"].notna() & (df["valor_negociado"] < df["valor_tabela"])]
     tema.kpis([
         {"titulo": "Cotações", "valor": len(df), "icone": "📋", "status": "info", "dados": df[colunas], "colunas": fmt},
         {"titulo": "Valor total", "valor": ui.moeda(df["valor_negociado"].sum()), "icone": "💸", "status": "info",
@@ -37,6 +43,9 @@ def render(usuario: dict, operacao_id: int) -> None:
          "detalhe": f"+{ui.moeda((acima['valor_negociado'] - acima['valor_tabela']).sum())}" if len(acima) else "",
          "status": "serio" if len(acima) else "bom", "selo": "negociar melhor" if len(acima) else "dentro da tabela",
          "dados": acima[colunas], "colunas": fmt},
+        {"titulo": "Abaixo do cadastrado", "valor": len(abaixo), "icone": "🔻",
+         "detalhe": f"−{ui.moeda((abaixo['valor_tabela'] - abaixo['valor_negociado']).sum())}" if len(abaixo) else "",
+         "status": "bom", "dados": abaixo[colunas], "colunas": fmt},
     ], key="kp_painel")
 
     g1, g2 = st.columns(2)
@@ -53,7 +62,7 @@ def render(usuario: dict, operacao_id: int) -> None:
                          detalhe=(df[colunas], "status"), colunas=fmt, titulo="Status")
     st.caption("🔎 Clique num card ou numa barra para ver os registros.")
     ui.tabela(df[colunas], column_config=fmt)
-    ui.download_csv(df[colunas], "fretes", key="dl_fretes")
+    ui.downloads(df[colunas], "relatorio_fretes_spot", key="dl_fretes")
 
     cancelaveis = df[df["status"].isin([StatusFrete.PENDENTE, StatusFrete.APROVADO])]
     if not cancelaveis.empty:

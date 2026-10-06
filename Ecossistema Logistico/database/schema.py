@@ -380,6 +380,18 @@ CREATE TABLE IF NOT EXISTS fabrica_deslocamento (
     PRIMARY KEY (operacao_id, fabrica_id)
 );
 
+-- Férias dos motoristas (período fechado: início e fim inclusos)
+CREATE TABLE IF NOT EXISTS ferias_motoristas (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id  INTEGER NOT NULL REFERENCES operacoes(id),
+    motorista_id INTEGER NOT NULL REFERENCES motoristas(id),
+    inicio       TEXT NOT NULL,
+    fim          TEXT NOT NULL,
+    observacao   TEXT,
+    criado_por   TEXT,
+    criado_em    TEXT
+);
+
 CREATE TABLE IF NOT EXISTS vinculos_pedidos (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     operacao_id       INTEGER NOT NULL REFERENCES operacoes(id),
@@ -677,7 +689,54 @@ MIGRACOES: list[tuple[str, str]] = [
         ALTER TABLE ressuprimento_diario ADD COLUMN volume_txt TEXT;
         CREATE INDEX IF NOT EXISTS ix_pedpux_num ON pedidos_puxada(operacao_id, numero_pedido);
     """),
+    # Trecho spot por fábrica + transportadora + tipo (Retornável/Descartável): tira a trava de 1 trecho
+    # por origem/destino. Cotação guarda o tipo e a justificativa de aprovar valor diferente do cadastrado.
+    # Pedido da Puxada registra quem editou e quando.
+    ("022_trecho_tipo", lambda conn: _mig_022(conn)),
+    ("023_ferias_motoristas", """
+        CREATE INDEX IF NOT EXISTS ix_ferias_mot ON ferias_motoristas(motorista_id, inicio, fim);
+        CREATE INDEX IF NOT EXISTS ix_vc_mot_fim ON viagens_carreteiro(motorista_id, ts_fim);
+    """),
 ]
+
+
+def _mig_022(conn) -> None:
+    if conn.pg:
+        cur = conn.raw.cursor()
+        cur.execute("""SELECT conname FROM pg_constraint WHERE conrelid = 'trechos'::regclass AND contype = 'u'""")
+        for (nome,) in cur.fetchall():
+            cur.execute(f'ALTER TABLE trechos DROP CONSTRAINT IF EXISTS "{nome}"')
+        conn.executescript("ALTER TABLE trechos ADD COLUMN tipo TEXT")
+    else:
+        conn.executescript("""
+            CREATE TABLE trechos_v2 (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                operacao_id       INTEGER NOT NULL REFERENCES operacoes(id),
+                origem_id         INTEGER NOT NULL REFERENCES origens_destinos(id),
+                destino_id        INTEGER NOT NULL REFERENCES origens_destinos(id),
+                distancia_km      REAL DEFAULT 0,
+                pedagio           REAL DEFAULT 0,
+                valor_remunerado  REAL DEFAULT 0,
+                valor_frete       REAL DEFAULT 0,
+                transportadora_id INTEGER,
+                aprovador_id      INTEGER,
+                tipo              TEXT
+            );
+            INSERT INTO trechos_v2 (id, operacao_id, origem_id, destino_id, distancia_km, pedagio, valor_remunerado,
+                                    valor_frete, transportadora_id, aprovador_id)
+                SELECT id, operacao_id, origem_id, destino_id, distancia_km, pedagio, valor_remunerado, valor_frete,
+                       transportadora_id, aprovador_id FROM trechos;
+            DROP TABLE trechos;
+            ALTER TABLE trechos_v2 RENAME TO trechos;
+        """)
+    conn.executescript("""
+        CREATE INDEX IF NOT EXISTS ix_trechos_busca ON trechos(operacao_id, origem_id, destino_id);
+        ALTER TABLE cotacoes_frete ADD COLUMN tipo_carga TEXT;
+        ALTER TABLE cotacoes_frete ADD COLUMN justificativa_aprovacao TEXT;
+        ALTER TABLE pedidos_puxada ADD COLUMN editado_por TEXT;
+        ALTER TABLE pedidos_puxada ADD COLUMN editado_em TEXT;
+        ALTER TABLE pedidos_puxada ADD COLUMN editado_resumo TEXT;
+    """)
 
 
 def init_db(db_path=None) -> None:
@@ -689,7 +748,7 @@ def init_db(db_path=None) -> None:
         aplicadas = {r[0] for r in conn.execute("SELECT id FROM _migracoes")}
         for mig_id, sql in MIGRACOES:
             if mig_id not in aplicadas:
-                conn.executescript(sql)
+                sql(conn) if callable(sql) else conn.executescript(sql)
                 conn.execute("INSERT INTO _migracoes (id) VALUES (?)", (mig_id,))
 
         # Usuário master no primeiro acesso (e-mail vem do segredo ADMIN_EMAIL)

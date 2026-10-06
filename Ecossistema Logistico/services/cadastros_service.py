@@ -121,7 +121,13 @@ def excluir_od(od_id):
 
 
 def salvar_trecho(operacao_id, origem_id, destino_id, km, pedagio, remunerado, frete,
-                  transportadora_id=None, aprovador_id=None):
+                  transportadora_id=None, aprovador_id=None, tipo=None, trecho_id=None):
+    from config.settings import SUGESTAO_PEDIDO
+
+    if tipo not in SUGESTAO_PEDIDO:
+        raise RegraNegocioError("Escolha se o trecho é Retornável ou Descartável.")
+    if cadastros_repo.trecho_igual(operacao_id, origem_id, destino_id, transportadora_id, tipo, trecho_id):
+        raise RegraNegocioError("Já existe um trecho com essa origem, destino, transportadora e tipo.")
     if not origem_id or not destino_id:
         raise RegraNegocioError("Selecione origem e destino.")
     if origem_id == destino_id:
@@ -129,7 +135,7 @@ def salvar_trecho(operacao_id, origem_id, destino_id, km, pedagio, remunerado, f
     if frete <= 0:
         raise RegraNegocioError("Informe o valor do frete do trecho.")
     cadastros_repo.salvar_trecho(operacao_id, origem_id, destino_id, km, pedagio, remunerado, frete,
-                                 transportadora_id, aprovador_id)
+                                 transportadora_id, aprovador_id, tipo, trecho_id)
 
 
 def excluir_trecho(trecho_id):

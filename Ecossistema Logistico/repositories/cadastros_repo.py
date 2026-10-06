@@ -57,36 +57,60 @@ def excluir_od(od_id: int) -> None:
 def listar_trechos_df(operacao_id: int) -> pd.DataFrame:
     return query_df("""
         SELECT t.id, o.nome AS origem, d.nome AS destino, tr.nome AS transportadora, u.nome AS aprovador,
-               t.distancia_km, t.pedagio, t.valor_remunerado, t.valor_frete,
+               t.tipo, t.distancia_km, t.pedagio, t.valor_remunerado, t.valor_frete,
                t.origem_id, t.destino_id, t.transportadora_id, t.aprovador_id
         FROM trechos t
         JOIN origens_destinos o ON o.id = t.origem_id
         JOIN origens_destinos d ON d.id = t.destino_id
         LEFT JOIN transportadoras tr ON tr.id = t.transportadora_id
         LEFT JOIN usuarios u ON u.id = t.aprovador_id
-        WHERE t.operacao_id = ? ORDER BY o.nome, d.nome
+        WHERE t.operacao_id = ? ORDER BY o.nome, d.nome, tr.nome, t.tipo
     """, (operacao_id,))
 
 
-def buscar_trecho(operacao_id: int, origem_id: int, destino_id: int) -> dict | None:
-    return query_one(
-        "SELECT * FROM trechos WHERE operacao_id = ? AND origem_id = ? AND destino_id = ?",
-        (operacao_id, origem_id, destino_id),
-    )
+def buscar_trecho(operacao_id: int, origem_id: int, destino_id: int, transportadora_id: int | None = None,
+                  tipo: str | None = None) -> dict | None:
+    """Trecho mais específico: mesma transportadora e tipo; senão o genérico (sem transportadora/tipo)."""
+    linhas = query_all("SELECT * FROM trechos WHERE operacao_id = ? AND origem_id = ? AND destino_id = ?",
+                       (operacao_id, origem_id, destino_id))
+
+    def nota(t):
+        tr, tp = t.get("transportadora_id"), t.get("tipo")
+        if transportadora_id and tr and tr != transportadora_id:
+            return -1
+        if tipo and tp and tp != tipo:
+            return -1
+        return (2 if transportadora_id and tr == transportadora_id else 0) + (1 if tipo and tp == tipo else 0)
+
+    validos = sorted(((nota(t), t) for t in linhas), key=lambda x: -x[0])
+    return validos[0][1] if validos and validos[0][0] >= 0 else None
+
+
+def trecho_igual(operacao_id: int, origem_id: int, destino_id: int, transportadora_id: int | None,
+                 tipo: str | None, ignorar_id: int | None = None) -> dict | None:
+    for t in query_all("SELECT * FROM trechos WHERE operacao_id = ? AND origem_id = ? AND destino_id = ?",
+                       (operacao_id, origem_id, destino_id)):
+        if t["id"] != ignorar_id and (t.get("transportadora_id") or None) == (transportadora_id or None) \
+                and (t.get("tipo") or None) == (tipo or None):
+            return t
+    return None
 
 
 def salvar_trecho(operacao_id: int, origem_id: int, destino_id: int, km: float,
                   pedagio: float, remunerado: float, frete: float,
-                  transportadora_id: int | None = None, aprovador_id: int | None = None) -> None:
-    execute("""
-        INSERT INTO trechos (operacao_id, origem_id, destino_id, distancia_km, pedagio, valor_remunerado, valor_frete,
-                             transportadora_id, aprovador_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(operacao_id, origem_id, destino_id) DO UPDATE SET
-            distancia_km = excluded.distancia_km, pedagio = excluded.pedagio,
-            valor_remunerado = excluded.valor_remunerado, valor_frete = excluded.valor_frete,
-            transportadora_id = excluded.transportadora_id, aprovador_id = excluded.aprovador_id
-    """, (operacao_id, origem_id, destino_id, km, pedagio, remunerado, frete, transportadora_id, aprovador_id))
+                  transportadora_id: int | None = None, aprovador_id: int | None = None,
+                  tipo: str | None = None, trecho_id: int | None = None) -> None:
+    """Grava pelo id (alteração) ou pela chave origem + destino + transportadora + tipo."""
+    alvo = trecho_id or (trecho_igual(operacao_id, origem_id, destino_id, transportadora_id, tipo) or {}).get("id")
+    if alvo:
+        execute("""UPDATE trechos SET origem_id = ?, destino_id = ?, distancia_km = ?, pedagio = ?, valor_remunerado = ?,
+                   valor_frete = ?, transportadora_id = ?, aprovador_id = ?, tipo = ? WHERE id = ?""",
+                (origem_id, destino_id, km, pedagio, remunerado, frete, transportadora_id, aprovador_id, tipo, alvo))
+    else:
+        execute("""INSERT INTO trechos (operacao_id, origem_id, destino_id, distancia_km, pedagio, valor_remunerado,
+                   valor_frete, transportadora_id, aprovador_id, tipo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (operacao_id, origem_id, destino_id, km, pedagio, remunerado, frete, transportadora_id, aprovador_id,
+                 tipo))
 
 
 def excluir_trecho(trecho_id: int) -> None:

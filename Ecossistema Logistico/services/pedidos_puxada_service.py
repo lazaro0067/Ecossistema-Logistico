@@ -107,8 +107,8 @@ def salvar_pedido(operacao_id: int, pid: int | None, data: dt.date, placa: str, 
     if operacoes_repo.e_consolidada(operacao_id):
         raise RegraNegocioError("Escolha uma filial no menu para lançar pedidos.")
     atual = repo.pedido(pid) if pid else None
-    if atual and atual["status"] != "Aberto":
-        raise RegraNegocioError(f"Este pedido está {atual['status'].lower()} — não pode mais ser alterado.")
+    if atual and atual["status"] == "Cancelado":
+        raise RegraNegocioError("Este pedido está cancelado — não pode mais ser alterado.")
     if not atual and data not in dias_pedido():
         raise RegraNegocioError("Lance pedidos para hoje (D0), amanhã (D+1) ou depois de amanhã (D+2).")
     placa = (placa or "").strip().upper()
@@ -149,7 +149,81 @@ def salvar_pedido(operacao_id: int, pid: int | None, data: dt.date, placa: str, 
         dados["paletes"] = _num(paletes)
         if dados["paletes"] <= 0:
             raise RegraNegocioError("Informe a quantidade de paletes do pedido descartável.")
-    return repo.salvar(operacao_id, pid, dados, usuario)
+    if not atual:
+        return repo.salvar(operacao_id, None, dados, usuario)
+    resumo = _resumo_edicao(atual, dados)
+    if not resumo:
+        raise RegraNegocioError("Nada foi alterado no pedido.")
+    reabrir = atual["status"] == "Finalizado"
+    if reabrir:
+        resumo += " · reaberto (estava finalizado pelo armazém)"
+    repo.salvar(operacao_id, pid, dados, usuario, resumo, reabrir)
+    _avisar_edicao(operacao_id, {**atual, **dados}, usuario, resumo)
+    return pid
+
+
+_ROTULOS = {"data": "dia", "placa": "placa", "numero_pedido": "nº do pedido", "fabrica_id": "fábrica",
+            "motorista_id": "motorista", "hora_agendamento": "agendamento", "tipo": "tipo",
+            "p600_ambar": "600 ml Âmbar", "p600_verde": "600 ml Verde", "p1l": "1 Litro", "p300": "300 ml",
+            "paletes": "paletes", "observacao": "observação"}
+
+
+def _resumo_edicao(atual: dict, novo: dict) -> str:
+    """Ex.: 'placa PRH4F57 → ABC1D23 · 600 ml Âmbar 20 → 18'."""
+    from repositories import logistica_repo
+
+    fabs = {int(r["id"]): r["nome"] for r in logistica_repo.fabricas_df().to_dict("records")}
+    mots = {int(r["id"]): r["nome"] for r in logistica_repo.motoristas_df(atual["operacao_id"]).to_dict("records")}
+
+    def fmt(k, v):
+        if v is None or v == "" or (isinstance(v, float) and v != v):
+            return "—"
+        if k == "fabrica_id":
+            return fabs.get(int(v), str(v))
+        if k == "motorista_id":
+            return mots.get(int(v), str(v))
+        if k == "data":
+            return dt.date.fromisoformat(str(v)[:10]).strftime("%d/%m")
+        if isinstance(v, float):
+            return _fmt(v)
+        return str(v)
+
+    partes = []
+    for k, rot in _ROTULOS.items():
+        a, b = fmt(k, atual.get(k)), fmt(k, novo.get(k))
+        if k in EMBALAGENS_RETORNAVEL or k == "paletes":
+            try:
+                if float(atual.get(k) or 0) == float(novo.get(k) or 0):
+                    continue
+            except (TypeError, ValueError):
+                pass
+        if a != b:
+            partes.append(f"{rot} {a} → {b}")
+    return " · ".join(partes)
+
+
+def _avisar_edicao(operacao_id: int, p: dict, usuario: str, resumo: str) -> None:
+    """🔔 para quem acompanha os pedidos (Armazém e Ressuprimento) da filial."""
+    try:
+        from config.settings import PERFIL_MOTORISTA
+        from core.auth import pode_acessar_aba
+        from repositories import motoristas_repo, usuarios_repo
+
+        agora = tempo.agora().strftime("%Y-%m-%d %H:%M:%S")
+        titulo = f"Pedido {p['numero_pedido']} editado por {usuario}"
+        for u in usuarios_repo.listar(apenas_ativos=True):
+            if u["perfil"] == PERFIL_MOTORISTA or u["nome"] == usuario:
+                continue
+            sessao = usuarios_repo.carregar_sessao(u["id"])
+            if operacao_id not in (sessao.get("operacoes") or [operacao_id]):
+                continue
+            pagina = ("armazem" if pode_acessar_aba(sessao, "armazem", "pedidos") else
+                      "ressuprimento" if pode_acessar_aba(sessao, "ressuprimento", "puxada_pedidos") else None)
+            if pagina:
+                motoristas_repo.criar_notificacao(u["id"], "pedido", f"pedido:{p.get('id')}:{agora}", titulo,
+                                                  f"Placa {p['placa']} · {resumo}", pagina, agora)
+    except Exception:
+        pass
 
 
 def finalizar(pid: int, usuario: str) -> None:
@@ -208,6 +282,9 @@ def tabela(df: pd.DataFrame, com_filial: bool = False) -> pd.DataFrame:
                   "Paletes (total)": float(r.get("paletes") or 0),
                   "Status": f"{STATUS_ICONE.get(r['status'], '')} {r['status']}",
                   "Lançado por": r.get("criado_por") or "",
+                  "Editado": (f"{r.get('editado_por')} · {tempo.parse_dt(r['editado_em']):%d/%m %H:%M} · "
+                              f"{r.get('editado_resumo') or ''}" if isinstance(r.get("editado_em"), str)
+                              and r.get("editado_em") else ""),
                   "Finalizado": (f"{r['finalizado_por']} · {tempo.parse_dt(r['finalizado_em']):%d/%m %H:%M}"
                                  if isinstance(r.get("finalizado_em"), str) and r.get("finalizado_em") else "")})
         linhas.append(d)
