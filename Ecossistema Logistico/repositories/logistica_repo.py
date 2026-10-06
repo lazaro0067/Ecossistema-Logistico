@@ -21,8 +21,27 @@ def salvar_carreta(operacao_id: int, cid: int | None, placa: str, modelo: str, c
                 (operacao_id, placa, modelo, cap, status))
 
 
-def fabricas_df() -> pd.DataFrame:
-    return query_df("SELECT id, nome, cidade, uf FROM fabricas ORDER BY nome")
+def fabricas_df(operacao_id: int | None = None) -> pd.DataFrame:
+    """Fábricas; com `operacao_id` traz também o tempo de deslocamento daquela revenda até a fábrica."""
+    if operacao_id is None:
+        return query_df("SELECT id, nome, cidade, uf FROM fabricas ORDER BY nome")
+    return query_df("""SELECT f.id, f.nome, f.cidade, f.uf, COALESCE(d.horas, 0) AS deslocamento_h
+                       FROM fabricas f LEFT JOIN fabrica_deslocamento d ON d.fabrica_id = f.id AND d.operacao_id = ?
+                       ORDER BY f.nome""", (operacao_id,))
+
+
+def deslocamento_h(operacao_id: int, fabrica_id: int | None) -> float:
+    if not fabrica_id:
+        return 0.0
+    r = query_all("SELECT horas FROM fabrica_deslocamento WHERE operacao_id = ? AND fabrica_id = ?",
+                  (operacao_id, int(fabrica_id)))
+    return float(r[0]["horas"] or 0) if r else 0.0
+
+
+def salvar_deslocamento(operacao_id: int, fabrica_id: int, horas: float) -> None:
+    execute("DELETE FROM fabrica_deslocamento WHERE operacao_id = ? AND fabrica_id = ?", (operacao_id, fabrica_id))
+    execute("INSERT INTO fabrica_deslocamento (operacao_id, fabrica_id, horas) VALUES (?, ?, ?)",
+            (operacao_id, fabrica_id, float(horas or 0)))
 
 
 def salvar_fabrica(fid: int | None, nome: str, cidade: str, uf: str) -> int | None:

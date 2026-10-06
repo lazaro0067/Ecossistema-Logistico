@@ -359,6 +359,10 @@ def preparar(layout_key: str, df: pd.DataFrame, mapeamento: dict[str, str | None
         elif c.tipo == "float":
             # Ressuprimento: o número vem como está na coluna — "1.307" é mil trezentos e sete (ponto = milhar)
             saida[k] = serie.map(numero_br) if layout_key == "ressuprimento" else _to_float(serie)
+            if layout_key == "ressuprimento" and k == "volume_real_hl":
+                # guarda o número como está escrito no relatório (com ou sem ponto) para mostrar igual
+                saida["volume_txt"] = serie.map(lambda v: "" if v is None or (isinstance(v, float) and pd.isna(v))
+                                                else re.sub(r"\.0$", "", str(v).strip()))
         elif c.tipo == "date":
             saida[k] = _to_date(serie)
         else:

@@ -26,15 +26,19 @@ def _legivel(df: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame(columns=["", "Indicador", "Meta (HL)", "Real (HL)", "Tendência (HL)", "Ating. real",
                                      "Ating. tendência", "Pendência (HL)"])
     tem_meta = df["meta"] > 0
+    ponto = df.attrs.get("com_ponto", True)
+    num = (lambda v: ui.numero(v)) if ponto else (lambda v: f"{float(v or 0):.0f}")  # noqa: E731
+    txt = df["real_txt"] if "real_txt" in df else pd.Series([None] * len(df), index=df.index)
+    real = [t if isinstance(t, str) and t else num(v) for t, v in zip(txt, df["real"])]
     return pd.DataFrame({
         "": df["ating_tend"].map(lambda p: _COR[tema.status_atingimento(p if pd.notna(p) else None)]),
         "Indicador": df["indicador"],
-        "Meta (HL)": [ui.numero(m) if t else "—" for m, t in zip(df["meta"], tem_meta)],
-        "Real (HL)": df["real"].map(ui.numero),
-        "Tendência (HL)": df["tendencia"].map(ui.numero),
+        "Meta (HL)": [num(m) if t else "—" for m, t in zip(df["meta"], tem_meta)],
+        "Real (HL)": real,
+        "Tendência (HL)": df["tendencia"].map(num),
         "Ating. real": [ui.pct(a) if t and pd.notna(a) else "—" for a, t in zip(df["ating_real"], tem_meta)],
         "Ating. tendência": [float(a) if t and pd.notna(a) else None for a, t in zip(df["ating_tend"], tem_meta)],
-        "Pendência (HL)": [ui.numero(p) if t else "—" for p, t in zip(df["pendencia"], tem_meta)],
+        "Pendência (HL)": [num(p) if t else "—" for p, t in zip(df["pendencia"], tem_meta)],
     }).reset_index(drop=True)
 
 

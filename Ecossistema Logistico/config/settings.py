@@ -47,7 +47,7 @@ MODULOS = {
         "tmv_tma": "⏱️ TMV / TMA & Viagens",
         "remuneracao": "💵 Remuneração & Produtividade",
         "disponibilidade": "🗓️ Disponibilidade de Placas",
-        "pedidos_dia": "📋 Pedidos D0 / D+1",
+        "pedidos_dia": "📋 Pedidos D0 / D+1 / D+2",
     }},
     "ressuprimento": {"rotulo": "Ressuprimento", "icone": "🔄", "abas": {
         "bases": "📁 Atualização de Bases",
@@ -58,6 +58,7 @@ MODULOS = {
         "politica": "📦 Política de Estoque",
         "metas": "🎯 Metas Mensais",
         "puxada_pedidos": "🚛 Placas & Pedidos da Puxada",
+        "ruptura": "⚠️ Projeção de Falta",
     }},
     "vendas": {"rotulo": "Vendas", "icone": "📈", "abas": {
         "comercial": "🛍️ Estoque do Dia (Portal RN)",
@@ -109,7 +110,7 @@ GRUPOS_ABAS = {
     },
     "ressuprimento": {
         "📁 Bases": ["bases"],
-        "📦 Estoque": ["estoque", "politica"],
+        "📦 Estoque": ["estoque", "ruptura", "politica"],
         "🛒 Marcação": ["sugestao", "puxada_pedidos", "diario"],
         "📈 Acompanhamento": ["cestas", "metas"],
     },

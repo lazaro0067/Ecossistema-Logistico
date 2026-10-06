@@ -246,19 +246,40 @@ def _nova_viagem(usuario: dict, mot: dict, geo: dict | None) -> None:
                                                    ("as placas", not placas)) if falta) + ".")
         return
     with st.container(key="car_form"):
-        with st.form("car_nova", clear_on_submit=False):
-            pedido = st.text_input("Número do pedido *", placeholder="Ex.: 4500123456")
+        pedido = st.text_input("Número do pedido *", placeholder="Ex.: 4500123456", key="car_nova_pedido")
+        plan = svc.pedido_planejado(mot["operacao_id"], pedido) if (pedido or "").strip() else None
+        data_ag = hora_ag = destino = placa = None
+        if plan:
+            ag = (f"{dt.date.fromisoformat(str(plan['data'])[:10]):%d/%m} às {plan['hora_agendamento']}"
+                  if plan.get("hora_agendamento") else "sem horário")
+            outro = plan.get("motorista_id") and int(plan["motorista_id"]) != int(mot["id"])
+            st.markdown(
+                f'<div class="car-viagem"><div class="lin"><span>✅ Pedido da Puxada</span><b>{tema._e(plan["numero_pedido"])}'
+                f'</b></div><div class="lin"><span>Placa</span><b>{tema._e(plan["placa"])}</b></div>'
+                f'<div class="lin"><span>Fábrica</span><b>{tema._e(plan.get("fabrica") or "—")}</b></div>'
+                f'<div class="lin"><span>Agendamento</span><b>{tema._e(ag)}</b></div>'
+                f'<div class="lin"><span>Motorista escalado</span><b>{tema._e(plan.get("motorista") or "—")}</b></div>'
+                f'<div class="lin"><span>Carga</span><b>{tema._e(plan["tipo"])}</b></div></div>',
+                unsafe_allow_html=True)
+            if outro:
+                st.warning(f"Este pedido está escalado para **{plan.get('motorista')}**. Se você assumiu a viagem, "
+                           "pode iniciar — a Puxada verá o seu nome.")
+            st.caption("Tudo já vem do pedido lançado pela Puxada — é só iniciar.")
+        else:
+            if (pedido or "").strip():
+                st.info("Pedido não encontrado nos pedidos da Puxada — preencha os dados abaixo.")
             c1, c2 = st.columns(2)
-            data_ag = c1.date_input("Data do agendamento", value=None, format="DD/MM/YYYY")
-            hora_ag = c2.time_input("Hora do agendamento", value=None, step=dt.timedelta(minutes=15))
-            destino = st.selectbox("Destino *", [None] + [d["id"] for d in destinos],
+            data_ag = c1.date_input("Data do agendamento", value=None, format="DD/MM/YYYY", key="car_nova_data")
+            hora_ag = c2.time_input("Hora do agendamento", value=None, step=dt.timedelta(minutes=15),
+                                    key="car_nova_hora")
+            destino = st.selectbox("Destino *", [None] + [d["id"] for d in destinos], key="car_nova_dest",
                                    format_func=lambda i: "Selecione..." if i is None else next(
                                        f'{d["nome"]}' + (f' — {d["cidade"]}/{d["uf"]}' if d.get("cidade") else "")
                                        for d in destinos if d["id"] == i))
-            placa = st.selectbox("Placa do cavalo *", [None] + [p["placa"] for p in placas],
+            placa = st.selectbox("Placa do cavalo *", [None] + [p["placa"] for p in placas], key="car_nova_placa",
                                  format_func=lambda p: "Selecione..." if p is None else p)
-            with st.container(key="car_verde"):
-                enviar = st.form_submit_button("🟢  INICIAR VIAGEM", type="primary", **ui.LARGURA)
+        with st.container(key="car_verde"):
+            enviar = st.button("🟢  INICIAR VIAGEM", type="primary", key="car_nova_ok", **ui.LARGURA)
     if enviar:
         try:
             vid = svc.iniciar_viagem(usuario, pedido, data_ag, hora_ag, destino, placa, _gps(geo))
@@ -266,6 +287,8 @@ def _nova_viagem(usuario: dict, mot: dict, geo: dict | None) -> None:
         except RegraNegocioError as e:
             st.error(str(e))
         else:
+            for k in ("car_nova_pedido", "car_nova_data", "car_nova_hora", "car_nova_dest", "car_nova_placa"):
+                st.session_state.pop(k, None)
             ui.avisar(f"Viagem iniciada às {tempo.agora().strftime('%H:%M')}. Boa viagem! 🚛")
             st.rerun()
 

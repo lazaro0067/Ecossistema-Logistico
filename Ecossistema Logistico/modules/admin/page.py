@@ -38,6 +38,16 @@ def _form_usuario(existente: dict | None, operacoes: list[dict]) -> None:
     chave = f"u{u.get('id', 'novo')}_{st.session_state.get('_adm_ver', 0)}"
 
     with st.form(f"{chave}_form", border=False):
+        st.markdown("**🏢 Revendas com acesso** — marque uma ou mais *")
+        filiais = [o for o in operacoes if not operacoes_repo.e_consolidada(o["id"])]
+        atuais_ops = set(u.get("operacoes") or [])
+        todas_ops = st.checkbox("Todas as revendas (inclusive as que forem criadas depois)",
+                                value=bool(existente) and not atuais_ops, key=f"{chave}_ops_todas")
+        cols_op = st.columns(max(len(filiais), 1))
+        marcadas = [o["id"] for col, o in zip(cols_op, filiais)
+                    if col.checkbox(f"🏢 {o['nome']}", value=o["id"] in atuais_ops, key=f"{chave}_op_{o['id']}")]
+        st.caption("A visão consolidada (ex.: Bahia) aparece sozinha para quem tem todas as filiais dela.")
+        st.divider()
         st.markdown("**Dados de acesso** — o e-mail é o login")
         c1, c2, c3 = st.columns(3)
         email = c1.text_input("E-mail (login) *", value=u.get("email") or "", key=f"{chave}_email",
@@ -62,10 +72,6 @@ def _form_usuario(existente: dict | None, operacoes: list[dict]) -> None:
         trocar = c10.checkbox("Exigir troca de senha", value=bool(u.get("trocar_senha", 1)), key=f"{chave}_troca",
                               help="No próximo login o usuário cria a própria senha.")
 
-        nomes_op = {o["id"]: o["nome"] for o in operacoes}
-        ops = st.multiselect("🏢 Operações que pode acessar (vazio = todas)", list(nomes_op),
-                             default=[o for o in u.get("operacoes", []) if o in nomes_op],
-                             format_func=nomes_op.get, key=f"{chave}_ops")
 
         st.markdown("**📁 Permissões por pasta** — marque a pasta inteira ou só as telas (↳). "
                     "Nada é gravado até clicar em **Salvar**.")
@@ -75,6 +81,10 @@ def _form_usuario(existente: dict | None, operacoes: list[dict]) -> None:
     if salvar:
         if perfil == PERFIL_MASTER:
             permissoes = []
+        if not todas_ops and not marcadas and perfil != PERFIL_MASTER:
+            st.error("Escolha a(s) revenda(s) que o usuário vai acessar (ou marque “Todas as revendas”).")
+            return
+        ops = [] if todas_ops else marcadas
         try:
             res = usuarios_service.salvar_usuario(
                 id=u.get("id"), nome=nome, senha=senha, email=email, cargo=cargo, perfil=perfil,

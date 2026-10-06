@@ -21,16 +21,72 @@ from services.erros import RegraNegocioError
 STATUS_ICONE = {"Aberto": "🟡", "Finalizado": "✅", "Cancelado": "⛔"}
 
 
+DIAS_A_FRENTE = 2  # D0, D+1 e D+2
+
+
 def dias_pedido() -> list[dt.date]:
-    """D0 = hoje, D+1 = amanhã."""
+    """D0 = hoje, D+1 = amanhã, D+2 = depois de amanhã."""
     hoje = tempo.hoje()
-    return [hoje, hoje + dt.timedelta(days=1)]
+    return [hoje + dt.timedelta(days=i) for i in range(DIAS_A_FRENTE + 1)]
 
 
 def rotulo_dia(d: dt.date) -> str:
-    hoje = tempo.hoje()
-    nome = "D0 · hoje" if d == hoje else "D+1 · amanhã" if d == hoje + dt.timedelta(days=1) else "Anterior"
+    n = (d - tempo.hoje()).days
+    nome = {0: "D0 · hoje", 1: "D+1 · amanhã", 2: "D+2"}.get(n, "Anterior" if n < 0 else f"D+{n}")
     return f"{nome} {d:%d/%m}"
+
+
+# --- Prazo de saída da carreta (prioridade do armazém) ---------------------------------
+def agendamento_dt(r: dict) -> dt.datetime | None:
+    hora = r.get("hora_agendamento")
+    if not isinstance(hora, str) or not hora:
+        return None
+    try:
+        return dt.datetime.combine(dt.date.fromisoformat(str(r["data"])[:10]), dt.datetime.strptime(hora, "%H:%M").time())
+    except ValueError:
+        return None
+
+
+def prazo_saida(r: dict) -> dt.datetime | None:
+    """Hora máxima para a carreta sair da revenda = agendamento na fábrica − deslocamento até a fábrica."""
+    ag = agendamento_dt(r)
+    if not ag:
+        return None
+    try:
+        h = float(r.get("deslocamento_h") or 0)
+    except (TypeError, ValueError):
+        h = 0.0
+    return ag - dt.timedelta(hours=h if h == h else 0)
+
+
+def prioridade(r: dict) -> tuple[int, str, str]:
+    """(ordem, rótulo, cor) — quanto menor a ordem, mais urgente para o armazém."""
+    if r.get("status") == "Finalizado":
+        return 9, "✅ Finalizado", "#146c43"
+    if r.get("status") == "Cancelado":
+        return 10, "⛔ Cancelado", "#77766f"
+    pz = prazo_saida(r)
+    if not pz:
+        return 6, "⚪ Sem agendamento", "#77766f"
+    falta_h = (pz - tempo.agora()).total_seconds() / 3600
+    if falta_h < 0:
+        return 0, f"⛔ Atrasado {_dur(-falta_h)}", "#a32025"
+    if falta_h <= 2:
+        return 1, f"🔴 Sai em {_dur(falta_h)}", "#d03b3b"
+    if falta_h <= 6:
+        return 2, f"🟠 Sai em {_dur(falta_h)}", "#c2571a"
+    if falta_h <= 24:
+        return 3, f"🟡 Sai em {_dur(falta_h)}", "#b7791f"
+    return 4, f"🟢 Sai em {_dur(falta_h)}", "#146c43"
+
+
+def _dur(h: float) -> str:
+    m = int(round(h * 60))
+    if m < 60:
+        return f"{m} min"
+    if m < 48 * 60:
+        return f"{m // 60}h{m % 60:02d}"
+    return f"{m // 1440} dias"
 
 
 def _num(v) -> float:
@@ -44,7 +100,8 @@ def _num(v) -> float:
 
 
 def salvar_pedido(operacao_id: int, pid: int | None, data: dt.date, placa: str, numero: str, tipo: str,
-                  qtds: dict | None, paletes, observacao: str, usuario: str, fabrica_id: int | None = None) -> int:
+                  qtds: dict | None, paletes, observacao: str, usuario: str, fabrica_id: int | None = None,
+                  motorista_id: int | None = None, hora_agendamento=None) -> int:
     from repositories import operacoes_repo
 
     if operacoes_repo.e_consolidada(operacao_id):
@@ -53,7 +110,7 @@ def salvar_pedido(operacao_id: int, pid: int | None, data: dt.date, placa: str, 
     if atual and atual["status"] != "Aberto":
         raise RegraNegocioError(f"Este pedido está {atual['status'].lower()} — não pode mais ser alterado.")
     if not atual and data not in dias_pedido():
-        raise RegraNegocioError("Lance pedidos só para hoje (D0) ou amanhã (D+1).")
+        raise RegraNegocioError("Lance pedidos para hoje (D0), amanhã (D+1) ou depois de amanhã (D+2).")
     placa = (placa or "").strip().upper()
     if not placa:
         raise RegraNegocioError("Escolha a placa.")
@@ -69,9 +126,18 @@ def salvar_pedido(operacao_id: int, pid: int | None, data: dt.date, placa: str, 
         raise RegraNegocioError("Cadastre as fábricas em Puxada › ⚙️ Cadastros › 🏭 Fábricas.")
     if not fabrica_id or int(fabrica_id) not in fabricas:
         raise RegraNegocioError("Escolha a fábrica do pedido.")
+    motoristas = set(logistica_repo.motoristas_df(operacao_id)["id"].astype(int))
+    if not motorista_id or int(motorista_id) not in motoristas:
+        raise RegraNegocioError("Escolha o motorista do pedido.")
+    if not hora_agendamento:
+        raise RegraNegocioError("Informe a hora do agendamento na fábrica.")
+    hora = hora_agendamento.strftime("%H:%M") if isinstance(hora_agendamento, dt.time) else str(hora_agendamento)[:5]
+    if not re.fullmatch(r"\d{2}:\d{2}", hora):
+        raise RegraNegocioError("Hora do agendamento inválida (use HH:MM).")
     if tipo not in SUGESTAO_PEDIDO:
         raise RegraNegocioError("Escolha Retornável ou Descartável.")
-    dados = {"data": data.isoformat(), "placa": placa, "numero_pedido": numero, "fabrica_id": int(fabrica_id), "tipo": tipo,
+    dados = {"data": data.isoformat(), "placa": placa, "numero_pedido": numero, "fabrica_id": int(fabrica_id),
+             "motorista_id": int(motorista_id), "hora_agendamento": hora, "tipo": tipo,
              "observacao": (observacao or "").strip() or None, **{k: 0.0 for k in EMBALAGENS_RETORNAVEL}, "paletes": 0.0}
     if tipo == "Retornável":
         for k in EMBALAGENS_RETORNAVEL:
@@ -129,7 +195,13 @@ def tabela(df: pd.DataFrame, com_filial: bool = False) -> pd.DataFrame:
         if com_filial:
             d["Filial"] = r.get("filial")
         fab = r.get("fabrica")
-        d.update({"Placa": r["placa"], "Pedido": r["numero_pedido"], "Fábrica": fab if isinstance(fab, str) else "—",
+        ag, pz = agendamento_dt(r), prazo_saida(r)
+        mot = r.get("motorista")
+        d.update({"Prioridade": prioridade(r)[1],
+                  "Placa": r["placa"], "Pedido": r["numero_pedido"], "Fábrica": fab if isinstance(fab, str) else "—",
+                  "Motorista": mot if isinstance(mot, str) else "—",
+                  "Agendamento fábrica": f"{ag:%d/%m %H:%M}" if ag else "—",
+                  "Sair da revenda até": f"{pz:%d/%m %H:%M}" if pz else "—",
                   "Tipo": r["tipo"],
                   **{rot: float(r.get(k) or 0) if r["tipo"] == "Retornável" else None
                      for k, rot in EMBALAGENS_RETORNAVEL.items()},

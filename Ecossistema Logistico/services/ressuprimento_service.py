@@ -80,6 +80,20 @@ def real_do_mes(operacao_id: int, mes_ano: str, acumulado: bool | None = None) -
     return real, sellin, str(d["data"].max())
 
 
+def real_txt_do_mes(operacao_id: int, mes_ano: str) -> pd.Series:
+    """Número do real como está escrito no relatório (última data de cada indicador). Só para uma filial."""
+    from repositories import operacoes_repo
+
+    if len(operacoes_repo.ids_efetivos(operacao_id)) != 1:
+        return pd.Series(dtype=object)
+    de, ate = _mes(mes_ano)
+    d = ressuprimento_repo.diario_ops_df(operacao_id, de, ate)
+    if d.empty or "volume_txt" not in d:
+        return pd.Series(dtype=object)
+    d = d.sort_values("data").groupby("cesta").last()
+    return d["volume_txt"].where(d["volume_txt"].map(lambda v: isinstance(v, str) and v.strip() != ""))
+
+
 def dia_referencia(operacao_id: int, mes_ano: str) -> int:
     """Último dia com lançamento no mês (base da projeção)."""
     d = ressuprimento_repo.diario_df(operacao_id, mes_ano)
@@ -213,7 +227,11 @@ def acompanhamento(operacao_id: int, ano: int, meses: list[int]) -> pd.DataFrame
              "ating_tend": tot["tendencia"] / tot["meta"] * 100 if tot["meta"] else None,
              "pendencia": tot["real"] - tot["meta"]}
     df = pd.concat([df, pd.DataFrame([total])], ignore_index=True)
-    df.attrs.update(dias_preenchidos=preenchidos, dias_periodo=dias_total, fator=fator)
+    # número do relatório como veio (só quando é um mês e uma filial)
+    txt = real_txt_do_mes(operacao_id, f"{ano}-{meses[0]:02d}") if len(meses) == 1 else pd.Series(dtype=object)
+    df["real_txt"] = df["cesta"].map(txt) if not txt.empty else None
+    df.attrs.update(dias_preenchidos=preenchidos, dias_periodo=dias_total, fator=fator,
+                    com_ponto=bool(txt.dropna().astype(str).str.contains(r"\.").any()) if not txt.empty else True)
     return df
 
 

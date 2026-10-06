@@ -99,14 +99,28 @@ def _trechos_spot(operacao_id: int) -> None:
 
 
 # --- Demais cadastros ------------------------------------------------------------------
-def _fabricas() -> None:
-    df = logistica_repo.fabricas_df()
-    tela(chave="fab", titulo="Fábricas (cervejarias)", icone="🏭", df=df,
-         descricao="Origem das viagens da frota própria, do App Carreteiro e do frete spot.",
-         campos=[Campo("nome", "Fábrica", obrigatorio=True), Campo("cidade", "Cidade"), Campo("uf", "UF")],
-         salvar=lambda fid, d: logistica_repo.salvar_fabrica(fid, _txt(d["nome"], "o nome"), d.get("cidade") or "",
-                                                             (d.get("uf") or "").upper()[:2]),
-         excluir=lambda fid: logistica_repo.excluir("fabricas", fid))
+def _fabricas(operacao_id: int | None = None) -> None:
+    from repositories import operacoes_repo
+
+    filial = operacoes_repo.buscar(operacao_id)["nome"] if operacao_id and not ui.somente_leitura(operacao_id) else None
+    df = logistica_repo.fabricas_df(operacao_id if filial else None)
+
+    def salvar(fid, d):
+        fid = logistica_repo.salvar_fabrica(fid, _txt(d["nome"], "o nome"), d.get("cidade") or "",
+                                            (d.get("uf") or "").upper()[:2])
+        if filial and fid:
+            logistica_repo.salvar_deslocamento(operacao_id, int(fid), float(d.get("deslocamento_h") or 0))
+
+    campos = [Campo("nome", "Fábrica", obrigatorio=True), Campo("cidade", "Cidade"), Campo("uf", "UF")]
+    if filial:
+        campos.append(Campo("deslocamento_h", f"Deslocamento {filial} → fábrica (h)", "numero", passo=0.5,
+                            ajuda="Horas de viagem da revenda até a fábrica. Prazo de saída da carreta = "
+                                  "agendamento na fábrica − este tempo."))
+    tela(chave="fab", titulo="Fábricas (cervejarias)", icone="🏭", df=df, por_linha=4 if filial else 3,
+         descricao="Origem das viagens da frota própria, do App Carreteiro e do frete spot."
+                   + (f" O deslocamento é o de **{filial}** (cada revenda tem o seu)." if filial else
+                      " Escolha uma filial no menu para informar o tempo de deslocamento."),
+         campos=campos, salvar=salvar, excluir=lambda fid: logistica_repo.excluir("fabricas", fid))
 
 
 def _carretas(operacao_id: int) -> None:
@@ -229,7 +243,7 @@ def render(usuario: dict, operacao_id: int) -> None:
     elif chave == "spot":
         _trechos_spot(operacao_id)
     elif chave == "fabricas":
-        _fabricas()
+        _fabricas(operacao_id)
     elif chave == "carretas":
         _carretas(operacao_id)
     elif chave == "motoristas":

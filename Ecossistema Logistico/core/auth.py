@@ -61,7 +61,8 @@ def _perms(usuario: dict) -> set[str]:
 
 # Telas novas liberadas junto com a tela "irmã" que o usuário já tinha (evita reconfigurar acessos)
 _ABAS_IRMAS = {"armazem.pedidos": "armazem.patio", "puxada.pedidos_dia": "puxada.disponibilidade",
-               "ressuprimento.puxada_pedidos": "ressuprimento.sugestao"}
+               "ressuprimento.puxada_pedidos": "ressuprimento.sugestao",
+               "ressuprimento.ruptura": "ressuprimento.estoque"}
 
 
 def pode_acessar_aba(usuario: dict, modulo: str, aba: str) -> bool:
@@ -90,7 +91,9 @@ def operacoes_permitidas(usuario: dict) -> list[dict]:
     if e_master(usuario) or not usuario.get("operacoes"):
         return todas
     ids = set(usuario["operacoes"])
-    return [o for o in todas if o["id"] in ids]
+    # visão consolidada (ex.: Bahia) aparece quando o usuário tem todas as filiais dela
+    return [o for o in todas if o["id"] in ids or (operacoes_repo.e_consolidada(o["id"])
+                                                   and set(operacoes_repo.ids_efetivos(o["id"])) <= ids)]
 
 
 # --- "Lembrar acesso" no link do motorista ------------------------------------

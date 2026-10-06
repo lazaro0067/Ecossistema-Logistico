@@ -121,9 +121,17 @@ def iniciar_viagem(usuario: dict, numero_pedido: str, data_ag: dt.date | None, h
         raise RegraNegocioError("Seu acesso não está ligado a um motorista. Fale com a Puxada.")
     if repo.viagem_ativa_motorista(mot["id"]):
         raise RegraNegocioError("Você já tem uma viagem em andamento.")
-    numero_pedido = (numero_pedido or "").strip()
+    numero_pedido = re.sub(r"\s+", "", numero_pedido or "")
     if not numero_pedido:
         raise RegraNegocioError("Informe o número do pedido.")
+    # Pedido lançado pela Puxada (📋 Pedidos D0/D+1/D+2): placa, fábrica e agendamento vêm dele
+    planejado = pedido_planejado(mot["operacao_id"], numero_pedido)
+    if planejado:
+        placa = planejado["placa"]
+        destino_id = planejado.get("fabrica_id") or destino_id
+        if planejado.get("hora_agendamento"):
+            data_ag = dt.date.fromisoformat(str(planejado["data"])[:10])
+            hora_ag = dt.datetime.strptime(planejado["hora_agendamento"], "%H:%M").time()
     if not destino_id:
         raise RegraNegocioError("Escolha o destino.")
     if not placa:
@@ -147,7 +155,22 @@ def iniciar_viagem(usuario: dict, numero_pedido: str, data_ag: dt.date | None, h
         "ts_inicio": ts,
     })
     repo.registrar_evento(vid, "inicio", ts, _geo_com_raio(mot["operacao_id"], "inicio", geo))
+    if planejado:
+        from repositories import pedidos_puxada_repo
+
+        pedidos_puxada_repo.ligar_viagem(planejado["id"], vid)
     return vid
+
+
+def pedido_planejado(operacao_id: int, numero_pedido: str) -> dict | None:
+    """Pedido aberto que a Puxada lançou com esse número (para o motorista só digitar o número)."""
+    from repositories import pedidos_puxada_repo
+
+    numero = re.sub(r"\s+", "", numero_pedido or "")
+    if not numero:
+        return None
+    p = pedidos_puxada_repo.pedido_por_numero(operacao_id, numero)
+    return p if p and p.get("status") != "Cancelado" else None
 
 
 def _viagem_do_usuario(usuario: dict, viagem_id: int) -> dict:

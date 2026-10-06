@@ -372,6 +372,14 @@ CREATE TABLE IF NOT EXISTS pedidos_puxada (
     finalizado_em  TEXT
 );
 
+-- Tempo de deslocamento de cada revenda (filial) até cada fábrica, em horas
+CREATE TABLE IF NOT EXISTS fabrica_deslocamento (
+    operacao_id INTEGER NOT NULL REFERENCES operacoes(id),
+    fabrica_id  INTEGER NOT NULL REFERENCES fabricas(id),
+    horas       REAL DEFAULT 0,
+    PRIMARY KEY (operacao_id, fabrica_id)
+);
+
 CREATE TABLE IF NOT EXISTS vinculos_pedidos (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     operacao_id       INTEGER NOT NULL REFERENCES operacoes(id),
@@ -659,6 +667,15 @@ MIGRACOES: list[tuple[str, str]] = [
     """),
     ("020_pedidos_puxada_fabrica", """
         ALTER TABLE pedidos_puxada ADD COLUMN fabrica_id INTEGER;
+    """),
+    # Pedido com motorista e hora do agendamento na fábrica (prazo de saída = agendamento − deslocamento),
+    # ligado à viagem do App Carreteiro. Ressuprimento guarda o número como veio no relatório.
+    ("021_pedido_agendamento", """
+        ALTER TABLE pedidos_puxada ADD COLUMN motorista_id INTEGER;
+        ALTER TABLE pedidos_puxada ADD COLUMN hora_agendamento TEXT;
+        ALTER TABLE pedidos_puxada ADD COLUMN viagem_id INTEGER;
+        ALTER TABLE ressuprimento_diario ADD COLUMN volume_txt TEXT;
+        CREATE INDEX IF NOT EXISTS ix_pedpux_num ON pedidos_puxada(operacao_id, numero_pedido);
     """),
 ]
 

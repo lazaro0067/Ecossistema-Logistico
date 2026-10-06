@@ -94,3 +94,43 @@ def status_cobertura(pct) -> str:
     if pct is None or pd.isna(pct):
         return "neutro"
     return "critico" if pct < 50 else "serio" if pct < 80 else "atencao" if pct < 100 else "bom"
+
+
+# --- Projeção de falta (ruptura) ---------------------------------------------------------
+def projecao_falta(operacao_id: int, dia: dt.date) -> pd.DataFrame:
+    """Quais produtos vão faltar no `dia` escolhido.
+
+    estoque no início do dia = disponível hoje + marcado (puxadas) antes do dia − venda média × dias até o dia
+    falta no dia            = venda média do dia − (estoque no início do dia + marcado para o próprio dia)
+    ruptura prevista        = hoje + (disponível + tudo que já está marcado até o dia) ÷ venda média
+    """
+    pos = armazem_service.posicao_com_indicadores(operacao_id)
+    if pos.empty:
+        return pos
+    hoje = tempo.hoje()
+    dias = max((dia - hoje).days, 0)
+    marc = marcado_por_dia(operacao_id)
+    antes = marc[marc["data_puxada"] < dia.isoformat()] if not marc.empty else marc
+    no_dia = marc[marc["data_puxada"] == dia.isoformat()] if not marc.empty else marc
+    pos["entrada_antes"] = pos["cod"].map(antes.groupby("cod")["cx_marcadas"].sum() if not antes.empty else {}).fillna(0.0)
+    pos["entrada_dia"] = pos["cod"].map(no_dia.groupby("cod")["cx_marcadas"].sum() if not no_dia.empty else {}).fillna(0.0)
+    lin = pos["linear_cx_dia"]
+    pos["estoque_inicio"] = pos["disponivel"] + pos["entrada_antes"] - lin * dias
+    pos["estoque_fim"] = pos["estoque_inicio"] + pos["entrada_dia"] - lin
+    pos["falta_cx"] = np.maximum(-pos["estoque_fim"], 0.0).round(0)
+    total = pos["disponivel"] + pos["entrada_antes"] + pos["entrada_dia"]
+    pos["cobertura_dias"] = np.where(lin > 0, total / lin, np.nan)
+    pos["ruptura_em"] = [hoje + dt.timedelta(days=int(c)) if lin_ > 0 and c == c else None
+                         for c, lin_ in zip(pos["cobertura_dias"], lin)]
+    pos["falta_paletes"] = np.where(pos["cx_pallet"] > 0, np.ceil(pos["falta_cx"] / pos["cx_pallet"]), 0.0)
+    pos["falta_hl"] = pos["falta_cx"] * pos["fator_hl"]
+    # sobra no fim do dia em dias de venda (para avisar o que fica no limite)
+    pos["sobra_dias"] = np.where(lin > 0, pos["estoque_fim"] / lin, np.nan)
+    pos["situacao_dia"] = np.select(
+        [lin <= 0, pos["estoque_inicio"] <= 0, pos["estoque_fim"] < 0, pos["sobra_dias"] < 1],
+        ["Sem giro", "⛔ Sem estoque no dia", "🔴 Falta durante o dia", "🟡 No limite (< 1 dia)"], default="🟢 Coberto")
+    ordem = {"⛔ Sem estoque no dia": 0, "🔴 Falta durante o dia": 1, "🟡 No limite (< 1 dia)": 2, "🟢 Coberto": 3,
+             "Sem giro": 4}
+    pos["_o"] = pos["situacao_dia"].map(ordem)
+    pos.attrs["dias"] = dias
+    return pos.sort_values(["_o", "falta_cx", "linear_cx_dia"], ascending=[True, False, False]).drop(columns="_o")

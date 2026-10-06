@@ -21,7 +21,7 @@ from config.settings import DB_PATH
 
 # Tabelas que NÃO têm coluna "id" (o INSERT no Postgres não pode pedir RETURNING id)
 _SEM_ID = {"usuario_modulos", "usuario_operacoes", "produtos", "estoque", "linear_vendas", "metas_doi", "fluxo_caixa",
-           "_migracoes"}
+           "_migracoes", "fabrica_deslocamento"}
 
 
 def database_url() -> str | None:

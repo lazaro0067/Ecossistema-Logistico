@@ -18,7 +18,7 @@ def diario_df(operacao_id: int, mes_ano: str) -> pd.DataFrame:
 def diario_ops_df(operacao_id: int, de: str | None = None, ate: str | None = None) -> pd.DataFrame:
     """Linhas por filial (sem somar) — base do cálculo do real do mês."""
     f_sql, ids = operacoes_repo.filtro("operacao_id", operacao_id)
-    sql, p = (f"""SELECT operacao_id, data, cesta, volume_sellin_hl, volume_real_hl FROM ressuprimento_diario
+    sql, p = (f"""SELECT operacao_id, data, cesta, volume_sellin_hl, volume_real_hl, volume_txt FROM ressuprimento_diario
                   WHERE {f_sql}""", list(ids))
     if de:
         sql += " AND data >= ?"

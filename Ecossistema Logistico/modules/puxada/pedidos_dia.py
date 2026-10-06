@@ -35,6 +35,7 @@ _CSS = """
 .pp-emb div { background:#f6f8fb; border-radius:8px; padding:.25rem .3rem; text-align:center; font-size:.7rem; color:#5f6b7a; }
 .pp-emb div b { display:block; font-size:1rem; color:#0B1F3A; }
 .pp-emb div.zero b { color:#c3c2bc; }
+.pp-ag { display:flex; flex-direction:column; gap:.05rem; font-size:.78rem; color:#3d3c39; margin:.15rem 0 .3rem; }
 .pp-rod { font-size:.74rem; color:#77766f; margin-top:.4rem; }
 .pp-placas { display:flex; flex-wrap:wrap; gap:.4rem; margin:.3rem 0 .8rem; }
 .pp-placa { border:1.5px solid var(--c); border-radius:10px; padding:.3rem .6rem; font-size:.8rem; background:#fff; }
@@ -69,6 +70,14 @@ def _card(r: dict, com_filial: bool = False) -> str:
         d = tempo.parse_dt(r["finalizado_em"])
         fim = f" · ✅ {_e(r.get('finalizado_por'))} {d:%d/%m %H:%M}" if d else ""
     filial = f"🏢 {_e(r.get('filial'))} · " if com_filial else ""
+    _, prio, cor_prio = svc.prioridade(r)
+    ag, pz = svc.agendamento_dt(r), svc.prazo_saida(r)
+    mot = r.get("motorista") if isinstance(r.get("motorista"), str) else ""
+    viagem = " · 📱 viagem iniciada" if isinstance(r.get("viagem_status"), str) and r.get("viagem_status") else ""
+    agenda = (f'<div class="pp-ag"><span>👤 {_e(mot) or "sem motorista"}{viagem}</span>'
+              f'<span>🕒 fábrica {f"{ag:%d/%m %H:%M}" if ag else "—"}</span>'
+              f'<span style="color:{cor_prio}"><b>🚦 sair até {f"{pz:%d/%m %H:%M}" if pz else "—"} · {_e(prio)}</b>'
+              f'</span></div>')
     fab = f" · 🏭 {_e(r['fabrica'])}" if isinstance(r.get("fabrica"), str) and r.get("fabrica") else ""
     obs = f"<br>📝 {_e(r.get('observacao'))}" if isinstance(r.get("observacao"), str) and r.get("observacao") else ""
     return (f'<div class="pp-card {"cancelado" if r["status"] == "Cancelado" else ""}" style="--c:{cor};--f:{fundo}">'
@@ -76,14 +85,14 @@ def _card(r: dict, com_filial: bool = False) -> str:
             f'{_e(r["status"])}</span></div><div class="pp-ped">Pedido <b>{_e(r["numero_pedido"])}</b>{fab} · '
             f'{_e(svc.rotulo_dia(dt.date.fromisoformat(str(r["data"])[:10])))}</div>'
             f'<span class="pp-tipo">{ICONE_TIPO.get(r["tipo"], "")} {_e(r["tipo"])} · {_f(r.get("paletes"))} palete(s)</span>'
-            f'{corpo}<div class="pp-rod">{filial}lançado por {_e(r.get("criado_por"))}{fim}{obs}</div></div>')
+            f'{agenda}{corpo}<div class="pp-rod">{filial}lançado por {_e(r.get("criado_por"))}{fim}{obs}</div></div>')
 
 
 def _cards(df: pd.DataFrame, com_filial: bool = False) -> None:
     if df.empty:
         return
-    ordem = {"Aberto": 0, "Finalizado": 1, "Cancelado": 2}
-    regs = sorted(df.to_dict("records"), key=lambda r: (ordem.get(r["status"], 3), str(r["placa"])))
+    regs = sorted(df.to_dict("records"), key=lambda r: (svc.prioridade(r)[0], str(svc.prazo_saida(r) or ""),
+                                                        str(r["placa"])))
     st.markdown(_CSS + '<div class="pp-grid">' + "".join(_card(r, com_filial) for r in regs)
                 + "</div>", unsafe_allow_html=True)
 
@@ -164,6 +173,30 @@ def _form(usuario: dict, operacao_id: int, d: dt.date, atual: dict | None, chave
     fabrica_id = c2.selectbox("🏭 Fábrica *", ids_fab, format_func=nomes_fab.get, key=f"{chave}_fab",
                               index=ids_fab.index(fab_atual) if fab_atual else (0 if len(ids_fab) == 1 else None),
                               placeholder="Selecione a fábrica...")
+    mots = logistica_repo.motoristas_df(operacao_id)
+    nomes_mot = {int(r["id"]): r["nome"] for r in mots.to_dict("records")} if not mots.empty else {}
+    if not nomes_mot:
+        st.warning("Cadastre os motoristas em **⚙️ Cadastros › 👤 Motoristas** para lançar pedidos.")
+        return
+    m1, m2, m3 = st.columns([1.5, 1.3, 1])
+    mot_atual = (atual or {}).get("motorista_id")
+    mot_atual = int(mot_atual) if mot_atual and int(mot_atual) in nomes_mot else None
+    ids_mot = list(nomes_mot)
+    motorista_id = m1.selectbox("👤 Motorista *", ids_mot, format_func=nomes_mot.get, key=f"{chave}_mot",
+                                index=ids_mot.index(mot_atual) if mot_atual else None,
+                                placeholder="Selecione o motorista...")
+    h_atual = (atual or {}).get("hora_agendamento")
+    h_atual = dt.datetime.strptime(h_atual, "%H:%M").time() if isinstance(h_atual, str) and h_atual else None
+    hora_ag = m2.time_input(f"🕒 Agendamento na fábrica ({d:%d/%m}) *", value=h_atual,
+                            step=dt.timedelta(minutes=15), key=f"{chave}_hora")
+    if hora_ag and fabrica_id:
+        desl = logistica_repo.deslocamento_h(operacao_id, fabrica_id)
+        pz = svc.prazo_saida({"data": d.isoformat(), "hora_agendamento": hora_ag.strftime("%H:%M"),
+                              "deslocamento_h": desl})
+        m3.markdown(f"**🚦 Sair da revenda até**  \n{pz:%d/%m %H:%M}" if desl else
+                    "**🚦 Prazo de saída**  \nsem deslocamento cadastrado")
+        if not desl:
+            m3.caption("Informe em ⚙️ Cadastros › 🏭 Fábricas.")
     sug = info.get(placa, {}).get("sugestao")
     padrao = (atual or {}).get("tipo") or (sug if sug in SUGESTAO_PEDIDO else None)
     tipo = st.radio("Tipo *", SUGESTAO_PEDIDO, horizontal=True, key=f"{chave}_tipo_{placa}",
@@ -185,7 +218,8 @@ def _form(usuario: dict, operacao_id: int, d: dt.date, atual: dict | None, chave
     if st.button("💾 Salvar pedido" if not atual else "💾 Salvar alteração", type="primary", key=f"{chave}_ok"):
         try:
             svc.salvar_pedido(operacao_id, atual["id"] if atual else None, d, placa, numero, tipo, qtds, paletes, obs,
-                              usuario.get("nome") or usuario.get("login") or "", fabrica_id=fabrica_id)
+                              usuario.get("nome") or usuario.get("login") or "", fabrica_id=fabrica_id,
+                              motorista_id=motorista_id, hora_agendamento=hora_ag)
         except RegraNegocioError as e:
             st.error(str(e))
         else:
@@ -252,23 +286,36 @@ def tela_armazem(usuario: dict, operacao_id: int) -> None:
     ds = svc.dias_pedido()
     df = repo.pedidos_df(operacao_id, ds[0].isoformat(), ds[-1].isoformat())
     atrasados = repo.pedidos_df(operacao_id, None, (hoje - dt.timedelta(days=1)).isoformat(), apenas_abertos=True)
-    _kpis(df, "kp_pp_arm", [{"titulo": "Abertos de dias anteriores", "valor": len(atrasados), "icone": "⏰",
-                            "status": "critico" if len(atrasados) else "bom",
-                            "dados": svc.tabela(atrasados, consolidada)}])
-    opcoes = {"D0": svc.rotulo_dia(ds[0]), "D1": svc.rotulo_dia(ds[1])}
+    abertos = pd.concat([atrasados, df[df["status"] == "Aberto"] if not df.empty else df]).drop_duplicates("id") \
+        if not (atrasados.empty and df.empty) else df
+    prios = [svc.prioridade(r)[0] for r in abertos.to_dict("records")] if not abertos.empty else []
+    urgentes = abertos[[p <= 2 for p in prios]] if prios else abertos
+    _kpis(df, "kp_pp_arm", [
+        {"titulo": "🚦 Saem em até 6h / atrasados", "valor": len(urgentes), "icone": "",
+         "status": "critico" if any(p <= 1 for p in prios) else "atencao" if len(urgentes) else "bom",
+         "dados": svc.tabela(urgentes, consolidada) if not urgentes.empty else None},
+        {"titulo": "Abertos de dias anteriores", "valor": len(atrasados), "icone": "⏰",
+         "status": "critico" if len(atrasados) else "bom", "dados": svc.tabela(atrasados, consolidada)}])
+    opcoes = {"PRIO": f"🚦 Prioridades ({len(abertos)} aberto(s))",
+              **{f"D{i}": svc.rotulo_dia(d) for i, d in enumerate(ds)}}
     if len(atrasados):
         opcoes["ATR"] = f"⏰ Pendentes anteriores ({len(atrasados)})"
-    esc = ui._escolha("pp_arm_dia", list(opcoes), "D0", formatar=opcoes.get, pills=True)
-    if esc == "ATR":
+    esc = ui._escolha("pp_arm_dia", list(opcoes), "PRIO", formatar=opcoes.get, pills=True)
+    if esc == "PRIO":
+        lista = abertos
+        st.caption("Ordem de prioridade: prazo máximo para a carreta **sair da revenda** = agendamento na fábrica − "
+                   "tempo de deslocamento até a fábrica.")
+    elif esc == "ATR":
         lista = atrasados
     else:
-        d = ds[0] if esc == "D0" else ds[1]
+        d = ds[int(esc[1:])]
         lista = df[df["data"] == d.isoformat()] if not df.empty else df
     st.caption("Confira a carga e clique em **✅ Finalizado** — o status muda na Puxada e no Ressuprimento na hora.")
     if lista.empty:
         st.info("Nenhum pedido para este dia.")
         return
-    regs = lista.sort_values(["status", "placa"]).to_dict("records")
+    regs = sorted(lista.to_dict("records"), key=lambda r: (svc.prioridade(r)[0], str(svc.prazo_saida(r) or ""),
+                                                           str(r["placa"])))
     for ini in range(0, len(regs), 3):
         for col, r in zip(st.columns(3), regs[ini:ini + 3]):
             with col:
