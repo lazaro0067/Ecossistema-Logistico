@@ -26,10 +26,8 @@ def _legivel(df: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame(columns=["", "Indicador", "Meta (HL)", "Real (HL)", "Tendência (HL)", "Ating. real",
                                      "Ating. tendência", "Pendência (HL)"])
     tem_meta = df["meta"] > 0
-    ponto = df.attrs.get("com_ponto", True)
-    num = (lambda v: ui.numero(v)) if ponto else (lambda v: f"{float(v or 0):.0f}")  # noqa: E731
-    txt = df["real_txt"] if "real_txt" in df else pd.Series([None] * len(df), index=df.index)
-    real = [t if isinstance(t, str) and t else num(v) for t, v in zip(txt, df["real"])]
+    num = ui.numero  # ponto de milhar a partir de mil: 5.025 · 189.312
+    real = df["real"].map(num)
     return pd.DataFrame({
         "": df["ating_tend"].map(lambda p: _COR[tema.status_atingimento(p if pd.notna(p) else None)]),
         "Indicador": df["indicador"],

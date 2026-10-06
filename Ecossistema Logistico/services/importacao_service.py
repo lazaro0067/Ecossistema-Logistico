@@ -487,10 +487,16 @@ def _gravar_multi_operacao(df: pd.DataFrame, operacao_padrao: int | None, agora:
     df["volume_sellin_hl"] = df["volume_real_hl"]  # o original usa o HL puxado como realizado
     df["dt_atualizacao"] = agora
     df = df.drop(columns=["operacao"], errors="ignore")
-    # um valor por revenda + data + indicador (como no sistema original: vale a última linha do arquivo)
+    # um valor por revenda + data + indicador = SOMA da coluna C de todas as linhas desse indicador no dia
     df["cesta"] = df["cesta"].astype(str).str.strip()
     df = df[df["cesta"].ne("") & df["data"].notna()]
-    df = df.drop_duplicates(subset=["operacao_id", "data", "cesta"], keep="last")
+    chaves = ["operacao_id", "data", "cesta"]
+    soma = df.groupby(chaves, as_index=False)[["volume_real_hl", "volume_sellin_hl"]].sum()
+    if "volume_txt" in df:
+        # texto do relatório só vale quando o indicador tem uma linha no dia (senão o número é a soma)
+        cont = df.groupby(chaves)["volume_txt"].agg(lambda s: s.iloc[0] if len(s) == 1 else None).reset_index()
+        soma = soma.merge(cont, on=chaves, how="left")
+    df = soma.assign(dt_atualizacao=agora)
     # o período que o arquivo traz substitui o que estava gravado (limpa importações erradas)
     from database.connection import execute as _exec
     for op_id, g in df.groupby("operacao_id"):

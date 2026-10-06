@@ -60,7 +60,11 @@ def render(operacao_id: int, key: str, mostrar_download: bool = True) -> None:
     if busca:
         vis = vis[vis["cod"].astype(str).str.contains(busca) | vis["descricao"].str.contains(busca, case=False)]
 
-    modo = st.radio("Visualização", ["📊 Tabela", "📱 Cards (D0, D1, D2)"], horizontal=True, key=f"{key}_modo")
+    modo = st.radio("Visualização", ["📊 Tabela", "📲 Para enviar no grupo", "📱 Cards (D0, D1, D2)"],
+                    horizontal=True, key=f"{key}_modo")
+    if modo.startswith("📲"):
+        _grupo(vis, operacao_id, key)
+        return
     st.caption(f"{len(vis)} produto(s)")
     if modo.startswith("📱"):
         _cards(vis.head(120))
@@ -106,3 +110,84 @@ def _cards(df) -> None:
     metade = (len(partes) + 1) // 2
     c1.markdown("".join(partes[:metade]), unsafe_allow_html=True)
     c2.markdown("".join(partes[metade:]), unsafe_allow_html=True)
+
+
+# --- Modo "para enviar no grupo": cabe na tela (print) e gera o texto do WhatsApp ----------------
+_CSS_GRUPO = """
+<style>
+.eg-box { background:#fff; border:1px solid #dfe5ee; border-radius:14px; padding:.8rem .9rem; max-width:760px; }
+.eg-tit { display:flex; justify-content:space-between; align-items:baseline; gap:.5rem; margin-bottom:.45rem; }
+.eg-tit b { font-size:1.05rem; color:#0B1F3A; } .eg-tit span { font-size:.78rem; color:#6b6a65; }
+.eg-tab { width:100%; border-collapse:collapse; font-size:.8rem; }
+.eg-tab th { background:#eef3fa; color:#0B1F3A; font-weight:800; padding:.35rem .3rem; text-align:right; }
+.eg-tab th:first-child, .eg-tab td:first-child { text-align:left; white-space:normal; line-height:1.2; }
+.eg-tab td { padding:.3rem .3rem; border-bottom:1px solid #eceae4; text-align:right; white-space:nowrap; }
+.eg-tab tr.out td { background:#fdecec; } .eg-tab tr.low td { background:#fff8e1; }
+.eg-tab td.z { color:#c3c2bc; }
+.eg-leg { font-size:.72rem; color:#6b6a65; margin-top:.4rem; }
+</style>
+"""
+_CLASSE = {"Stock Out": "out", "Stock Low": "low"}
+
+
+def _curto(nome: str, n: int = 34) -> str:
+    nome = " ".join(str(nome or "").split())
+    return nome if len(nome) <= n else nome[: n - 1].rstrip() + "…"
+
+
+def _grupo(vis, operacao_id: int, key: str) -> None:
+    import html as _h
+
+    from core import tempo
+    from repositories import operacoes_repo
+
+    c1, c2, c3 = st.columns([2, 1, 1])
+    status_sel = c1.multiselect("Mostrar status", list(STATUS), default=["Stock Out", "Stock Low"],
+                                format_func=lambda s: f"{STATUS[s][1]} {s}", key=f"{key}_g_status")
+    so_marc = c2.toggle("Só com puxada D0–D2", value=False, key=f"{key}_g_marc")
+    ordem = c3.selectbox("Ordenar por", ["Cobertura", "Produto", "Estoque"], key=f"{key}_g_ord")
+    g = vis[vis["status_comercial"].isin(status_sel)] if status_sel else vis
+    if so_marc:
+        g = g[(g["d0"] + g["d1"] + g["d2"]) > 0]
+    g = g.sort_values({"Cobertura": "doi", "Produto": "descricao", "Estoque": "disponivel"}[ordem],
+                      na_position="last")
+    if g.empty:
+        st.info("Nenhum produto com esses filtros.")
+        return
+    filial = (operacoes_repo.buscar(operacao_id) or {}).get("nome", "")
+    agora = tempo.agora()
+
+    def n(v):
+        return "–" if not v or v != v else ui.numero(v)
+
+    linhas = []
+    for r in g.itertuples():
+        doi = "–" if r.doi != r.doi else f"{ui.numero(r.doi, 1)}d"
+        linhas.append(
+            f'<tr class="{_CLASSE.get(r.status_comercial, "")}"><td>{STATUS[r.status_comercial][1]} '
+            f'{_h.escape(_curto(r.descricao, 48))}</td><td><b>{ui.numero(r.disponivel)}</b></td>'
+            + "".join(f'<td class="{"z" if not v else ""}">{n(v)}</td>' for v in (r.d0, r.d1, r.d2))
+            + f"<td>{doi}</td></tr>")
+    st.markdown(
+        _CSS_GRUPO + f'<div class="eg-box"><div class="eg-tit"><b>📦 Estoque · {_h.escape(filial)}</b>'
+        f'<span>{agora:%d/%m %H:%M} · {len(g)} produto(s)</span></div>'
+        '<table class="eg-tab"><thead><tr><th>Produto</th><th>Estoque</th><th>D0</th><th>D1</th><th>D2</th>'
+        f'<th>Cob.</th></tr></thead><tbody>{"".join(linhas)}</tbody></table>'
+        '<div class="eg-leg">Estoque em caixas · D0/D1/D2 = puxadas marcadas · Cob. = dias de cobertura · '
+        '🔴 Stock Out · 🟡 Stock Low · 🟢 Ideal · 🔵 Over</div></div>', unsafe_allow_html=True)
+    st.caption("📸 Tire o print do quadro acima ou copie o texto abaixo para colar no grupo.")
+    texto = [f"*📦 Estoque {filial} — {agora:%d/%m %H:%M}*", ""]
+    for rot in STATUS:
+        sub = g[g["status_comercial"] == rot]
+        if sub.empty:
+            continue
+        texto.append(f"{STATUS[rot][1]} *{rot}* ({len(sub)})")
+        for r in sub.itertuples():
+            puxada = " + ".join(f"{d} {ui.numero(v)}" for d, v in (("D0", r.d0), ("D1", r.d1), ("D2", r.d2)) if v)
+            doi = "" if r.doi != r.doi else f" · {ui.numero(r.doi, 1)}d"
+            texto.append(f"• {_curto(r.descricao, 40)} — {ui.numero(r.disponivel)} cx{doi}"
+                         + (f" · puxada {puxada}" if puxada else ""))
+        texto.append("")
+    with st.expander("📋 Texto para WhatsApp (copiar)"):
+        st.code("\n".join(texto).strip(), language=None)
+    ui.downloads(g.drop(columns=["situacao"], errors="ignore"), "estoque_grupo", key=f"dl_{key}_g")
