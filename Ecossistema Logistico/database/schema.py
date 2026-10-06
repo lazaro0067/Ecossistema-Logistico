@@ -392,6 +392,17 @@ CREATE TABLE IF NOT EXISTS ferias_motoristas (
     criado_em    TEXT
 );
 
+-- Motorista "em serviço" fora de viagem (manobra, oficina, abastecimento...) — marcado no App Carreteiro
+CREATE TABLE IF NOT EXISTS servicos_motorista (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id  INTEGER NOT NULL REFERENCES operacoes(id),
+    motorista_id INTEGER NOT NULL REFERENCES motoristas(id),
+    tipo         TEXT,
+    observacao   TEXT,
+    inicio       TEXT NOT NULL,
+    fim          TEXT
+);
+
 CREATE TABLE IF NOT EXISTS vinculos_pedidos (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     operacao_id       INTEGER NOT NULL REFERENCES operacoes(id),
@@ -696,6 +707,19 @@ MIGRACOES: list[tuple[str, str]] = [
     ("023_ferias_motoristas", """
         CREATE INDEX IF NOT EXISTS ix_ferias_mot ON ferias_motoristas(motorista_id, inicio, fim);
         CREATE INDEX IF NOT EXISTS ix_vc_mot_fim ON viagens_carreteiro(motorista_id, ts_fim);
+    """),
+    # Vasilhames Corona 600 e Outros, janela do agendamento (início–fim), reprogramação (substitui o pedido),
+    # perfil do veículo (9 eixos 42 paletes / LS 28) e motorista em serviço no app
+    ("024_pedido_janela_reprog", """
+        ALTER TABLE pedidos_puxada ADD COLUMN p_corona600 REAL DEFAULT 0;
+        ALTER TABLE pedidos_puxada ADD COLUMN p_outros REAL DEFAULT 0;
+        ALTER TABLE pedidos_puxada ADD COLUMN outros_desc TEXT;
+        ALTER TABLE pedidos_puxada ADD COLUMN hora_agendamento_fim TEXT;
+        ALTER TABLE pedidos_puxada ADD COLUMN substitui_id INTEGER;
+        ALTER TABLE pedidos_puxada ADD COLUMN substituido_por INTEGER;
+        ALTER TABLE pedidos_puxada ADD COLUMN reprogramado_motivo TEXT;
+        ALTER TABLE carretas ADD COLUMN perfil TEXT;
+        CREATE INDEX IF NOT EXISTS ix_serv_mot ON servicos_motorista(motorista_id, inicio);
     """),
 ]
 

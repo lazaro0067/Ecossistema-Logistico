@@ -548,7 +548,36 @@ def _area_viagem(usuario: dict, mot: dict) -> None:
         if _continuar(v):
             _viagem(usuario, v, geo)
     else:
+        if _em_servico(mot):
+            return
         _nova_viagem(usuario, mot, geo)
+
+
+def _em_servico(mot: dict) -> bool:
+    """➕ Em serviço: o motorista registra que está trabalhando fora de viagem. True = está em serviço agora."""
+    from config.settings import TIPOS_SERVICO_MOTORISTA
+    from repositories import motoristas_repo
+    from services import disp_motoristas_service as dms
+
+    ativo = motoristas_repo.servico_ativo(mot["id"])
+    if ativo:
+        ini = tempo.parse_dt(ativo["inicio"])
+        st.markdown(
+            f'<div class="car-viagem"><div class="lin"><span>🔧 Em serviço</span><b>{tema._e(ativo.get("tipo") or "")}</b>'
+            f'</div><div class="lin"><span>Desde</span><b>{ini:%d/%m %H:%M}</b></div>'
+            + (f'<div class="lin"><span>Obs.</span><b>{tema._e(ativo["observacao"])}</b></div>'
+               if ativo.get("observacao") else "") + "</div>", unsafe_allow_html=True)
+        with st.container(key="car_fim"):
+            if st.button("⏹️  ENCERRAR SERVIÇO", type="primary", key="car_serv_fim", **ui.LARGURA):
+                ui.acao(dms.encerrar_servico, mot, sucesso="Serviço encerrado.")
+        st.caption("Ao iniciar uma viagem, encerre o serviço primeiro.")
+        return True
+    with st.expander("➕ Em serviço (outra atividade fora de viagem)"):
+        tipo = st.selectbox("O que você vai fazer?", TIPOS_SERVICO_MOTORISTA, key="car_serv_tipo")
+        obs = st.text_input("Observação", key="car_serv_obs", placeholder="opcional (obrigatório em “Outro”)")
+        if st.button("▶️ Começar serviço", type="primary", key="car_serv_ini", **ui.LARGURA):
+            ui.acao(dms.iniciar_servico, mot, tipo, obs, sucesso=f"Em serviço: {tipo}.")
+    return False
 
 
 MESES_PT = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro",

@@ -31,7 +31,7 @@ _CSS = """
 .pp-ped { font-size:.86rem; color:#3d3c39; margin-top:.1rem; }
 .pp-tipo { display:inline-block; font-size:.74rem; font-weight:700; padding:.1rem .5rem; border-radius:999px;
     background:#eef3fa; color:#2a5ca8; margin:.35rem 0 .25rem; }
-.pp-emb { display:grid; grid-template-columns: repeat(4, 1fr); gap:.3rem; margin-top:.2rem; }
+.pp-emb { display:grid; grid-template-columns: repeat(3, 1fr); gap:.3rem; margin-top:.2rem; }
 .pp-emb div { background:#f6f8fb; border-radius:8px; padding:.25rem .3rem; text-align:center; font-size:.7rem; color:#5f6b7a; }
 .pp-emb div b { display:block; font-size:1rem; color:#0B1F3A; }
 .pp-emb div.zero b { color:#c3c2bc; }
@@ -44,7 +44,8 @@ _CSS = """
 .pp-placa b { color:#0B1F3A; } .pp-placa span { color:var(--c); font-weight:700; }
 </style>
 """
-_COR_ST = {"Aberto": ("#b7791f", "#fdf3e1"), "Finalizado": ("#146c43", "#e8f6ee"), "Cancelado": ("#77766f", "#f0efec")}
+_COR_ST = {"Aberto": ("#b7791f", "#fdf3e1"), "Finalizado": ("#146c43", "#e8f6ee"), "Cancelado": ("#77766f", "#f0efec"),
+           "Reprogramado": ("#5b3fc4", "#ece8fb")}
 
 
 def _e(v) -> str:
@@ -63,7 +64,8 @@ def _card(r: dict, com_filial: bool = False) -> str:
     cor, fundo = _COR_ST.get(r["status"], ("#52514e", "#f0efec"))
     if r["tipo"] == "Retornável":
         corpo = '<div class="pp-emb">' + "".join(
-            f'<div class="{"zero" if not float(r.get(k) or 0) else ""}"><b>{_f(r.get(k))}</b>{_e(rot)}</div>'
+            f'<div class="{"zero" if not svc._v(r.get(k)) else ""}"><b>{_f(r.get(k))}</b>'
+            f'{_e(rot if k != "p_outros" or not isinstance(r.get("outros_desc"), str) else "Outros: " + r["outros_desc"])}</div>'
             for k, rot in EMBALAGENS_RETORNAVEL.items()) + "</div>"
     else:
         corpo = ""
@@ -77,7 +79,7 @@ def _card(r: dict, com_filial: bool = False) -> str:
     mot = r.get("motorista") if isinstance(r.get("motorista"), str) else ""
     viagem = " · 📱 viagem iniciada" if isinstance(r.get("viagem_status"), str) and r.get("viagem_status") else ""
     agenda = (f'<div class="pp-ag"><span>👤 {_e(mot) or "sem motorista"}{viagem}</span>'
-              f'<span>🕒 fábrica {f"{ag:%d/%m %H:%M}" if ag else "—"}</span>'
+              f'<span>🕒 slot na fábrica {f"{ag:%d/%m} {svc.janela_txt(r)}" if ag else "—"}</span>'
               f'<span style="color:{cor_prio}"><b>🚦 sair até {f"{pz:%d/%m %H:%M}" if pz else "—"} · {_e(prio)}</b>'
               f'</span></div>')
     fab = f" · 🏭 {_e(r['fabrica'])}" if isinstance(r.get("fabrica"), str) and r.get("fabrica") else ""
@@ -87,7 +89,14 @@ def _card(r: dict, com_filial: bool = False) -> str:
         quando = tempo.parse_dt(r["editado_em"])
         editado = (f'<div class="pp-edit">✏️ <b>Editado</b> por {_e(r.get("editado_por"))} em '
                    f'{quando:%d/%m às %H:%M}<br><span>{_e(r.get("editado_resumo"))}</span></div>' if quando else "")
-    return (f'<div class="pp-card {"cancelado" if r["status"] == "Cancelado" else ""}" style="--c:{cor};--f:{fundo}">'
+    reprog = ""
+    if r["status"] == "Reprogramado":
+        reprog = (f'<div class="pp-edit">🔁 <b>Reprogramado</b> — substituído por novo agendamento'
+                  f'{": " + _e(r.get("reprogramado_motivo")) if isinstance(r.get("reprogramado_motivo"), str) else ""}</div>')
+    elif svc._v(r.get("substitui_id")):
+        reprog = '<div class="pp-edit">🔁 <b>Reprogramação</b> — substitui um agendamento anterior deste pedido</div>'
+    editado = reprog + editado
+    return (f'<div class="pp-card {"cancelado" if r["status"] in ("Cancelado", "Reprogramado") else ""}" style="--c:{cor};--f:{fundo}">'
             f'<div class="pp-top"><b>🚛 {_e(r["placa"])}</b><span class="pp-st">{svc.STATUS_ICONE.get(r["status"], "")} '
             f'{_e(r["status"])}</span></div><div class="pp-ped">Pedido <b>{_e(r["numero_pedido"])}</b>{fab} · '
             f'{_e(svc.rotulo_dia(dt.date.fromisoformat(str(r["data"])[:10])))}</div>'
@@ -144,6 +153,10 @@ def _chips_placas(dia: pd.DataFrame) -> None:
 
 # --- Formulário (novo / alterar) ------------------------------------------------------------
 def _form(usuario: dict, operacao_id: int, d: dt.date, atual: dict | None, chave: str) -> None:
+    if not atual:  # data do agendamento: D0 a D+3
+        ds = svc.dias_pedido()
+        d = st.selectbox("📅 Data do agendamento *", ds, index=ds.index(d) if d in ds else 0,
+                         format_func=svc.rotulo_dia, key=f"{chave}_data")
     dia = _placas_do_dia(operacao_id, d)
     info = {r["placa"]: r for r in dia.to_dict("records")} if not dia.empty else {}
     ordem = sorted(info, key=lambda p: (info[p]["status"] != "Disponível", p))
@@ -158,7 +171,8 @@ def _form(usuario: dict, operacao_id: int, d: dt.date, atual: dict | None, chave
         if not r:
             return p
         sug = r.get("sugestao") if isinstance(r.get("sugestao"), str) else ""
-        return f"{p} · {r['status']}" + (f" · sugestão {sug}" if sug else "")
+        cap = svc.capacidade_paletes(operacao_id, p)
+        return f"{p}{f' ({cap} pal.)' if cap else ''} · {r['status']}" + (f" · sugestão {sug}" if sug else "")
 
     from repositories import logistica_repo
 
@@ -173,7 +187,8 @@ def _form(usuario: dict, operacao_id: int, d: dt.date, atual: dict | None, chave
     st_placa = info.get(placa, {}).get("status")
     if st_placa and st_placa != "Disponível":
         c1.caption(f"⚠️ Esta placa está **{st_placa}** em {d:%d/%m}.")
-    numero = c3.text_input("Nº do pedido *", value=(atual or {}).get("numero_pedido") or "", key=f"{chave}_num")
+    numero = c3.text_input("Nº do(s) pedido(s) *", value=(atual or {}).get("numero_pedido") or "", key=f"{chave}_num",
+                           placeholder="4501, 4502", help="Mais de um pedido no mesmo agendamento: separe por vírgula.")
     fab_atual = (atual or {}).get("fabrica_id")
     fab_atual = int(fab_atual) if fab_atual and int(fab_atual) in nomes_fab else None
     ids_fab = list(nomes_fab)
@@ -204,46 +219,58 @@ def _form(usuario: dict, operacao_id: int, d: dt.date, atual: dict | None, chave
     motorista_id = m1.selectbox("👤 Motorista *", ids_mot, format_func=rot_mot, key=f"{chave}_mot",
                                 index=ids_mot.index(mot_atual) if mot_atual else None,
                                 placeholder="Selecione o motorista...")
-    h_atual = (atual or {}).get("hora_agendamento")
-    h_atual = dt.datetime.strptime(h_atual, "%H:%M").time() if isinstance(h_atual, str) and h_atual else None
-    hora_ag = m2.time_input(f"🕒 Agendamento na fábrica ({d:%d/%m}) *", value=h_atual,
+    def _t(v):
+        return dt.datetime.strptime(v, "%H:%M").time() if isinstance(v, str) and v else None
+
+    hora_ag = m2.time_input(f"🕒 Slot na fábrica ({d:%d/%m}) — início *", value=_t((atual or {}).get("hora_agendamento")),
                             step=dt.timedelta(minutes=15), key=f"{chave}_hora")
+    hora_fim = m3.time_input("até (fim do slot)", value=_t((atual or {}).get("hora_agendamento_fim")),
+                             step=dt.timedelta(minutes=15), key=f"{chave}_hora_fim")
     if hora_ag and fabrica_id:
         desl = logistica_repo.deslocamento_h(operacao_id, fabrica_id)
         pz = svc.prazo_saida({"data": d.isoformat(), "hora_agendamento": hora_ag.strftime("%H:%M"),
                               "deslocamento_h": desl})
-        m3.markdown(f"**🚦 Sair da revenda até**  \n{pz:%d/%m %H:%M}" if desl else
-                    "**🚦 Prazo de saída**  \nsem deslocamento cadastrado")
+        st.markdown(f"🚦 **Sair da revenda até {pz:%d/%m %H:%M}** (início do slot − {ui.numero(desl, 1)} h de "
+                    "deslocamento)" if desl else "🚦 Prazo de saída: sem deslocamento cadastrado para esta fábrica.")
         if motorista_id and pz:
             s_mot = dms.no_momento(operacao_id, int(motorista_id), pz)
             if s_mot["status"] != "Disponível":
                 st.warning(f"⚠️ {nomes_mot[int(motorista_id)]} estará **{s_mot['status']}** na saída "
                            f"({pz:%d/%m %H:%M}): {s_mot['detalhe']}.")
         if not desl:
-            m3.caption("Informe em ⚙️ Cadastros › 🏭 Fábricas.")
+            st.caption("Informe em ⚙️ Cadastros › 🏭 Fábricas.")
     sug = info.get(placa, {}).get("sugestao")
     padrao = (atual or {}).get("tipo") or (sug if sug in SUGESTAO_PEDIDO else None)
     tipo = st.radio("Tipo *", SUGESTAO_PEDIDO, horizontal=True, key=f"{chave}_tipo_{placa}",
                     index=SUGESTAO_PEDIDO.index(padrao) if padrao in SUGESTAO_PEDIDO else None,
                     format_func=lambda t: f"{ICONE_TIPO.get(t, '')} {t}")
-    qtds, paletes = {}, 0.0
+    qtds, paletes, outros_desc = {}, 0.0, None
     if tipo == "Retornável":
         st.markdown("**♻️ Paletes por embalagem**")
         cols = st.columns(len(EMBALAGENS_RETORNAVEL))
         for col, (k, rot) in zip(cols, EMBALAGENS_RETORNAVEL.items()):
             qtds[k] = col.number_input(rot, min_value=0.0, step=1.0, format="%.0f", key=f"{chave}_{k}",
-                                       value=float((atual or {}).get(k) or 0))
+                                       value=svc._v((atual or {}).get(k)))
+        if qtds.get("p_outros"):
+            outros_desc = st.text_input("Qual vasilhame em “Outros”? *", key=f"{chave}_outros",
+                                        value=(atual or {}).get("outros_desc") or "",
+                                        placeholder="ex.: 1 L Original, garrafeira vazia...")
         st.caption(f"Total: **{_f(sum(qtds.values()))} palete(s)**")
     elif tipo == "Descartável":
         paletes = st.number_input("🥫 Quantidade de paletes *", min_value=0.0, step=1.0, format="%.0f",
                                   key=f"{chave}_pal", value=float((atual or {}).get("paletes") or 0))
+    total_pal = sum(qtds.values()) if tipo == "Retornável" else paletes
+    cap = svc.capacidade_paletes(operacao_id, placa)
+    if cap and total_pal > cap:
+        st.warning(f"⚠️ {_f(total_pal)} paletes passam da capacidade da {placa} ({cap} paletes).")
     obs = st.text_input("Observação", value=(atual or {}).get("observacao") or "", key=f"{chave}_obs",
                         placeholder="opcional")
     if st.button("💾 Salvar pedido" if not atual else "💾 Salvar alteração", type="primary", key=f"{chave}_ok"):
         try:
             svc.salvar_pedido(operacao_id, atual["id"] if atual else None, d, placa, numero, tipo, qtds, paletes, obs,
                               usuario.get("nome") or usuario.get("login") or "", fabrica_id=fabrica_id,
-                              motorista_id=motorista_id, hora_agendamento=hora_ag)
+                              motorista_id=motorista_id, hora_agendamento=hora_ag, hora_agendamento_fim=hora_fim,
+                              outros_desc=outros_desc)
         except RegraNegocioError as e:
             st.error(str(e))
         else:
@@ -251,6 +278,33 @@ def _form(usuario: dict, operacao_id: int, d: dt.date, atual: dict | None, chave
             ui.avisar(f"Pedido {numero} {'editado — a edição aparece sinalizada' if atual else 'salvo — já aparece'} "
                       "para o Ressuprimento e o Armazém.")
             st.rerun()
+
+
+def _reprogramar(usuario: dict, operacao_id: int, atual: dict, chave: str) -> None:
+    """Novo dia/slot (e, se quiser, outra placa/motorista) — o pedido atual vira 🔁 Reprogramado."""
+    with st.popover("🔁 Reprogramar (substitui o agendamento)"):
+        st.caption(f"Pedido **{atual['numero_pedido']}** · {atual['placa']} · hoje no slot "
+                   f"{svc.janela_txt(atual)} de {dt.date.fromisoformat(str(atual['data'])[:10]):%d/%m}.")
+        ds = svc.dias_pedido()
+        nova = st.selectbox("Nova data *", ds, format_func=svc.rotulo_dia, key=f"{chave}_d")
+        a, b = st.columns(2)
+        ini = a.time_input("Slot início *", value=None, step=dt.timedelta(minutes=15), key=f"{chave}_i")
+        fim = b.time_input("Slot fim", value=None, step=dt.timedelta(minutes=15), key=f"{chave}_f")
+        placas = logistica_repo_placas(operacao_id)
+        placa = st.selectbox("Placa", placas, index=placas.index(atual["placa"]) if atual["placa"] in placas else 0,
+                             key=f"{chave}_p")
+        motivo = st.text_input("Motivo *", key=f"{chave}_m", placeholder="ex.: fábrica remarcou o horário")
+        if st.button("🔁 Confirmar reprogramação", type="primary", key=f"{chave}_ok"):
+            ui.acao(svc.reprogramar, operacao_id, int(atual["id"]), nova, motivo, usuario.get("nome") or "",
+                    hora_agendamento=ini, hora_agendamento_fim=fim, placa=placa,
+                    sucesso="Pedido reprogramado — o agendamento antigo ficou como 🔁 Reprogramado.")
+
+
+def logistica_repo_placas(operacao_id: int) -> list[str]:
+    from repositories import logistica_repo
+
+    c = logistica_repo.carretas_df(operacao_id)
+    return c["placa"].tolist() if not c.empty else []
 
 
 def _escolher_dia(chave: str) -> dt.date:
@@ -269,7 +323,7 @@ def render(usuario: dict, operacao_id: int) -> None:
     df = repo.pedidos_df(operacao_id, d.isoformat(), d.isoformat())
     dia = _placas_do_dia(operacao_id, d)
     disponiveis = dia[dia["status"] == "Disponível"] if not dia.empty else dia
-    com_pedido = set(df[df["status"] != "Cancelado"]["placa"].str.upper()) if not df.empty else set()
+    com_pedido = set(df[~df["status"].isin(["Cancelado", "Reprogramado"])]["placa"].str.upper()) if not df.empty else set()
     livres = disponiveis[~disponiveis["placa"].str.upper().isin(com_pedido)] if not disponiveis.empty else disponiveis
     _kpis(df, f"kp_pp_{d}", [{"titulo": "Placas disponíveis sem pedido", "valor": len(livres), "icone": "🚛",
                               "status": "atencao" if len(livres) else "bom",
@@ -287,7 +341,7 @@ def render(usuario: dict, operacao_id: int) -> None:
         st.info("Nenhum pedido lançado para este dia.")
         return
     _cards(df)
-    abertos = df[df["status"] != "Cancelado"]
+    abertos = df[~df["status"].isin(["Cancelado", "Reprogramado"])]
     if not abertos.empty:
         with st.container(key="cad_alt_pp"):
             st.markdown('<div class="eco-alt-titulo">✏️ Editar ou cancelar pedido</div>', unsafe_allow_html=True)
@@ -302,6 +356,7 @@ def render(usuario: dict, operacao_id: int) -> None:
             if pid:
                 _form(usuario, operacao_id, d, repo.pedido(pid), f"pp_a_{pid}_{v}")
                 if repo.pedido(pid)["status"] == "Aberto":
+                    _reprogramar(usuario, operacao_id, repo.pedido(pid), f"pp_r_{pid}_{v}")
                     with st.popover("⛔ Cancelar este pedido"):
                         if st.button("Confirmar cancelamento", key=f"pp_cancel_{pid}", type="primary"):
                             ui.acao(svc.cancelar, pid, usuario.get("nome") or "", sucesso="Pedido cancelado.")

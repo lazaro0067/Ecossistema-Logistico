@@ -47,7 +47,7 @@ MODULOS = {
         "tmv_tma": "⏱️ TMV / TMA & Viagens",
         "remuneracao": "💵 Remuneração & Produtividade",
         "disponibilidade": "🗓️ Disponibilidade de Placas",
-        "pedidos_dia": "📋 Pedidos D0 / D+1 / D+2",
+        "pedidos_dia": "📋 Pedidos D0 a D+3",
         "disp_motoristas": "👤 Disponibilidade de Motoristas",
     }},
     "ressuprimento": {"rotulo": "Ressuprimento", "icone": "🔄", "abas": {
@@ -202,8 +202,14 @@ DISPONIBILIDADE_DIAS = 3          # planejamento das placas: hoje + 3 dias
 STATUS_DISPONIBILIDADE = ["Disponível", "Indisponível Frota", "Indisponível Viagem"]
 SUGESTAO_PEDIDO = ["Retornável", "Descartável"]
 # Retornável: paletes por embalagem (chave da coluna → rótulo)
-EMBALAGENS_RETORNAVEL = {"p600_ambar": "600 ml Âmbar", "p600_verde": "600 ml Verde", "p1l": "1 Litro", "p300": "300 ml"}
-STATUS_PEDIDO_PUXADA = ["Aberto", "Finalizado", "Cancelado"]
+EMBALAGENS_RETORNAVEL = {"p600_ambar": "600 ml Âmbar", "p600_verde": "600 ml Verde", "p_corona600": "Corona 600 ml",
+                         "p1l": "1 Litro", "p300": "300 ml", "p_outros": "Outros"}
+STATUS_PEDIDO_PUXADA = ["Aberto", "Finalizado", "Cancelado", "Reprogramado"]
+STATUS_PEDIDO_INATIVO = ("Cancelado", "Reprogramado")  # não contam mais (o reprogramado foi substituído)
+# Perfil do veículo (carreta): paletes que cabem
+PERFIS_VEICULO = {"9 eixos": 42, "LS": 28}
+TIPOS_SERVICO_MOTORISTA = ["Manobra no pátio", "Carga/descarga na revenda", "Manutenção / oficina", "Abastecimento",
+                           "Treinamento", "Outro"]
 INTERJORNADA_H = 11              # descanso mínimo entre o fim de uma viagem e o início da próxima (CLT)
 CNH_ALERTA_DIAS = 90              # começa a avisar o gestor 3 meses antes de a CNH vencer
 CNH_ALERTA_INTERVALO_DIAS = 7     # repete o aviso toda semana até renovar           # motorista pode desfazer a última etapa até X minutos depois

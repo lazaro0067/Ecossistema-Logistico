@@ -90,6 +90,13 @@ div[class*="st-key-nav_mod_"] [data-testid="stButtonGroup"] button {{ font-weigh
 div[class*="st-key-nav_mod_"] [data-testid="stElementContainer"]:first-child [data-testid="stButtonGroup"] button {{
     min-height:2.6rem; padding:0 1.1rem; }}
 
+/* barra "Atualizar" do topo dos módulos */
+div[class*="st-key-barra_atu_"] {{ background:#fff; border:1px solid {BORDA}; border-radius:14px; padding:.45rem .7rem;
+    margin:-.4rem 0 .9rem; align-items:center; }}
+.eco-bchips {{ display:flex; flex-wrap:wrap; gap:.35rem; padding-top:.2rem; }}
+.eco-bchip {{ font-size:.76rem; font-weight:600; color:#3d3c39; background:#f4f6f9; border:1px solid #e3e8ef;
+    border-radius:999px; padding:.15rem .55rem; white-space:nowrap; }}
+
 /* tabelas de leitura dos cadastros */
 .eco-tab {{ overflow:auto; border:1px solid #d9d8d0; border-radius:12px; background:#fff; margin:.4rem 0 .8rem;
     box-shadow: 0 1px 2px rgba(11,31,58,.04); }}

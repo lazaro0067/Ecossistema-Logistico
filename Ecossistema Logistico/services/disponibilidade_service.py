@@ -42,9 +42,13 @@ def grade(operacao_id: int) -> pd.DataFrame:
     peds = pedidos_puxada_repo.pedidos_df(operacao_id, ds[0].isoformat(), ds[-1].isoformat())
     pedidos: dict = {}
     if not peds.empty:
-        for r in peds[peds["status"] != "Cancelado"].to_dict("records"):
+        from services.pedidos_puxada_service import janela_txt
+
+        for r in peds[~peds["status"].isin(["Cancelado", "Reprogramado"])].to_dict("records"):
+            slot = janela_txt(r)
             pedidos.setdefault((str(r["placa"]).upper(), r["data"]), []).append(
-                f"{r['numero_pedido']} ({r['tipo']}){' ✅' if r['status'] == 'Finalizado' else ''}")
+                f"{r['numero_pedido']} ({r['tipo']}){' 🕒 ' + slot if slot != '—' else ''}"
+                f"{' ✅' if r['status'] == 'Finalizado' else ''}")
     viagens = carreteiro_repo.viagens_df(operacao_id)
     ativas = {}
     if not viagens.empty:

@@ -165,3 +165,38 @@ def salvar_ferias(operacao_id: int, fid: int | None, motorista_id: int, inicio: 
 
 def excluir_ferias(fid: int) -> None:
     execute("DELETE FROM ferias_motoristas WHERE id = ?", (fid,))
+
+
+# --- Em serviço (fora de viagem) -----------------------------------------------------------
+def servico_ativo(motorista_id: int) -> dict | None:
+    return query_one("SELECT * FROM servicos_motorista WHERE motorista_id = ? AND fim IS NULL ORDER BY id DESC LIMIT 1",
+                     (motorista_id,))
+
+
+def iniciar_servico(operacao_id: int, motorista_id: int, tipo: str, obs: str | None) -> int:
+    return execute("""INSERT INTO servicos_motorista (operacao_id, motorista_id, tipo, observacao, inicio)
+                      VALUES (?, ?, ?, ?, ?)""", (operacao_id, motorista_id, tipo, obs, tempo.agora_str()))
+
+
+def encerrar_servico(sid: int) -> None:
+    execute("UPDATE servicos_motorista SET fim = ? WHERE id = ?", (tempo.agora_str(), sid))
+
+
+def servicos_ativos(operacao_id: int) -> dict[int, dict]:
+    return {r["motorista_id"]: r for r in query_all(
+        "SELECT * FROM servicos_motorista WHERE operacao_id = ? AND fim IS NULL", (operacao_id,))}
+
+
+def ultimos_servicos(operacao_id: int) -> dict[int, dict]:
+    linhas = query_all("""SELECT motorista_id, fim, tipo FROM servicos_motorista
+                          WHERE operacao_id = ? AND fim IS NOT NULL ORDER BY fim""", (operacao_id,))
+    return {r["motorista_id"]: r for r in linhas}
+
+
+def servicos_df(operacao_id: int, de: str | None = None) -> pd.DataFrame:
+    sql, p = ("""SELECT s.id, m.nome AS motorista, s.tipo, s.observacao, s.inicio, s.fim FROM servicos_motorista s
+                 JOIN motoristas m ON m.id = s.motorista_id WHERE s.operacao_id = ?""", [operacao_id])
+    if de:
+        sql += " AND s.inicio >= ?"
+        p.append(de)
+    return query_df(sql + " ORDER BY s.inicio DESC", p)

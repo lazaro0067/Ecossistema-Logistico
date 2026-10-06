@@ -8,17 +8,18 @@ from repositories import operacoes_repo
 
 # --- Cadastros simples (operação) ------------------------------------------
 def carretas_df(operacao_id: int) -> pd.DataFrame:
-    return query_df("SELECT id, placa, modelo, capacidade_hl, status FROM carretas WHERE operacao_id = ? ORDER BY placa",
-                    (operacao_id,))
+    return query_df("""SELECT id, placa, modelo, perfil, capacidade_hl, status FROM carretas WHERE operacao_id = ?
+                       ORDER BY placa""", (operacao_id,))
 
 
-def salvar_carreta(operacao_id: int, cid: int | None, placa: str, modelo: str, cap: float, status: str) -> None:
+def salvar_carreta(operacao_id: int, cid: int | None, placa: str, modelo: str, cap: float, status: str,
+                   perfil: str | None = None) -> None:
     if cid:
-        execute("UPDATE carretas SET placa=?, modelo=?, capacidade_hl=?, status=? WHERE id=?",
-                (placa, modelo, cap, status, cid))
+        execute("UPDATE carretas SET placa=?, modelo=?, capacidade_hl=?, status=?, perfil=? WHERE id=?",
+                (placa, modelo, cap, status, perfil, cid))
     else:
-        execute("INSERT INTO carretas (operacao_id, placa, modelo, capacidade_hl, status) VALUES (?, ?, ?, ?, ?)",
-                (operacao_id, placa, modelo, cap, status))
+        execute("""INSERT INTO carretas (operacao_id, placa, modelo, capacidade_hl, status, perfil)
+                   VALUES (?, ?, ?, ?, ?, ?)""", (operacao_id, placa, modelo, cap, status, perfil))
 
 
 def fabricas_df(operacao_id: int | None = None) -> pd.DataFrame:

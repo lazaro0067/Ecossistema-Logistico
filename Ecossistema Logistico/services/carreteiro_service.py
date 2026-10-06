@@ -121,6 +121,11 @@ def iniciar_viagem(usuario: dict, numero_pedido: str, data_ag: dt.date | None, h
         raise RegraNegocioError("Seu acesso não está ligado a um motorista. Fale com a Puxada.")
     if repo.viagem_ativa_motorista(mot["id"]):
         raise RegraNegocioError("Você já tem uma viagem em andamento.")
+    from repositories import motoristas_repo
+
+    servico = motoristas_repo.servico_ativo(mot["id"])
+    if servico:  # começou a viagem: o serviço avulso termina sozinho
+        motoristas_repo.encerrar_servico(servico["id"])
     numero_pedido = re.sub(r"\s+", "", numero_pedido or "")
     if not numero_pedido:
         raise RegraNegocioError("Informe o número do pedido.")

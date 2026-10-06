@@ -18,4 +18,7 @@ ABAS = {
 
 def render(usuario: dict, operacao_id: int) -> None:
     ui.cabecalho_modulo("ressuprimento")
+    from modules.componentes.bases import barra_atualizar
+
+    barra_atualizar("ressuprimento", operacao_id, usuario)
     ui.abas_modulo(usuario, "ressuprimento", ABAS, usuario, operacao_id)

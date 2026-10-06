@@ -28,7 +28,9 @@ def _gravar(layout_key, df, mapa, operacao_id, usuario, arquivo, data_padrao=Non
     return True
 
 
-def card_base(layout_key: str, operacao_id: int, usuario: dict, titulo: str, frequencia: str) -> None:
+def card_base(layout_key: str, operacao_id: int, usuario: dict, titulo: str, frequencia: str,
+              prefixo: str = "") -> None:
+    """`prefixo` separa as chaves quando o mesmo cartão aparece em mais de um lugar da tela."""
     sit = bases_service.situacao(layout_key, operacao_id)
     detalhe = (f"{bases_service.idade_txt(sit['idade_dias'])} · {ui.numero(sit['linhas'])} linhas"
                if sit["linhas"] else "Envie o primeiro arquivo")
@@ -49,20 +51,20 @@ def card_base(layout_key: str, operacao_id: int, usuario: dict, titulo: str, fre
         opcoes = {f"D{i} · {(hoje + dt.timedelta(days=i)):%d/%m}": (hoje + dt.timedelta(days=i)).isoformat()
                   for i in range(3)}
         escolha = st.radio("Dia da puxada (se o arquivo não tiver data)", list(opcoes), horizontal=True,
-                           key=f"dia_{layout_key}_{operacao_id}")
+                           key=f"{prefixo}dia_{layout_key}_{operacao_id}")
         data_padrao = opcoes[escolha]
     if layout.get("digito_verificador"):
         remover_digito = st.checkbox("Código com dígito verificador", value=True,
-                                     key=f"dv_{layout_key}_{operacao_id}",
+                                     key=f"{prefixo}dv_{layout_key}_{operacao_id}",
                                      help="Remove o último dígito do código para casar com a base 01.11.")
     if layout.get("pede_mes"):
-        mes_ano = st.text_input("Mês de referência (AAAA-MM)", value=ui.mes_atual(), key=f"mes_{layout_key}")
+        mes_ano = st.text_input("Mês de referência (AAAA-MM)", value=ui.mes_atual(), key=f"{prefixo}mes_{layout_key}")
 
-    arq = st.file_uploader(f"Enviar {titulo}", type=TIPOS_ARQUIVO, key=f"up_{layout_key}_{operacao_id}",
+    arq = st.file_uploader(f"Enviar {titulo}", type=TIPOS_ARQUIVO, key=f"{prefixo}up_{layout_key}_{operacao_id}",
                            label_visibility="collapsed")
     if not arq:
         return
-    marca = f"proc_{layout_key}_{operacao_id}"
+    marca = f"{prefixo}proc_{layout_key}_{operacao_id}"
     fid = (arq.name, arq.size, data_padrao, remover_digito, mes_ano)
     if st.session_state.get(marca) == fid:
         st.success(f"✅ {arq.name} importado.")
@@ -89,11 +91,65 @@ def card_base(layout_key: str, operacao_id: int, usuario: dict, titulo: str, fre
             c.rotulo + (" *" if c.obrigatorio else ""), opcoes_col,
             index=opcoes_col.index(mapa[campo]) if mapa.get(campo) in opcoes_col else 0,
             format_func=lambda c: "— não importar —" if c is None else c,
-            key=f"map_{layout_key}_{campo}",
+            key=f"{prefixo}map_{layout_key}_{campo}",
         )
     with st.expander("Prévia do arquivo"):
         ui.tabela(df.head(8))
-    if st.button("📥 Gravar", type="primary", key=f"grv_{layout_key}"):
+    if st.button("📥 Gravar", type="primary", key=f"{prefixo}grv_{layout_key}"):
         if _gravar(layout_key, df, mapa, operacao_id, usuario, arq.name, data_padrao, remover_digito, mes_ano):
             st.session_state[marca] = fid
             st.rerun()
+
+
+# --- Barra "Atualizar" no topo de Puxada, Armazém e Ressuprimento ------------------------------
+BASES_TITULOS = {
+    "produtos": ("Relatório 01.11", "Cadastro · quando mudar"),
+    "linear": ("Relatório Linear", "A cada 3 meses"),
+    "estoque": ("Relatório 02.03.04", "Diário"),
+    "pedidos_marcados": ("Puxada Marcada", "D0, D1, D2 · diário"),
+    "ressuprimento": ("Ressuprimento diário", "Diário · todas as filiais"),
+    "politica": ("Política de estoque", "Semanal"),
+    "metas_doi": ("Metas de DOI por SKU", "Quando revisar"),
+}
+BASES_POR_MODULO = {
+    "puxada": ["pedidos_marcados", "estoque", "ressuprimento"],
+    "armazem": ["estoque", "pedidos_marcados", "produtos", "linear"],
+    "ressuprimento": ["estoque", "pedidos_marcados", "ressuprimento", "linear", "produtos", "politica", "metas_doi"],
+}
+_ICONE = {"bom": "🟢", "atencao": "🟡", "serio": "🟠", "critico": "🔴", "neutro": "⚪"}
+
+
+def barra_atualizar(modulo: str, operacao_id: int, usuario: dict) -> None:
+    """🔄 recarrega a tela com os dados mais novos · 📥 envia as bases sem sair da aba."""
+    bases = BASES_POR_MODULO.get(modulo, [])
+    sits = {b: bases_service.situacao(b, operacao_id) for b in bases}
+    atrasadas = [b for b, s in sits.items() if s["status"] in ("critico", "serio", "atencao")]
+    with st.container(key=f"barra_atu_{modulo}"):
+        c1, c2, c3 = st.columns([4.2, 1.1, 1.4])
+        chips = " ".join(
+            f'<span class="eco-bchip" title="{tema._e(s["rotulo"])}">{_ICONE.get(s["status"], "⚪")} '
+            f'{tema._e(BASES_TITULOS[b][0])} · {tema._e(bases_service.idade_txt(s["idade_dias"]) if s["linhas"] else "sem dados")}</span>'
+            for b, s in sits.items())
+        c1.markdown(f'<div class="eco-bchips">{chips}</div>', unsafe_allow_html=True)
+        if c2.button("🔄 Atualizar tela", key=f"atu_tela_{modulo}", help="Recarrega com os dados mais recentes",
+                     **ui.LARGURA):
+            try:
+                st.cache_data.clear()
+            except Exception:
+                pass
+            ui.avisar(f"Atualizado às {tempo.agora():%H:%M}.", "info")
+            st.rerun()
+        aberto = st.session_state.get(f"barra_bases_{modulo}", False)
+        rot = f"📥 Atualizar bases{f' ({len(atrasadas)})' if atrasadas else ''}"
+        if c3.button(("✖ Fechar bases" if aberto else rot), key=f"atu_bases_{modulo}", type="primary" if atrasadas
+                     and not aberto else "secondary", **ui.LARGURA):
+            st.session_state[f"barra_bases_{modulo}"] = not aberto
+            st.rerun()
+    if st.session_state.get(f"barra_bases_{modulo}"):
+        with st.container(border=True, key=f"barra_bases_box_{modulo}"):
+            st.caption("Envie o arquivo aqui mesmo — a tela se atualiza sozinha depois de gravar. "
+                       "🟢 em dia · 🟡 atualizar hoje · 🔴 desatualizada.")
+            for ini in range(0, len(bases), 4):
+                for col, b in zip(st.columns(4), bases[ini:ini + 4]):
+                    with col:
+                        card_base(b, operacao_id, usuario, *BASES_TITULOS[b], prefixo=f"bar_{modulo}_")

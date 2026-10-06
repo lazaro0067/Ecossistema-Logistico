@@ -55,7 +55,7 @@ def _falta(livre) -> str:
 
 
 def _cards(df: pd.DataFrame) -> None:
-    ordem = {"Disponível": 0, "Interjornada": 1, "Em viagem": 2, "Férias": 3}
+    ordem = {"Disponível": 0, "Em serviço": 1, "Interjornada": 2, "Em viagem": 3, "Férias": 4}
     itens = []
     for r in sorted(df.to_dict("records"), key=lambda r: (ordem.get(r["status"], 9), r["nome"])):
         cor = svc.CORES.get(r["status"], "#898781")
@@ -136,15 +136,23 @@ def render(usuario: dict, operacao_id: int) -> None:
         disp = dia[dia["status"] == "Disponível"]
         pct = len(disp) / total * 100 if total else 0
         resumo = " · ".join(f"{svc.ICONES[s]} {int((dia['status'] == s).sum())}"
-                            for s in ("Interjornada", "Em viagem", "Férias") if (dia["status"] == s).any())
+                            for s in ("Em serviço", "Interjornada", "Em viagem", "Férias") if (dia["status"] == s).any())
         cards.append({"titulo": ("Agora · " if i == 0 else "") + _rot(d), "valor": f"{len(disp)} de {total}",
                       "icone": "👤", "detalhe": resumo or "motoristas disponíveis",
                       "status": "bom" if pct >= 50 else "atencao" if pct > 0 else "critico", "dados": _vis(dia)})
     tema.kpis(cards, key="kp_dm")
     if parte == "agora":
         tema.secao(f"Motoristas agora · {tempo.agora():%d/%m %H:%M}",
-                   f"Interjornada de {INTERJORNADA_H} h contada da etapa “Finalizar viagem” do App Carreteiro.")
+                   f"Interjornada de {INTERJORNADA_H} h contada do “Finalizar viagem” do App Carreteiro.")
         _cards(svc.agora(operacao_id))
+        sv = repo.servicos_df(operacao_id, (tempo.hoje() - __import__("datetime").timedelta(days=7)).isoformat())
+        with st.expander(f"🔧 Serviços fora de viagem marcados no app (7 dias) · {len(sv)}"):
+            if sv.empty:
+                st.caption("Nenhum serviço registrado.")
+            else:
+                ui.tabela(sv.drop(columns=["id"]).rename(columns={
+                    "motorista": "Motorista", "tipo": "Serviço", "observacao": "Obs.", "inicio": "Início",
+                    "fim": "Fim"}), baixar="servicos_motoristas")
     else:
         tema.secao("Disponibilidade nos próximos dias",
                    "Hoje = agora; nos outros dias, a situação no começo do dia (com a hora em que a interjornada acaba).")

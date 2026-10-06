@@ -234,6 +234,9 @@ def aba_produtos(usuario: dict, operacao_id: int) -> None:
 
 def render(usuario: dict, operacao_id: int) -> None:
     ui.cabecalho_modulo("armazem")
+    from modules.componentes.bases import barra_atualizar
+
+    barra_atualizar("armazem", operacao_id, usuario)
     ui.abas_modulo(usuario, "armazem", {
         "saude": aba_saude, "fundamentos": aba_fundamentos, "manter": aba_manter, "melhorar": aba_melhorar,
         "patio": aba_patio, "pedidos": aba_pedidos, "estrutura": aba_estrutura, "produtos": aba_produtos,

@@ -18,21 +18,21 @@ from core import tempo
 from repositories import pedidos_puxada_repo as repo
 from services.erros import RegraNegocioError
 
-STATUS_ICONE = {"Aberto": "🟡", "Finalizado": "✅", "Cancelado": "⛔"}
+STATUS_ICONE = {"Aberto": "🟡", "Finalizado": "✅", "Cancelado": "⛔", "Reprogramado": "🔁"}
 
 
-DIAS_A_FRENTE = 2  # D0, D+1 e D+2
+DIAS_A_FRENTE = 3  # D0, D+1, D+2 e D+3
 
 
 def dias_pedido() -> list[dt.date]:
-    """D0 = hoje, D+1 = amanhã, D+2 = depois de amanhã."""
+    """D0 = hoje, D+1 = amanhã, D+2 e D+3."""
     hoje = tempo.hoje()
     return [hoje + dt.timedelta(days=i) for i in range(DIAS_A_FRENTE + 1)]
 
 
 def rotulo_dia(d: dt.date) -> str:
     n = (d - tempo.hoje()).days
-    nome = {0: "D0 · hoje", 1: "D+1 · amanhã", 2: "D+2"}.get(n, "Anterior" if n < 0 else f"D+{n}")
+    nome = {0: "D0 · hoje", 1: "D+1 · amanhã"}.get(n, "Anterior" if n < 0 else f"D+{n}")
     return f"{nome} {d:%d/%m}"
 
 
@@ -65,6 +65,8 @@ def prioridade(r: dict) -> tuple[int, str, str]:
         return 9, "✅ Finalizado", "#146c43"
     if r.get("status") == "Cancelado":
         return 10, "⛔ Cancelado", "#77766f"
+    if r.get("status") == "Reprogramado":
+        return 11, "🔁 Reprogramado", "#77766f"
     pz = prazo_saida(r)
     if not pz:
         return 6, "⚪ Sem agendamento", "#77766f"
@@ -99,26 +101,47 @@ def _num(v) -> float:
     return f
 
 
+def janela_txt(r: dict) -> str:
+    ini, fim = r.get("hora_agendamento"), r.get("hora_agendamento_fim")
+    ini = ini if isinstance(ini, str) and ini else ""
+    fim = fim if isinstance(fim, str) and fim else ""
+    return f"{ini}–{fim}" if ini and fim else ini or "—"
+
+
+def _hora(v, nome: str) -> str | None:
+    if v in (None, ""):
+        return None
+    h = v.strftime("%H:%M") if isinstance(v, dt.time) else str(v)[:5]
+    if not re.fullmatch(r"\d{2}:\d{2}", h):
+        raise RegraNegocioError(f"{nome} inválida (use HH:MM).")
+    return h
+
+
 def salvar_pedido(operacao_id: int, pid: int | None, data: dt.date, placa: str, numero: str, tipo: str,
                   qtds: dict | None, paletes, observacao: str, usuario: str, fabrica_id: int | None = None,
-                  motorista_id: int | None = None, hora_agendamento=None) -> int:
+                  motorista_id: int | None = None, hora_agendamento=None, hora_agendamento_fim=None,
+                  outros_desc: str | None = None, _reprogramando: bool = False) -> int:
     from repositories import operacoes_repo
 
     if operacoes_repo.e_consolidada(operacao_id):
         raise RegraNegocioError("Escolha uma filial no menu para lançar pedidos.")
     atual = repo.pedido(pid) if pid else None
-    if atual and atual["status"] == "Cancelado":
-        raise RegraNegocioError("Este pedido está cancelado — não pode mais ser alterado.")
+    if atual and atual["status"] in ("Cancelado", "Reprogramado"):
+        raise RegraNegocioError(f"Este pedido está {atual['status'].lower()} — não pode mais ser alterado.")
     if not atual and data not in dias_pedido():
-        raise RegraNegocioError("Lance pedidos para hoje (D0), amanhã (D+1) ou depois de amanhã (D+2).")
+        raise RegraNegocioError("Lance pedidos para D0 (hoje) até D+3.")
     placa = (placa or "").strip().upper()
     if not placa:
         raise RegraNegocioError("Escolha a placa.")
-    numero = re.sub(r"\s+", "", str(numero or ""))
-    if not numero:
+    lista = repo.numeros(numero)
+    if not lista:
         raise RegraNegocioError("Informe o número do pedido.")
-    if repo.numero_existe(operacao_id, numero, pid):
-        raise RegraNegocioError(f"O pedido {numero} já foi lançado.")
+    if len(set(lista)) != len(lista):
+        raise RegraNegocioError("Há número de pedido repetido no agendamento.")
+    numero = ", ".join(lista)  # mais de um pedido no mesmo agendamento
+    repetido = repo.numero_existe(operacao_id, numero, pid)
+    if repetido:
+        raise RegraNegocioError(f"O pedido {repetido} já está em outro agendamento.")
     from repositories import logistica_repo
 
     fabricas = set(logistica_repo.fabricas_df()["id"].astype(int))
@@ -129,15 +152,17 @@ def salvar_pedido(operacao_id: int, pid: int | None, data: dt.date, placa: str, 
     motoristas = set(logistica_repo.motoristas_df(operacao_id)["id"].astype(int))
     if not motorista_id or int(motorista_id) not in motoristas:
         raise RegraNegocioError("Escolha o motorista do pedido.")
-    if not hora_agendamento:
-        raise RegraNegocioError("Informe a hora do agendamento na fábrica.")
-    hora = hora_agendamento.strftime("%H:%M") if isinstance(hora_agendamento, dt.time) else str(hora_agendamento)[:5]
-    if not re.fullmatch(r"\d{2}:\d{2}", hora):
-        raise RegraNegocioError("Hora do agendamento inválida (use HH:MM).")
+    hora = _hora(hora_agendamento, "Hora de início do agendamento")
+    hora_fim = _hora(hora_agendamento_fim, "Hora de fim do agendamento")
+    if not hora:
+        raise RegraNegocioError("Informe o slot do agendamento na fábrica (início).")
+    if hora_fim and hora_fim <= hora:
+        raise RegraNegocioError("O fim do slot de agendamento precisa ser depois do início.")
     if tipo not in SUGESTAO_PEDIDO:
         raise RegraNegocioError("Escolha Retornável ou Descartável.")
     dados = {"data": data.isoformat(), "placa": placa, "numero_pedido": numero, "fabrica_id": int(fabrica_id),
-             "motorista_id": int(motorista_id), "hora_agendamento": hora, "tipo": tipo,
+             "motorista_id": int(motorista_id), "hora_agendamento": hora, "hora_agendamento_fim": hora_fim,
+             "tipo": tipo, "outros_desc": None,
              "observacao": (observacao or "").strip() or None, **{k: 0.0 for k in EMBALAGENS_RETORNAVEL}, "paletes": 0.0}
     if tipo == "Retornável":
         for k in EMBALAGENS_RETORNAVEL:
@@ -145,11 +170,15 @@ def salvar_pedido(operacao_id: int, pid: int | None, data: dt.date, placa: str, 
         dados["paletes"] = sum(dados[k] for k in EMBALAGENS_RETORNAVEL)
         if dados["paletes"] <= 0:
             raise RegraNegocioError("Informe a quantidade de paletes de pelo menos uma embalagem retornável.")
+        if dados.get("p_outros"):
+            if not (outros_desc or "").strip():
+                raise RegraNegocioError("Descreva o vasilhame em “Outros”.")
+            dados["outros_desc"] = outros_desc.strip()
     else:
         dados["paletes"] = _num(paletes)
         if dados["paletes"] <= 0:
             raise RegraNegocioError("Informe a quantidade de paletes do pedido descartável.")
-    if not atual:
+    if not atual or _reprogramando:
         return repo.salvar(operacao_id, None, dados, usuario)
     resumo = _resumo_edicao(atual, dados)
     if not resumo:
@@ -163,8 +192,8 @@ def salvar_pedido(operacao_id: int, pid: int | None, data: dt.date, placa: str, 
 
 
 _ROTULOS = {"data": "dia", "placa": "placa", "numero_pedido": "nº do pedido", "fabrica_id": "fábrica",
-            "motorista_id": "motorista", "hora_agendamento": "agendamento", "tipo": "tipo",
-            "p600_ambar": "600 ml Âmbar", "p600_verde": "600 ml Verde", "p1l": "1 Litro", "p300": "300 ml",
+            "motorista_id": "motorista", "hora_agendamento": "agendamento", "hora_agendamento_fim": "fim do slot",
+            "tipo": "tipo", **EMBALAGENS_RETORNAVEL, "outros_desc": "descrição outros",
             "paletes": "paletes", "observacao": "observação"}
 
 
@@ -226,12 +255,56 @@ def _avisar_edicao(operacao_id: int, p: dict, usuario: str, resumo: str) -> None
         pass
 
 
+def reprogramar(operacao_id: int, pid: int, data: dt.date, motivo: str, usuario: str, **novos) -> int:
+    """Cria o pedido novo (nova data/slot/placa...) e marca o antigo como 🔁 Reprogramado (substituído)."""
+    atual = repo.pedido(pid)
+    if not atual or atual["status"] in ("Cancelado", "Reprogramado"):
+        raise RegraNegocioError("Este pedido não pode ser reprogramado.")
+    if atual["status"] == "Finalizado":
+        raise RegraNegocioError("O armazém já finalizou este pedido — reabra antes de reprogramar.")
+    motivo = (motivo or "").strip()
+    if len(motivo) < 5:
+        raise RegraNegocioError("Informe o motivo da reprogramação.")
+    base = {k: atual.get(k) for k in ("placa", "numero_pedido", "tipo", "fabrica_id", "motorista_id",
+                                      "hora_agendamento", "hora_agendamento_fim", "paletes", "observacao",
+                                      "outros_desc")}
+    base.update({k: v for k, v in novos.items() if v is not None})
+    qtds = {k: (novos.get("qtds") or {}).get(k, _v(atual.get(k))) for k in EMBALAGENS_RETORNAVEL}
+    novos.pop("qtds", None)
+    # o número continua o mesmo: libera o antigo antes de validar o novo
+    repo.mudar_status(pid, "Reprogramado", usuario)
+    try:
+        novo = salvar_pedido(operacao_id, None, data, base["placa"], base["numero_pedido"], base["tipo"], qtds,
+                             base["paletes"], base.get("observacao") or "", usuario, fabrica_id=base["fabrica_id"],
+                             motorista_id=base["motorista_id"], hora_agendamento=base["hora_agendamento"],
+                             hora_agendamento_fim=base.get("hora_agendamento_fim"),
+                             outros_desc=base.get("outros_desc"))
+    except Exception:
+        repo.mudar_status(pid, atual["status"], None)
+        raise
+    repo.marcar_reprogramado(pid, novo, motivo, usuario)
+    _avisar_edicao(operacao_id, {**atual, "id": novo}, usuario,
+                   f"🔁 reprogramado para {data:%d/%m} {base['hora_agendamento'] or ''} — {motivo}")
+    return novo
+
+
+def capacidade_paletes(operacao_id: int, placa: str) -> int | None:
+    from config.settings import PERFIS_VEICULO
+    from repositories import logistica_repo
+
+    c = logistica_repo.carretas_df(operacao_id)
+    linha = c[c["placa"].str.upper() == str(placa or "").upper()] if not c.empty else c
+    if linha.empty or not isinstance(linha.iloc[0].get("perfil"), str):
+        return None
+    return PERFIS_VEICULO.get(linha.iloc[0]["perfil"])
+
+
 def finalizar(pid: int, usuario: str) -> None:
     p = repo.pedido(pid)
     if not p:
         raise RegraNegocioError("Pedido não encontrado.")
-    if p["status"] == "Cancelado":
-        raise RegraNegocioError("Pedido cancelado não pode ser finalizado.")
+    if p["status"] in ("Cancelado", "Reprogramado"):
+        raise RegraNegocioError(f"Pedido {p['status'].lower()} não pode ser finalizado.")
     repo.mudar_status(pid, "Finalizado", usuario)
 
 
@@ -249,13 +322,22 @@ def cancelar(pid: int, usuario: str) -> None:
 def composicao(r: dict) -> str:
     """'Retornável: 600 ml Âmbar 4 · 1 Litro 2' ou 'Descartável: 10 paletes'."""
     if r.get("tipo") == "Retornável":
-        partes = [f"{rot} {_fmt(r.get(k))}" for k, rot in EMBALAGENS_RETORNAVEL.items() if float(r.get(k) or 0)]
+        partes = [f"{rot if k != 'p_outros' else 'Outros (' + str(r.get('outros_desc') or '') + ')'} {_fmt(r.get(k))}"
+                  for k, rot in EMBALAGENS_RETORNAVEL.items() if _v(r.get(k))]
         return " · ".join(partes) or "—"
     return f"{_fmt(r.get('paletes'))} palete(s)"
 
 
+def _v(v) -> float:
+    try:
+        f = float(v or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    return 0.0 if f != f else f
+
+
 def _fmt(v) -> str:
-    f = float(v or 0)
+    f = _v(v)
     return f"{f:.0f}" if f == int(f) else f"{f:.1f}".replace(".", ",")
 
 
@@ -274,10 +356,10 @@ def tabela(df: pd.DataFrame, com_filial: bool = False) -> pd.DataFrame:
         d.update({"Prioridade": prioridade(r)[1],
                   "Placa": r["placa"], "Pedido": r["numero_pedido"], "Fábrica": fab if isinstance(fab, str) else "—",
                   "Motorista": mot if isinstance(mot, str) else "—",
-                  "Agendamento fábrica": f"{ag:%d/%m %H:%M}" if ag else "—",
+                  "Agendamento fábrica": f"{ag:%d/%m} {janela_txt(r)}" if ag else "—",
                   "Sair da revenda até": f"{pz:%d/%m %H:%M}" if pz else "—",
                   "Tipo": r["tipo"],
-                  **{rot: float(r.get(k) or 0) if r["tipo"] == "Retornável" else None
+                  **{rot: _v(r.get(k)) if r["tipo"] == "Retornável" else None
                      for k, rot in EMBALAGENS_RETORNAVEL.items()},
                   "Paletes (total)": float(r.get("paletes") or 0),
                   "Status": f"{STATUS_ICONE.get(r['status'], '')} {r['status']}",
@@ -296,10 +378,11 @@ def resumo(df: pd.DataFrame) -> dict:
     if df is None or df.empty:
         return {"pedidos": 0, "finalizados": 0, "abertos": 0, "ret": 0.0, "desc": 0.0,
                 **{k: 0.0 for k in EMBALAGENS_RETORNAVEL}}
-    v = df[df["status"] != "Cancelado"]
+    v = df[~df["status"].isin(["Cancelado", "Reprogramado"])]
     ret = v[v["tipo"] == "Retornável"]
     return {"pedidos": len(v), "finalizados": int((v["status"] == "Finalizado").sum()),
             "abertos": int((v["status"] == "Aberto").sum()),
             "ret": float(ret["paletes"].fillna(0).sum()),
             "desc": float(v[v["tipo"] == "Descartável"]["paletes"].fillna(0).sum()),
-            **{k: float(ret[k].fillna(0).sum()) for k in EMBALAGENS_RETORNAVEL}}
+            **{k: float(pd.to_numeric(ret[k], errors="coerce").fillna(0).sum()) if k in ret else 0.0
+               for k in EMBALAGENS_RETORNAVEL}}

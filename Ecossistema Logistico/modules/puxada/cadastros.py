@@ -127,14 +127,22 @@ def _fabricas(operacao_id: int | None = None) -> None:
 
 
 def _carretas(operacao_id: int) -> None:
+    from config.settings import PERFIS_VEICULO
+
     df = logistica_repo.carretas_df(operacao_id)
-    tela(chave=f"car_{operacao_id}", titulo="Carretas / placas da frota própria", icone="🚛", df=df,
+    if not df.empty:
+        df["paletes"] = df["perfil"].map(lambda p: PERFIS_VEICULO.get(p) if isinstance(p, str) else None)
+    tela(chave=f"car_{operacao_id}", titulo="Carretas / placas da frota própria", icone="🚛", df=df, por_linha=3,
+         descricao="O perfil define quantos paletes a carreta leva — o pedido avisa quando passa da capacidade.",
          campos=[Campo("placa", "Placa", obrigatorio=True), Campo("modelo", "Modelo"),
+                 Campo("perfil", "Perfil do veículo", "opcoes", True,
+                       {p: f"{p} · {n} paletes" for p, n in PERFIS_VEICULO.items()}, padrao=list(PERFIS_VEICULO)[0]),
                  Campo("capacidade_hl", "Capacidade (HL)", "numero", passo=10),
                  Campo("status", "Status", "opcoes", True, STATUS_CARRETA, padrao=STATUS_CARRETA[0])],
+         colunas_extras=[("paletes", "Paletes")],
          salvar=lambda cid, d: logistica_repo.salvar_carreta(operacao_id, cid, _txt(d["placa"], "a placa").upper(),
                                                              d.get("modelo") or "", float(d.get("capacidade_hl") or 0),
-                                                             d.get("status") or STATUS_CARRETA[0]),
+                                                             d.get("status") or STATUS_CARRETA[0], d.get("perfil")),
          excluir=lambda cid: logistica_repo.excluir("carretas", cid))
 
 
