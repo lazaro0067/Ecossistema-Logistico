@@ -269,6 +269,9 @@ def _alertas(usuario: dict) -> None:
         from services import motoristas_service
 
         motoristas_service.verificar_alertas_cnh()
+        from services import disp_motoristas_service
+
+        disp_motoristas_service.verificar_interjornadas()
         n = motoristas_repo.nao_lidas(usuario["id"])
     except Exception:
         return

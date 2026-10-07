@@ -416,6 +416,36 @@ CREATE TABLE IF NOT EXISTS paradas_viagem (
     lon          REAL
 );
 
+-- Interjornada marcada pelo motorista no app (11 h a partir do toque)
+CREATE TABLE IF NOT EXISTS interjornadas (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id  INTEGER NOT NULL REFERENCES operacoes(id),
+    motorista_id INTEGER NOT NULL REFERENCES motoristas(id),
+    viagem_id    INTEGER,
+    inicio       TEXT NOT NULL,
+    fim_previsto TEXT NOT NULL,
+    avisado_fim  INTEGER DEFAULT 0
+);
+
+-- Manutenção programada pela Puxada para uma placa (o armazém vê no pátio: depois de descarregar, vai p/ oficina)
+CREATE TABLE IF NOT EXISTS manutencoes (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id  INTEGER NOT NULL REFERENCES operacoes(id),
+    placa        TEXT NOT NULL,
+    data         TEXT NOT NULL,
+    hora         TEXT,
+    tipo         TEXT,
+    descricao    TEXT,
+    oficina      TEXT,
+    previsao_fim TEXT,
+    prioridade   INTEGER DEFAULT 0,
+    status       TEXT DEFAULT 'Programada',
+    criado_por   TEXT,
+    criado_em    TEXT,
+    iniciado_em  TEXT,
+    concluido_em TEXT
+);
+
 CREATE TABLE IF NOT EXISTS vinculos_pedidos (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     operacao_id       INTEGER NOT NULL REFERENCES operacoes(id),
@@ -736,6 +766,12 @@ MIGRACOES: list[tuple[str, str]] = [
     """),
     # Slots por tempo de doca (descartável/retornável por período) + parada de manutenção na viagem
     ("025_slots_tempo_doca", lambda conn: _mig_025(conn)),
+    # Interjornada no app, manutenção programada, prioridade do pedido para o armazém
+    ("026_interjornada_manutencao", """
+        ALTER TABLE pedidos_puxada ADD COLUMN prioridade INTEGER DEFAULT 0;
+        CREATE INDEX IF NOT EXISTS ix_interj_mot ON interjornadas(motorista_id, inicio);
+        CREATE INDEX IF NOT EXISTS ix_manut_op ON manutencoes(operacao_id, data);
+    """),
 ]
 
 

@@ -200,3 +200,38 @@ def servicos_df(operacao_id: int, de: str | None = None) -> pd.DataFrame:
         sql += " AND s.inicio >= ?"
         p.append(de)
     return query_df(sql + " ORDER BY s.inicio DESC", p)
+
+
+# --- Interjornada marcada no app ---------------------------------------------------------------
+def interjornada_atual(motorista_id: int) -> dict | None:
+    """Última interjornada do motorista (em andamento ou já terminada)."""
+    return query_one("SELECT * FROM interjornadas WHERE motorista_id = ? ORDER BY id DESC LIMIT 1", (motorista_id,))
+
+
+def iniciar_interjornada(operacao_id: int, motorista_id: int, viagem_id: int | None, inicio: str, fim: str) -> int:
+    return execute("""INSERT INTO interjornadas (operacao_id, motorista_id, viagem_id, inicio, fim_previsto)
+                      VALUES (?, ?, ?, ?, ?)""", (operacao_id, motorista_id, viagem_id, inicio, fim))
+
+
+def interjornadas_op(operacao_id: int) -> dict[int, dict]:
+    """Por motorista: a interjornada mais recente."""
+    linhas = query_all("SELECT * FROM interjornadas WHERE operacao_id = ? ORDER BY id", (operacao_id,))
+    return {r["motorista_id"]: r for r in linhas}
+
+
+def interjornadas_a_avisar(agora: str) -> list[dict]:
+    return query_all("""SELECT i.*, m.nome AS motorista FROM interjornadas i JOIN motoristas m ON m.id = i.motorista_id
+                        WHERE i.avisado_fim = 0 AND i.fim_previsto <= ?""", (agora,))
+
+
+def marcar_interjornada_avisada(iid: int) -> None:
+    execute("UPDATE interjornadas SET avisado_fim = 1 WHERE id = ?", (iid,))
+
+
+def interjornadas_df(operacao_id: int, de: str | None = None) -> pd.DataFrame:
+    sql, p = ("""SELECT i.id, m.nome AS motorista, i.inicio, i.fim_previsto, i.viagem_id FROM interjornadas i
+                 JOIN motoristas m ON m.id = i.motorista_id WHERE i.operacao_id = ?""", [operacao_id])
+    if de:
+        sql += " AND i.inicio >= ?"
+        p.append(de)
+    return query_df(sql + " ORDER BY i.inicio DESC", p)

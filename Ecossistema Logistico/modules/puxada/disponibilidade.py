@@ -159,6 +159,27 @@ def _dialogo_dia(operacao_id: int, d, usuario: dict) -> None:
         st.rerun()
 
 
+def _previsao(operacao_id: int) -> None:
+    """Quando cada carreta em viagem fica livre na revenda (descarga agendada/chegada + tempo de doca)."""
+    if ui.somente_leitura(operacao_id):
+        return
+    prev = svc.previsao_livre(operacao_id)
+    if not prev:
+        return
+    linhas = []
+    for placa, x in sorted(prev.items(), key=lambda i: i[1]["livre_em"]):
+        m = x.get("manutencao")
+        linhas.append({"Placa": placa, "Motorista": _txt(x.get("motorista")) or "—",
+                       "Livre na revenda (previsão)": f"{x['livre_em']:%d/%m %H:%M}",
+                       "Base": f"{x['base']} {x['inicio_descarga']:%d/%m %H:%M}",
+                       "Produto": _txt(x.get("produto")) or "—",
+                       "Depois": (f"🔧 manutenção {pd.to_datetime(m['data']):%d/%m} · {m['tipo']}"
+                                  f"{' ⭐' if m.get('prioridade') else ''}") if m else "livre p/ novo pedido"})
+    with st.expander(f"🔮 Previsão de carretas livres na revenda · {len(linhas)} em viagem", expanded=True):
+        st.caption("Descarga agendada pelo motorista (ou chegada/previsão de chegada) + tempo de doca do produto.")
+        ui.tabela(pd.DataFrame(linhas), baixar="previsao_carretas_livres")
+
+
 def render(usuario: dict, operacao_id: int) -> None:
     ds = svc.dias()
     g = svc.grade(operacao_id)
@@ -183,6 +204,7 @@ def render(usuario: dict, operacao_id: int) -> None:
                           "colunas": {"placa": "Placa", "status": "Status", "sugestao": "Sugestão",
                                       "observacao": "Observação"}})})
     tema.kpis(cards, key="kp_disp")
+    _previsao(operacao_id)
     _resumo(g, ds)
     tema.secao("Grade de disponibilidade",
                "Clique no card do dia para escolher o status das placas e a sugestão de pedido. "

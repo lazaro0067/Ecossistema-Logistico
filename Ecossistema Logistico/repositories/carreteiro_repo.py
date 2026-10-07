@@ -136,7 +136,7 @@ def viagens_df(operacao_id: int, de: str | None = None, ate: str | None = None,
     f_sql, p = operacoes_repo.filtro("v.operacao_id", operacao_id)
     p = list(p)
     sql = f"""SELECT v.id, v.operacao_id, v.motorista_id, m.nome AS motorista, v.numero_pedido, v.agendamento,
-                     v.destino, v.placa, v.status, {', '.join('v.' + c for c in COLUNAS_TS)},
+                     v.destino_id, v.destino, v.placa, v.status, {', '.join('v.' + c for c in COLUNAS_TS)},
                      v.apresentou_no_prazo, v.atraso_min, v.observacao, v.desc_data, v.desc_hora, v.desc_tipo, v.desc_janela_id,
                      (SELECT COUNT(*) FROM viagem_notas n WHERE n.viagem_id = v.id) AS qtd_nfs,
                      (SELECT COUNT(*) FROM viagem_fotos f WHERE f.viagem_id = v.id) AS qtd_fotos

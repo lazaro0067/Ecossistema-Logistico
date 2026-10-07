@@ -80,7 +80,7 @@ def excluir(tabela: str, rid: int) -> None:
 def agendamentos_df(operacao_id: int, de: str | None = None, ate: str | None = None) -> pd.DataFrame:
     f_sql, ids = operacoes_repo.filtro("operacao_id", operacao_id)
     f_sql = f_sql.replace("operacao_id", "a.operacao_id", 1)
-    sql, p = (f"""SELECT a.id, a.data, a.hora, a.placa, a.slot, a.tipo_carga, a.status, a.observacao, a.criado_por,
+    sql, p = (f"""SELECT a.id, a.operacao_id, a.data, a.hora, a.placa, a.slot, a.tipo_carga, a.status, a.observacao, a.criado_por,
                          a.viagem_id, a.janela_id, m.nome AS motorista, v.numero_pedido AS pedido_app
                   FROM agendamentos_descarga a
                   LEFT JOIN viagens_carreteiro v ON v.id = a.viagem_id

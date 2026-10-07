@@ -50,6 +50,13 @@ def grade(operacao_id: int) -> pd.DataFrame:
                 f"{r['numero_pedido']} ({r['tipo']}){' 🕒 ' + slot if slot != '—' else ''}"
                 f"{' ✅' if r['status'] == 'Finalizado' else ''}")
     em_manut = carreteiro_repo.paradas_ativas(operacao_id)
+    prev = previsao_livre(operacao_id)
+    from repositories import manutencao_repo
+
+    manut_prog: dict = {}
+    for m in manutencao_repo.lista_df(operacao_id, ds[0].isoformat(), ds[-1].isoformat(),
+                                      ["Programada", "Em andamento"]).to_dict("records"):
+        manut_prog.setdefault((str(m["placa"]).upper(), m["data"]), m)
     viagens = carreteiro_repo.viagens_df(operacao_id)
     ativas = {}
     if not viagens.empty:
@@ -90,6 +97,16 @@ def grade(operacao_id: int) -> pd.DataFrame:
                     status, obs = "Disponível", ""
             if v and v["id"] in em_manut and d == ds[0] and not eh_manual:
                 obs = "🔧 parada p/ manutenção · " + obs
+            pv = prev.get(placa)
+            if pv and not eh_manual and status == "Indisponível Viagem" and d <= pv["livre_em"].date():
+                obs = (obs + " · " if obs else "") + pv["texto"]
+            elif pv and not eh_manual and d > pv["livre_em"].date() and status == "Disponível":
+                obs = (obs + " · " if obs else "") + f"livre desde {pv['livre_em']:%d/%m %H:%M} (previsão)"
+            mp = manut_prog.get((placa, d.isoformat()))
+            if mp and not eh_manual:
+                status = "Indisponível Frota"
+                obs = (f"{'⭐ ' if mp.get('prioridade') else ''}🔧 manutenção programada: {mp.get('tipo') or ''}"
+                       f"{' · ' + str(mp['descricao']) if isinstance(mp.get('descricao'), str) else ''}")
             ped = pedidos.get((placa, d.isoformat()), [])
             perfil = c.get("perfil") if isinstance(c.get("perfil"), str) and c.get("perfil") else "Sem perfil"
             linhas.append({"placa": c["placa"], "modelo": c.get("modelo"), "perfil": perfil,
@@ -154,3 +171,47 @@ def resumo_por_perfil(g: pd.DataFrame, d) -> pd.DataFrame:
         })
     ordem = {p: i for i, p in enumerate(PERFIS_VEICULO)}
     return pd.DataFrame(linhas).sort_values("perfil", key=lambda s: s.map(lambda p: ordem.get(p, 99)))
+
+
+def previsao_livre(operacao_id: int) -> dict[str, dict]:
+    """Por placa em viagem: quando a carreta fica livre na revenda (chegada/descarga + tempo de doca).
+
+    Base, em ordem: descarga agendada pelo motorista → chegada já registrada → previsão de chegada
+    (saída da cervejaria + média dos retornos). Soma o tempo de doca do produto naquele horário."""
+    from repositories import manutencao_repo
+    from services import carreteiro_service, janelas_service
+
+    saida: dict[str, dict] = {}
+    viagens = carreteiro_repo.viagens_df(operacao_id)
+    if viagens.empty:
+        return saida
+    for r in viagens[viagens["status"] == carreteiro_repo.EM_VIAGEM].to_dict("records"):
+        v = carreteiro_repo.viagem(int(r["id"]))
+        produto = v.get("desc_tipo")
+        base, quando = None, None
+        if v.get("ts_chegada_revenda"):
+            quando, base = tempo.parse_dt(v["ts_chegada_revenda"]), "chegou"
+            if v.get("desc_data") and v.get("desc_hora"):
+                ag = tempo.parse_dt(f"{v['desc_data']} {v['desc_hora']}")
+                if ag and quando and ag > quando:
+                    quando, base = ag, "chegou · descarga agendada"
+        elif v.get("desc_data") and v.get("desc_hora"):
+            quando = tempo.parse_dt(f"{v['desc_data']} {v['desc_hora']}")
+            base = "descarga agendada"
+        else:
+            quando = carreteiro_service.previsao_chegada(v)
+            base = "previsão de chegada" if quando else None
+        if not quando:
+            continue
+        minutos = janelas_service.duracao_em(operacao_id, quando, produto)
+        livre = quando + dt.timedelta(minutes=minutos)
+        manut = manutencao_repo.ativas_da_placa(operacao_id, v["placa"], quando.date().isoformat())
+        manut = [m for m in manut if m["data"] <= (quando.date() + dt.timedelta(days=1)).isoformat()]
+        saida[str(v["placa"]).upper()] = {
+            "livre_em": livre, "base": base, "inicio_descarga": quando, "produto": produto, "viagem_id": v["id"],
+            "motorista": v.get("motorista"), "manutencao": manut[0] if manut else None,
+            "texto": (f"livre na revenda ~{livre:%d/%m %H:%M} ({base} {quando:%H:%M} + "
+                      f"{janelas_service.dur_txt(minutos)} de descarga)")
+                     + (" · depois vai p/ 🔧 manutenção" if manut else ""),
+        }
+    return saida

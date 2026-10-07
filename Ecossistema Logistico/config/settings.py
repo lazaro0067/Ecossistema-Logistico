@@ -49,6 +49,8 @@ MODULOS = {
         "disponibilidade": "🗓️ Disponibilidade de Placas",
         "pedidos_dia": "📋 Pedidos D0 a D+3",
         "disp_motoristas": "👤 Disponibilidade de Motoristas",
+        "manutencao": "🔧 Agendamento de Manutenção",
+        "farol": "🚦 Farol de Produtividade",
     }},
     "ressuprimento": {"rotulo": "Ressuprimento", "icone": "🔄", "abas": {
         "bases": "📁 Atualização de Bases",
@@ -104,7 +106,8 @@ MODULO_ADMIN = "admin"
 # Pasta sem grupo definido (ou com poucas abas) mostra as telas direto.
 GRUPOS_ABAS = {
     "puxada": {
-        "🚛 Frota própria": ["carreteiro", "disponibilidade", "disp_motoristas", "pedidos_dia", "remuneracao", "tmv_tma"],
+        "🚛 Frota própria": ["carreteiro", "disponibilidade", "disp_motoristas", "pedidos_dia", "manutencao", "farol",
+                            "remuneracao", "tmv_tma"],
         "🚚 Frete spot": ["cotacao", "aprovacoes", "encerramento", "painel", "obz"],
         "🏭 Operação": ["descarga", "vinculos", "pedidos", "viagens"],
         "⚙️ Cadastros": ["cadastros"],
@@ -208,6 +211,18 @@ STATUS_PEDIDO_PUXADA = ["Aberto", "Finalizado", "Cancelado", "Reprogramado"]
 STATUS_PEDIDO_INATIVO = ("Cancelado", "Reprogramado")  # não contam mais (o reprogramado foi substituído)
 # Perfil do veículo (carreta): paletes que cabem
 PERFIS_VEICULO = {"9 eixos": 42, "LS": 28}
+TIPOS_MANUTENCAO = ["Preventiva", "Corretiva", "Pneus", "Elétrica", "Freios", "Lavagem", "Documentação", "Outra"]
+STATUS_MANUTENCAO = ["Programada", "Em andamento", "Concluída", "Cancelada"]
+# Farol de produtividade: metas de tempo de cada atividade (horas) e tolerâncias
+METAS_FAROL = {
+    "espera_h": 2.0,            # apresentado → chamado para carregar
+    "carregamento_h": 2.0,      # chamado → pedido carregado
+    "tolerancia_trecho": 0.15,  # ida e volta podem passar 15% do tempo de deslocamento cadastrado
+    "tolerancia_chegada_min": 30,  # chegada na revenda até 30 min depois do horário agendado
+    "tma_h": 12.0,              # chegada na revenda → próxima saída da mesma placa
+    "parada_manutencao_h": 4.0, # parada de manutenção durante a viagem
+}
+FAROL_FAIXAS = (90, 75)  # 🟢 ≥ 90% no tempo · 🟡 ≥ 75% · 🔴 abaixo
 TIPOS_SERVICO_MOTORISTA = ["Manobra no pátio", "Carga/descarga na revenda", "Manutenção / oficina", "Abastecimento",
                            "Treinamento", "Outro"]
 INTERJORNADA_H = 11              # descanso mínimo entre o fim de uma viagem e o início da próxima (CLT)

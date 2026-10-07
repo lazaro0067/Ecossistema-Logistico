@@ -565,6 +565,7 @@ def _area_viagem(usuario: dict, mot: dict) -> None:
     geo = localizacao(key="geo_motorista")
     if geo and geo.get("erro"):
         st.caption("Sem GPS o app funciona normalmente — mas a Puxada não consegue confirmar a chegada na revenda.")
+    _interjornada(mot)
     v = repo.viagem_ativa_motorista(mot["id"])
     if v:
         if _continuar(v):
@@ -573,6 +574,34 @@ def _area_viagem(usuario: dict, mot: dict) -> None:
         if _em_servico(mot):
             return
         _nova_viagem(usuario, mot, geo)
+
+
+def _interjornada(mot: dict) -> None:
+    """😴 Interjornada: a qualquer momento o motorista marca o descanso de 11 h (a Puxada é avisada)."""
+    from config.settings import INTERJORNADA_H
+    from services import disp_motoristas_service as dms
+
+    dms.verificar_interjornadas()
+    ij = dms.interjornada_do_motorista(mot["id"])
+    if ij and ij["ativa"]:
+        falta = (ij["fim"] - tempo.agora()).total_seconds() / 3600
+        pct = max(0.0, min(100.0, 100 - falta / INTERJORNADA_H * 100))
+        st.markdown(
+            f'<div class="car-viagem" style="border-color:#b7791f;background:#fffaf0"><div class="lin"><span>😴 Em '
+            f'interjornada</span><b>até {ij["fim"]:%d/%m %H:%M}</b></div><div class="lin"><span>Começou</span>'
+            f'<b>{ij["inicio"]:%d/%m %H:%M}</b></div><div class="lin"><span>Falta</span><b>{svc.formatar_duracao(falta)}'
+            f'</b></div><div style="height:8px;background:#f1e3c4;border-radius:99px;margin-top:.4rem;overflow:hidden">'
+            f'<div style="height:100%;width:{pct:.0f}%;background:#b7791f"></div></div></div>', unsafe_allow_html=True)
+        return
+    if ij and ij["concluida_ha_h"] is not None and ij["concluida_ha_h"] < 6:
+        st.success(f"✅ Interjornada concluída às {ij['fim']:%H:%M} de {ij['fim']:%d/%m} — você está liberado.")
+    with st.popover(f"😴 Interjornada (descanso de {INTERJORNADA_H} h)", **ui.LARGURA):
+        fim = tempo.agora() + dt.timedelta(hours=INTERJORNADA_H)
+        st.markdown(f"Começa **agora** e termina às **{fim:%H:%M} de {fim:%d/%m}**.")
+        st.caption("A Puxada recebe o aviso no início e quando terminar.")
+        if st.button("😴 Iniciar interjornada", type="primary", key="car_interj_ini", **ui.LARGURA):
+            ui.acao(dms.iniciar_interjornada, mot,
+                    sucesso=f"Interjornada iniciada — termina às {fim:%H:%M} de {fim:%d/%m}. Bom descanso!")
 
 
 def _em_servico(mot: dict) -> bool:

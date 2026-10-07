@@ -15,6 +15,7 @@ from modules.componentes.autosave import editor_autosave
 from modules.componentes.cadastro import Campo, tela
 from repositories import logistica_repo
 from services import janelas_service as jsvc
+from services import patio_service
 from services.erros import RegraNegocioError
 
 STATUS = ["Agendado", "A caminho", "Chegou", "Descarregando", "Descarregado", "Cancelado", "No-show"]
@@ -46,6 +47,13 @@ _CSS = """
     color:var(--c); white-space:nowrap; }
 .pt-card .l2 { font-size:.82rem; color:#3d3c39; margin-top:.15rem; }
 .pt-card .l3 { font-size:.75rem; color:#77766f; margin-top:.1rem; }
+.pt-card .nx { font-size:.78rem; margin-top:.3rem; padding:.3rem .45rem; border-radius:8px; background:#eef6ff;
+    color:#173a6b; border:1px solid #cfe0f6; }
+.pt-card .mn { font-size:.78rem; margin-top:.3rem; padding:.3rem .45rem; border-radius:8px; background:#fff1e6;
+    color:#7a3a07; border:1px solid #f3cfae; }
+.pt-card.prio { box-shadow:0 0 0 2px #f0c75e; }
+.pt-star { font-size:.66rem; font-weight:800; padding:.05rem .4rem; border-radius:999px; background:#fff4d6;
+    color:#8a5a00; border:1px solid #f0c75e; margin-left:.3rem; }
 .pt-vazio { color:#9a9993; font-size:.8rem; font-style:italic; padding:.3rem 0; }
 .pt-livres { font-size:.76rem; color:#3d3c39; margin-top:.45rem; line-height:1.9; }
 .pt-hl { display:inline-block; background:#e8f6ee; color:#146c43; border-radius:6px; padding:0 .35rem; font-weight:700;
@@ -144,10 +152,20 @@ def _card(r: dict) -> str:
     faixa = _txt(r.get("_faixa"))
     l3 = " · ".join(x for x in [f"⏰ {faixa or hora}" if (faixa or hora) else "", f"Doca: {doca}" if doca and doca != "A definir" else "",
                                 _andamento(r)] if x)
-    apagado = ";opacity:.55" if r.get("status") in ("Cancelado", "No-show") else ""
-    return (f'<div class="pt-card" style="--c:{cor};--f:{fundo}{apagado}"><div class="l1"><b>{app}{_e(r.get("placa"))}</b>'
+    inativo = r.get("status") in ("Cancelado", "No-show")
+    apagado = ";opacity:.55" if inativo else ""
+    extra = ""
+    if not inativo:
+        if r.get("_depois"):
+            extra += f'<div class="nx">📦 <b>Depois carrega:</b> {_e(patio_service.depois_txt(r["_depois"]))}</div>'
+        if r.get("_manut"):
+            extra += f'<div class="mn">🔧 <b>Depois vai para MANUTENÇÃO:</b> {_e(patio_service.manut_txt(r["_manut"]))}</div>'
+    prio = bool(r.get("_prio")) and not inativo
+    estrela = '<span class="pt-star">⭐ PRIORIDADE</span>' if prio else ""
+    return (f'<div class="pt-card{" prio" if prio else ""}" style="--c:{cor};--f:{fundo}{apagado}"><div class="l1">'
+            f'<b>{app}{_e(r.get("placa"))}{estrela}</b>'
             f'<span class="st">{ICONE_STATUS.get(r.get("status"), "")} {_e(r.get("status"))}</span></div>'
-            f'{f"<div class=l2>{_e(l2)}</div>" if l2 else ""}{f"<div class=l3>{_e(l3)}</div>" if l3 else ""}</div>')
+            f'{f"<div class=l2>{_e(l2)}</div>" if l2 else ""}{f"<div class=l3>{_e(l3)}</div>" if l3 else ""}{extra}</div>')
 
 
 def _chips_livres(hs: list[dict]) -> str:
@@ -157,14 +175,56 @@ def _chips_livres(hs: list[dict]) -> str:
     return " ".join(f'<span class="pt-hl">{h["hora"]}</span>' for h in livres)
 
 
+def _depois_descarga(regs: list[dict]) -> None:
+    """Resumo no topo: carretas com ⭐ prioridade, próximo carregamento ou manutenção depois da descarga."""
+    ativos = [r for r in regs if r.get("status") not in ("Cancelado", "No-show")
+              and (r.get("_depois") or r.get("_manut"))]
+    if not ativos:
+        return
+    ativos.sort(key=lambda r: (not r.get("_prio"), r.get("status") == "Descarregado", _txt(r.get("hora"))))
+    n_p = sum(1 for r in ativos if r.get("_prio"))
+    n_m = sum(1 for r in ativos if r.get("_manut"))
+    tema.secao(f"🧭 Depois da descarga · {len(ativos)} carreta(s)",
+               f"{'⭐ ' + str(n_p) + ' prioridade(s) · ' if n_p else ''}"
+               f"{'🔧 ' + str(n_m) + ' vão para manutenção · ' if n_m else ''}"
+               "o que cada carreta faz quando terminar de descarregar (pedido já lançado pela Puxada).")
+    st.markdown(_CSS + '<div class="pt-quadro">' + "".join(_card(r) for r in ativos) + "</div>",
+                unsafe_allow_html=True)
+    with st.expander("📋 Ver em tabela / baixar"):
+        ui.tabela(patio_service.tabela_depois(ativos), baixar="depois_da_descarga")
+
+
+def _manutencoes(operacao_id: int, dia: dt.date) -> None:
+    from repositories import manutencao_repo
+
+    if ui.somente_leitura(operacao_id):
+        return
+    m = manutencao_repo.lista_df(operacao_id, dia.isoformat(), (dia + dt.timedelta(days=3)).isoformat(),
+                                 ["Programada", "Em andamento"])
+    with st.expander(f"🔧 Manutenções programadas pela Puxada (até {dia + dt.timedelta(days=3):%d/%m}) · {len(m)}"):
+        if m.empty:
+            st.caption("Nenhuma manutenção programada.")
+            return
+        m = m.sort_values(["prioridade", "data", "hora"], ascending=[False, True, True], na_position="last")
+        ui.tabela(pd.DataFrame({
+            "Prioridade": ["⭐" if patio_service.ped_svc._v(x) else "" for x in m["prioridade"]],
+            "Dia": [pd.to_datetime(x).strftime("%d/%m") for x in m["data"]],
+            "Hora": [_txt(x) or "—" for x in m["hora"]], "Placa": m["placa"], "Tipo": m["tipo"],
+            "Descrição": [_txt(x) for x in m["descricao"]], "Oficina": [_txt(x) for x in m["oficina"]],
+            "Status": m["status"]}), baixar="manutencoes_programadas")
+
+
 def quadro_dia(operacao_id: int, dia: dt.date, df: pd.DataFrame) -> None:
     """Agenda do dia por período (linha do tempo da doca) + horários ainda livres de cada produto."""
     ps = jsvc.periodos(operacao_id)
     js_todas = logistica_repo.janelas(operacao_id, apenas_ativas=False)
-    regs = df.to_dict("records") if not df.empty else []
+    regs = patio_service.enriquecer(operacao_id, df.to_dict("records") if not df.empty else [])
     for r in regs:
         r["_faixa"] = jsvc.janela_de_agendamento(js_todas, r.get("data"), r.get("hora"), r.get("janela_id"),
                                                  _txt(r.get("tipo_carga")) or None)
+    _depois_descarga(regs)
+    tema.secao(f"🗓️ Agenda de {dia:%d/%m/%Y} ({jsvc.DIAS[dia.weekday()]})",
+               "Cada coluna é um período da doca. 📱 = agendado pelo motorista no App Carreteiro.")
     if not ps:
         if not regs:
             st.info(f"Nenhuma descarga em {dia:%d/%m}. Cadastre os períodos em 🕒 Slots de descarga.")
@@ -263,9 +323,8 @@ def painel_dia(operacao_id: int, dia: dt.date, editar: bool, key: str) -> pd.Dat
          "status": "serio" if len(filtro("No-show")) else "info", "dados": perdidos},
     ], key=f"kp_desc_{key}")
 
-    tema.secao(f"🗓️ Agenda de {dia:%d/%m/%Y} ({jsvc.DIAS[dia.weekday()]})",
-               "Cada coluna é um período da doca. 📱 = agendado pelo motorista no App Carreteiro.")
     quadro_dia(operacao_id, dia, df)
+    _manutencoes(operacao_id, dia)
     if df.empty:
         return df
     if editar:

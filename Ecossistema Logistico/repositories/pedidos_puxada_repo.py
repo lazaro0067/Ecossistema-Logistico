@@ -6,7 +6,7 @@ from database.connection import execute, query_all, query_df, query_one
 from repositories import operacoes_repo
 
 CAMPOS = ["data", "placa", "numero_pedido", "fabrica_id", "motorista_id", "hora_agendamento", "hora_agendamento_fim",
-          "tipo", "p_corona600", "p_outros", "outros_desc", "p600_ambar", "p600_verde", "p1l", "p300", "paletes", "observacao"]
+          "tipo", "p_corona600", "p_outros", "outros_desc", "p600_ambar", "p600_verde", "p1l", "p300", "paletes", "observacao", "prioridade"]
 
 
 def pedidos_df(operacao_id: int, de: str | None = None, ate: str | None = None,

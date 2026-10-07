@@ -45,7 +45,7 @@ def liberado_em(ultima: dict | None) -> dt.datetime | None:
 
 
 def situacao(m: dict, quando: dt.datetime, ultima: dict | None, ativa: dict | None,
-             ferias: list[dict], servico: dict | None = None) -> dict:
+             ferias: list[dict], servico: dict | None = None, interj: dict | None = None) -> dict:
     """{status, detalhe, livre_em} do motorista no momento `quando`."""
     dia = quando.date()
     for f in ferias:
@@ -57,13 +57,20 @@ def situacao(m: dict, quando: dt.datetime, ultima: dict | None, ativa: dict | No
         chegada = _data(ativa.get("desc_data"))
         if chegada is None or dia <= chegada or dia == tempo.hoje():
             prev = f" · chega {chegada:%d/%m} {ativa.get('desc_hora') or ''}".rstrip() if chegada else ""
-            return {"status": "Em viagem", "detalhe": f"pedido {ativa['numero_pedido']} · {ativa['placa']}{prev}",
+            ij_ini, ij_fim = _dt((interj or {}).get("inicio")), _dt((interj or {}).get("fim_previsto"))
+            desc = f" · 😴 descansando até {ij_fim:%d/%m %H:%M}" if ij_ini and ij_fim and ij_ini <= quando < ij_fim else ""
+            return {"status": "Em viagem", "detalhe": f"pedido {ativa['numero_pedido']} · {ativa['placa']}{prev}{desc}",
                     "livre_em": None}
     if servico and dia == tempo.hoje():
         ini = _dt(servico.get("inicio"))
         return {"status": "Em serviço", "detalhe": f"{servico.get('tipo') or 'serviço'} desde "
                                                   f"{ini:%d/%m %H:%M}" if ini else (servico.get("tipo") or ""),
                 "livre_em": None}
+    ij_ini, ij_fim = _dt((interj or {}).get("inicio")), _dt((interj or {}).get("fim_previsto"))
+    if ij_ini and ij_fim and ij_ini <= quando < ij_fim:
+        return {"status": "Interjornada",
+                "detalhe": f"marcou no app {ij_ini:%d/%m %H:%M} · livre às {ij_fim:%H:%M} de {ij_fim:%d/%m}",
+                "livre_em": ij_fim}
     livre = liberado_em(ultima)
     if livre and quando < livre:
         fim = _dt(ultima["ts_fim"])
@@ -79,25 +86,25 @@ def _base(operacao_id: int):
     ds = dias()
     return (mots, repo.ultimas_viagens(operacao_id), repo.viagens_ativas(operacao_id),
             repo.ferias_periodo(operacao_id, ds[0].isoformat(), (ds[-1] + dt.timedelta(days=60)).isoformat()),
-            repo.servicos_ativos(operacao_id))
+            repo.servicos_ativos(operacao_id), repo.interjornadas_op(operacao_id))
 
 
 def agora(operacao_id: int) -> pd.DataFrame:
     """Situação de cada motorista neste momento."""
-    mots, ult, ativas, ferias, serv = _base(operacao_id)
+    mots, ult, ativas, ferias, serv, ij = _base(operacao_id)
     if mots.empty:
         return pd.DataFrame(columns=["id", "nome", "status", "detalhe", "livre_em"])
     now = tempo.agora()
     linhas = []
     for m in mots.to_dict("records"):
-        s = situacao(m, now, ult.get(m["id"]), ativas.get(m["id"]), ferias, serv.get(m["id"]))
+        s = situacao(m, now, ult.get(m["id"]), ativas.get(m["id"]), ferias, serv.get(m["id"]), ij.get(m["id"]))
         linhas.append({"id": m["id"], "nome": m["nome"], **s})
     return pd.DataFrame(linhas)
 
 
 def grade(operacao_id: int) -> pd.DataFrame:
     """Uma linha por motorista e dia (hoje = agora; próximos dias = início do dia, com aviso se libera no dia)."""
-    mots, ult, ativas, ferias, serv = _base(operacao_id)
+    mots, ult, ativas, ferias, serv, ij = _base(operacao_id)
     if mots.empty:
         return pd.DataFrame(columns=["id", "nome", "data", "status", "detalhe", "livre_em"])
     now = tempo.agora()
@@ -105,7 +112,7 @@ def grade(operacao_id: int) -> pd.DataFrame:
     for m in mots.to_dict("records"):
         for d in dias():
             quando = now if d == now.date() else dt.datetime.combine(d, dt.time(0, 0))
-            s = situacao(m, quando, ult.get(m["id"]), ativas.get(m["id"]), ferias, serv.get(m["id"]))
+            s = situacao(m, quando, ult.get(m["id"]), ativas.get(m["id"]), ferias, serv.get(m["id"]), ij.get(m["id"]))
             # interjornada que acaba no próprio dia: o motorista fica disponível a partir da hora
             if d != now.date() and s["status"] == "Interjornada" and s["livre_em"] and s["livre_em"].date() == d:
                 s = {**s, "status": "Disponível", "detalhe": f"a partir das {s['livre_em']:%H:%M} (interjornada)"}
@@ -115,11 +122,12 @@ def grade(operacao_id: int) -> pd.DataFrame:
 
 def no_momento(operacao_id: int, motorista_id: int, quando: dt.datetime) -> dict:
     """Situação de um motorista num horário (usado no lançamento do pedido)."""
-    mots, ult, ativas, ferias, serv = _base(operacao_id)
+    mots, ult, ativas, ferias, serv, ij = _base(operacao_id)
     m = next((r for r in mots.to_dict("records") if r["id"] == motorista_id), None)
     if not m:
         return {"status": "Disponível", "detalhe": "", "livre_em": None}
-    return situacao(m, quando, ult.get(motorista_id), ativas.get(motorista_id), ferias, serv.get(motorista_id))
+    return situacao(m, quando, ult.get(motorista_id), ativas.get(motorista_id), ferias, serv.get(motorista_id),
+                    ij.get(motorista_id))
 
 
 # --- Férias ---------------------------------------------------------------------------
@@ -175,3 +183,76 @@ def encerrar_servico(motorista: dict) -> None:
     if not s:
         raise RegraNegocioError("Nenhum serviço em andamento.")
     repo.encerrar_servico(s["id"])
+
+
+# --- Interjornada marcada pelo motorista no app ----------------------------------------------
+def iniciar_interjornada(motorista: dict) -> dict:
+    """O motorista toca em 😴 Interjornada: começa agora e termina daqui a 11 h. A Puxada recebe o aviso."""
+    from repositories import carreteiro_repo
+
+    atual = repo.interjornada_atual(motorista["id"])
+    agora_ = tempo.agora()
+    if atual and _dt(atual["fim_previsto"]) and agora_ < _dt(atual["fim_previsto"]):
+        raise RegraNegocioError(f"Você já está em interjornada até {_dt(atual['fim_previsto']):%d/%m %H:%M}.")
+    serv = repo.servico_ativo(motorista["id"])
+    if serv:  # descanso começa: o serviço avulso termina
+        repo.encerrar_servico(serv["id"])
+    viagem = carreteiro_repo.viagem_ativa_motorista(motorista["id"])
+    fim = agora_ + dt.timedelta(hours=INTERJORNADA_H)
+    repo.iniciar_interjornada(motorista["operacao_id"], motorista["id"], viagem["id"] if viagem else None,
+                              agora_.strftime("%Y-%m-%d %H:%M:%S"), fim.strftime("%Y-%m-%d %H:%M:%S"))
+    _avisar_puxada(motorista["operacao_id"], f"😴 {motorista['nome']} iniciou a interjornada",
+                   f"Início {agora_:%d/%m %H:%M} · fim previsto {fim:%d/%m %H:%M}"
+                   + (f" · em viagem (pedido {viagem['numero_pedido']}, placa {viagem['placa']})" if viagem else ""),
+                   f"interj:{motorista['id']}:{agora_:%Y%m%d%H%M}")
+    return {"inicio": agora_, "fim": fim}
+
+
+def interjornada_do_motorista(motorista_id: int) -> dict | None:
+    """{inicio, fim, ativa, concluida_ha_h} da última interjornada (para o app)."""
+    r = repo.interjornada_atual(motorista_id)
+    if not r:
+        return None
+    ini, fim = _dt(r["inicio"]), _dt(r["fim_previsto"])
+    agora_ = tempo.agora()
+    return {"inicio": ini, "fim": fim, "ativa": bool(ini and fim and ini <= agora_ < fim),
+            "concluida_ha_h": (agora_ - fim).total_seconds() / 3600 if fim and agora_ >= fim else None}
+
+
+_ULTIMA_VERIF = {"t": 0.0}
+
+
+def verificar_interjornadas(forcar: bool = False) -> int:
+    """Avisa a Puxada quando a interjornada termina (roda junto com os alertas, no máximo a cada 2 min)."""
+    import time
+
+    if not forcar and time.time() - _ULTIMA_VERIF["t"] < 120:
+        return 0
+    _ULTIMA_VERIF["t"] = time.time()
+    n = 0
+    for r in repo.interjornadas_a_avisar(tempo.agora().strftime("%Y-%m-%d %H:%M:%S")):
+        fim = _dt(r["fim_previsto"])
+        _avisar_puxada(r["operacao_id"], f"✅ {r['motorista']} concluiu a interjornada",
+                       f"Livre desde {fim:%d/%m %H:%M} — disponível para nova viagem.", f"interjfim:{r['id']}")
+        repo.marcar_interjornada_avisada(r["id"])
+        n += 1
+    return n
+
+
+def _avisar_puxada(operacao_id: int, titulo: str, texto: str, chave: str) -> None:
+    try:
+        from config.settings import PERFIL_MOTORISTA
+        from core.auth import pode_acessar_aba
+        from repositories import usuarios_repo
+
+        agora_ = tempo.agora().strftime("%Y-%m-%d %H:%M:%S")
+        for u in usuarios_repo.listar(apenas_ativos=True):
+            if u["perfil"] == PERFIL_MOTORISTA:
+                continue
+            sessao = usuarios_repo.carregar_sessao(u["id"])
+            if operacao_id not in (sessao.get("operacoes") or [operacao_id]):
+                continue
+            if pode_acessar_aba(sessao, "puxada", "disp_motoristas") or pode_acessar_aba(sessao, "puxada", "carreteiro"):
+                repo.criar_notificacao(u["id"], "interjornada", chave, titulo, texto, "puxada", agora_)
+    except Exception:
+        pass

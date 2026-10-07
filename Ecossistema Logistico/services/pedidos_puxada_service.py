@@ -82,6 +82,18 @@ def prioridade(r: dict) -> tuple[int, str, str]:
     return 4, f"🟢 Sai em {_dur(falta_h)}", "#146c43"
 
 
+def e_prioritario(r: dict) -> bool:
+    """⭐ marcado pela Puxada: o armazém trata antes dos demais."""
+    return bool(_v(r.get("prioridade")))
+
+
+def ordem_armazem(r: dict) -> tuple:
+    """Ordenação do armazém: ⭐ prioridade primeiro, depois a urgência do prazo de saída."""
+    pz = prazo_saida(r)
+    aberto = r.get("status") == "Aberto"
+    return (0 if (aberto and e_prioritario(r)) else 1, prioridade(r)[0], pz or dt.datetime.max)
+
+
 def _dur(h: float) -> str:
     m = int(round(h * 60))
     if m < 60:
@@ -120,7 +132,7 @@ def _hora(v, nome: str) -> str | None:
 def salvar_pedido(operacao_id: int, pid: int | None, data: dt.date, placa: str, numero: str, tipo: str,
                   qtds: dict | None, paletes, observacao: str, usuario: str, fabrica_id: int | None = None,
                   motorista_id: int | None = None, hora_agendamento=None, hora_agendamento_fim=None,
-                  outros_desc: str | None = None, _reprogramando: bool = False) -> int:
+                  outros_desc: str | None = None, prioridade: bool | None = None, _reprogramando: bool = False) -> int:
     from repositories import operacoes_repo
 
     if operacoes_repo.e_consolidada(operacao_id):
@@ -163,7 +175,9 @@ def salvar_pedido(operacao_id: int, pid: int | None, data: dt.date, placa: str, 
     dados = {"data": data.isoformat(), "placa": placa, "numero_pedido": numero, "fabrica_id": int(fabrica_id),
              "motorista_id": int(motorista_id), "hora_agendamento": hora, "hora_agendamento_fim": hora_fim,
              "tipo": tipo, "outros_desc": None,
-             "observacao": (observacao or "").strip() or None, **{k: 0.0 for k in EMBALAGENS_RETORNAVEL}, "paletes": 0.0}
+             "observacao": (observacao or "").strip() or None,
+             "prioridade": int(bool(prioridade if prioridade is not None else (atual or {}).get("prioridade"))),
+             **{k: 0.0 for k in EMBALAGENS_RETORNAVEL}, "paletes": 0.0}
     if tipo == "Retornável":
         for k in EMBALAGENS_RETORNAVEL:
             dados[k] = _num((qtds or {}).get(k))
@@ -194,7 +208,7 @@ def salvar_pedido(operacao_id: int, pid: int | None, data: dt.date, placa: str, 
 _ROTULOS = {"data": "dia", "placa": "placa", "numero_pedido": "nº do pedido", "fabrica_id": "fábrica",
             "motorista_id": "motorista", "hora_agendamento": "agendamento", "hora_agendamento_fim": "fim do slot",
             "tipo": "tipo", **EMBALAGENS_RETORNAVEL, "outros_desc": "descrição outros",
-            "paletes": "paletes", "observacao": "observação"}
+            "paletes": "paletes", "observacao": "observação", "prioridade": "prioridade"}
 
 
 def _resumo_edicao(atual: dict, novo: dict) -> str:
@@ -205,6 +219,8 @@ def _resumo_edicao(atual: dict, novo: dict) -> str:
     mots = {int(r["id"]): r["nome"] for r in logistica_repo.motoristas_df(atual["operacao_id"]).to_dict("records")}
 
     def fmt(k, v):
+        if k == "prioridade":
+            return "⭐ sim" if _v(v) else "não"
         if v is None or v == "" or (isinstance(v, float) and v != v):
             return "—"
         if k == "fabrica_id":
@@ -267,7 +283,7 @@ def reprogramar(operacao_id: int, pid: int, data: dt.date, motivo: str, usuario:
         raise RegraNegocioError("Informe o motivo da reprogramação.")
     base = {k: atual.get(k) for k in ("placa", "numero_pedido", "tipo", "fabrica_id", "motorista_id",
                                       "hora_agendamento", "hora_agendamento_fim", "paletes", "observacao",
-                                      "outros_desc")}
+                                      "outros_desc", "prioridade")}
     base.update({k: v for k, v in novos.items() if v is not None})
     qtds = {k: (novos.get("qtds") or {}).get(k, _v(atual.get(k))) for k in EMBALAGENS_RETORNAVEL}
     novos.pop("qtds", None)
@@ -278,7 +294,7 @@ def reprogramar(operacao_id: int, pid: int, data: dt.date, motivo: str, usuario:
                              base["paletes"], base.get("observacao") or "", usuario, fabrica_id=base["fabrica_id"],
                              motorista_id=base["motorista_id"], hora_agendamento=base["hora_agendamento"],
                              hora_agendamento_fim=base.get("hora_agendamento_fim"),
-                             outros_desc=base.get("outros_desc"))
+                             outros_desc=base.get("outros_desc"), prioridade=bool(_v(base.get("prioridade"))))
     except Exception:
         repo.mudar_status(pid, atual["status"], None)
         raise
@@ -353,7 +369,7 @@ def tabela(df: pd.DataFrame, com_filial: bool = False) -> pd.DataFrame:
         fab = r.get("fabrica")
         ag, pz = agendamento_dt(r), prazo_saida(r)
         mot = r.get("motorista")
-        d.update({"Prioridade": prioridade(r)[1],
+        d.update({"Prioridade": ("⭐ " if e_prioritario(r) else "") + prioridade(r)[1],
                   "Placa": r["placa"], "Pedido": r["numero_pedido"], "Fábrica": fab if isinstance(fab, str) else "—",
                   "Motorista": mot if isinstance(mot, str) else "—",
                   "Agendamento fábrica": f"{ag:%d/%m} {janela_txt(r)}" if ag else "—",

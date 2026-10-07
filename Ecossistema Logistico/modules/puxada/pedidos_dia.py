@@ -28,6 +28,7 @@ _CSS = """
 .pp-top { display:flex; justify-content:space-between; align-items:center; gap:.5rem; }
 .pp-top b { font-size:1.05rem; color:#0B1F3A; }
 .pp-st { font-size:.72rem; font-weight:800; padding:.12rem .5rem; border-radius:999px; background:var(--f); color:var(--c); }
+.pp-star { font-size:.68rem; font-weight:800; padding:.1rem .45rem; border-radius:999px; background:#fff4d6; color:#8a5a00; border:1px solid #f0c75e; margin-left:.3rem; vertical-align:middle; }
 .pp-ped { font-size:.86rem; color:#3d3c39; margin-top:.1rem; }
 .pp-tipo { display:inline-block; font-size:.74rem; font-weight:700; padding:.1rem .5rem; border-radius:999px;
     background:#eef3fa; color:#2a5ca8; margin:.35rem 0 .25rem; }
@@ -96,8 +97,10 @@ def _card(r: dict, com_filial: bool = False) -> str:
     elif svc._v(r.get("substitui_id")):
         reprog = '<div class="pp-edit">🔁 <b>Reprogramação</b> — substitui um agendamento anterior deste pedido</div>'
     editado = reprog + editado
+    estrela = (' <span class="pp-star">⭐ PRIORIDADE</span>' if svc.e_prioritario(r)
+               and r["status"] not in ("Cancelado", "Reprogramado") else "")
     return (f'<div class="pp-card {"cancelado" if r["status"] in ("Cancelado", "Reprogramado") else ""}" style="--c:{cor};--f:{fundo}">'
-            f'<div class="pp-top"><b>🚛 {_e(r["placa"])}</b><span class="pp-st">{svc.STATUS_ICONE.get(r["status"], "")} '
+            f'<div class="pp-top"><b>🚛 {_e(r["placa"])}{estrela}</b><span class="pp-st">{svc.STATUS_ICONE.get(r["status"], "")} '
             f'{_e(r["status"])}</span></div><div class="pp-ped">Pedido <b>{_e(r["numero_pedido"])}</b>{fab} · '
             f'{_e(svc.rotulo_dia(dt.date.fromisoformat(str(r["data"])[:10])))}</div>'
             f'<span class="pp-tipo">{ICONE_TIPO.get(r["tipo"], "")} {_e(r["tipo"])} · {_f(r.get("paletes"))} palete(s)</span>'
@@ -107,8 +110,7 @@ def _card(r: dict, com_filial: bool = False) -> str:
 def _cards(df: pd.DataFrame, com_filial: bool = False) -> None:
     if df.empty:
         return
-    regs = sorted(df.to_dict("records"), key=lambda r: (svc.prioridade(r)[0], str(svc.prazo_saida(r) or ""),
-                                                        str(r["placa"])))
+    regs = sorted(df.to_dict("records"), key=lambda r: (*svc.ordem_armazem(r), str(r["placa"])))
     st.markdown(_CSS + '<div class="pp-grid">' + "".join(_card(r, com_filial) for r in regs)
                 + "</div>", unsafe_allow_html=True)
 
@@ -265,12 +267,14 @@ def _form(usuario: dict, operacao_id: int, d: dt.date, atual: dict | None, chave
         st.warning(f"⚠️ {_f(total_pal)} paletes passam da capacidade da {placa} ({cap} paletes).")
     obs = st.text_input("Observação", value=(atual or {}).get("observacao") or "", key=f"{chave}_obs",
                         placeholder="opcional")
+    prio = st.checkbox("⭐ Prioridade para o armazém", value=svc.e_prioritario(atual or {}), key=f"{chave}_prio",
+                       help="O pedido aparece no topo da Gestão de Pedidos e do Pátio/Descarga do armazém.")
     if st.button("💾 Salvar pedido" if not atual else "💾 Salvar alteração", type="primary", key=f"{chave}_ok"):
         try:
             svc.salvar_pedido(operacao_id, atual["id"] if atual else None, d, placa, numero, tipo, qtds, paletes, obs,
                               usuario.get("nome") or usuario.get("login") or "", fabrica_id=fabrica_id,
                               motorista_id=motorista_id, hora_agendamento=hora_ag, hora_agendamento_fim=hora_fim,
-                              outros_desc=outros_desc)
+                              outros_desc=outros_desc, prioridade=prio)
         except RegraNegocioError as e:
             st.error(str(e))
         else:
@@ -374,10 +378,14 @@ def tela_armazem(usuario: dict, operacao_id: int) -> None:
         if not (atrasados.empty and df.empty) else df
     prios = [svc.prioridade(r)[0] for r in abertos.to_dict("records")] if not abertos.empty else []
     urgentes = abertos[[p <= 2 for p in prios]] if prios else abertos
+    estrelas = abertos[[svc.e_prioritario(r) for r in abertos.to_dict("records")]] if not abertos.empty else abertos
     _kpis(df, "kp_pp_arm", [
         {"titulo": "🚦 Saem em até 6h / atrasados", "valor": len(urgentes), "icone": "",
          "status": "critico" if any(p <= 1 for p in prios) else "atencao" if len(urgentes) else "bom",
          "dados": svc.tabela(urgentes, consolidada) if not urgentes.empty else None},
+        {"titulo": "⭐ Prioridades da Puxada", "valor": len(estrelas), "icone": "",
+         "status": "critico" if len(estrelas) else "bom",
+         "dados": svc.tabela(estrelas, consolidada) if not estrelas.empty else None},
         {"titulo": "Abertos de dias anteriores", "valor": len(atrasados), "icone": "⏰",
          "status": "critico" if len(atrasados) else "bom", "dados": svc.tabela(atrasados, consolidada)}])
     opcoes = {"PRIO": f"🚦 Prioridades ({len(abertos)} aberto(s))",
@@ -387,7 +395,7 @@ def tela_armazem(usuario: dict, operacao_id: int) -> None:
     esc = ui._escolha("pp_arm_dia", list(opcoes), "PRIO", formatar=opcoes.get, pills=True)
     if esc == "PRIO":
         lista = abertos
-        st.caption("Ordem de prioridade: prazo máximo para a carreta **sair da revenda** = agendamento na fábrica − "
+        st.caption("Ordem: ⭐ prioridades marcadas pela Puxada primeiro; depois o prazo máximo para a carreta **sair da revenda** = agendamento na fábrica − "
                    "tempo de deslocamento até a fábrica.")
     elif esc == "ATR":
         lista = atrasados
@@ -398,8 +406,7 @@ def tela_armazem(usuario: dict, operacao_id: int) -> None:
     if lista.empty:
         st.info("Nenhum pedido para este dia.")
         return
-    regs = sorted(lista.to_dict("records"), key=lambda r: (svc.prioridade(r)[0], str(svc.prazo_saida(r) or ""),
-                                                           str(r["placa"])))
+    regs = sorted(lista.to_dict("records"), key=lambda r: (*svc.ordem_armazem(r), str(r["placa"])))
     for ini in range(0, len(regs), 3):
         for col, r in zip(st.columns(3), regs[ini:ini + 3]):
             with col:

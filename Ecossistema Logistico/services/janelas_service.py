@@ -240,3 +240,9 @@ def janela_de_agendamento(js: list[dict], data, hora, janela_id=None, produto: s
     if not p:
         return ""
     return f"{ini:%H:%M}–{ini + dt.timedelta(minutes=_dur(p, produto)):%H:%M}"
+
+
+def duracao_em(operacao_id: int, quando: dt.datetime, produto: str | None) -> int:
+    """Minutos de doca para o produto no horário (sem períodos: 1 h descartável / 2 h retornável)."""
+    p = periodo_em(periodos(operacao_id), quando)
+    return _dur(p or {}, produto)
