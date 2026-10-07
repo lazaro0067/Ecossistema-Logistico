@@ -462,8 +462,16 @@ def _form_agenda(usuario: dict, v: dict, chave: str, botao: str, sucesso: str, g
             else:
                 st.markdown(f"**🕒 Horários de {data:%d/%m} para {produto.lower()}** · livres agora "
                             f"({tempo.agora():%H:%M}). A descarga ocupa a doca do início até o horário de fim.")
-                with st.expander(f"Ver a grade do dia ({len(livres)} horário(s) livre(s))"):
-                    _chips_janelas(hs)
+                if livres:
+                    with st.expander(f"👆 Ver a grade do dia — {len(livres)} horário(s) livre(s)"):
+                        st.caption("Só aparecem os horários livres. Toque no horário para agendar na hora.")
+                        atual_g = v.get("desc_hora") if v.get("desc_data") == data.isoformat() else None
+                        for ini in range(0, len(livres), 3):
+                            for col, h in zip(st.columns(3), livres[ini:ini + 3]):
+                                fim = f"{h['fim']:%H:%M}" + (" (+1)" if h["fim"].date() > data else "")
+                                rot = f"{'✅ ' if h['hora'] == atual_g else '🕒 '}{h['hora']} → {fim}"
+                                if col.button(rot, key=f"{chave}_g_{data}_{produto}_{h['hora']}", **ui.LARGURA):
+                                    _confirmar_agenda(usuario, v, data, h["hora"], produto, sucesso, geo)
                 if not livres:
                     st.error("Não há horário livre neste dia para este produto. Escolha outro dia.")
                     pode = False
@@ -482,13 +490,17 @@ def _form_agenda(usuario: dict, v: dict, chave: str, botao: str, sucesso: str, g
     with st.container(key="car_etapa" if botao.startswith("🗓️") else f"{chave}_salvar"):
         ok = st.button(botao, key=f"{chave}_ok", type="primary", disabled=not pode, **ui.LARGURA)
     if ok:
-        try:
-            nova = svc.agendar_descarga(usuario, v["id"], data, hora, produto, _gps(geo))
-        except RegraNegocioError as e:
-            st.error(str(e))
-        else:
-            ui.avisar(sucesso.format(data=f"{data:%d/%m}", hora=nova.get("desc_hora") or ""))
-            st.rerun()
+        _confirmar_agenda(usuario, v, data, hora, produto, sucesso, geo)
+
+
+def _confirmar_agenda(usuario: dict, v: dict, data, hora, produto, sucesso: str, geo) -> None:
+    try:
+        nova = svc.agendar_descarga(usuario, v["id"], data, hora, produto, _gps(geo))
+    except RegraNegocioError as e:
+        st.error(str(e))
+    else:
+        ui.avisar(sucesso.format(data=f"{data:%d/%m}", hora=nova.get("desc_hora") or ""))
+        st.rerun()
 
 
 def _agendar(usuario: dict, v: dict, geo) -> None:
