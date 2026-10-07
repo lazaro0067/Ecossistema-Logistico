@@ -268,3 +268,43 @@ def retornos_destino(operacao_id: int, destino_id: int | None, limite: int = 30)
         sql += " AND destino_id = ?"
         p.append(destino_id)
     return query_all(sql + " ORDER BY ts_chegada_revenda DESC LIMIT ?", [*p, limite])
+
+
+# --- Paradas na viagem (manutenção) -----------------------------------------------------------
+def parada_ativa(vid: int) -> dict | None:
+    return query_one("SELECT * FROM paradas_viagem WHERE viagem_id = ? AND fim IS NULL ORDER BY id DESC LIMIT 1",
+                     (vid,))
+
+
+def iniciar_parada(vid: int, motorista_id: int, tipo: str, obs: str | None, ts: str, lat=None, lon=None) -> int:
+    return execute("""INSERT INTO paradas_viagem (viagem_id, motorista_id, tipo, observacao, inicio, lat, lon)
+                      VALUES (?, ?, ?, ?, ?, ?, ?)""", (vid, motorista_id, tipo, obs, ts, lat, lon))
+
+
+def encerrar_parada(pid: int, ts: str) -> None:
+    execute("UPDATE paradas_viagem SET fim = ? WHERE id = ?", (ts, pid))
+
+
+def paradas_df(viagem_ids: list[int] | None = None, operacao_id: int | None = None) -> pd.DataFrame:
+    sql = """SELECT p.id, p.viagem_id, v.numero_pedido, v.placa, m.nome AS motorista, p.tipo, p.observacao,
+                    p.inicio, p.fim
+             FROM paradas_viagem p JOIN viagens_carreteiro v ON v.id = p.viagem_id
+             LEFT JOIN motoristas m ON m.id = v.motorista_id WHERE 1 = 1"""
+    params: list = []
+    if viagem_ids is not None:
+        if not viagem_ids:
+            return pd.DataFrame(columns=["id", "viagem_id", "numero_pedido", "placa", "motorista", "tipo",
+                                         "observacao", "inicio", "fim"])
+        sql += f" AND p.viagem_id IN ({', '.join('?' * len(viagem_ids))})"
+        params += list(viagem_ids)
+    if operacao_id is not None:
+        sql += " AND v.operacao_id = ?"
+        params.append(operacao_id)
+    return query_df(sql + " ORDER BY p.inicio DESC", params)
+
+
+def paradas_ativas(operacao_id: int) -> dict[int, dict]:
+    """Por viagem: a parada de manutenção em andamento."""
+    return {r["viagem_id"]: r for r in query_all(
+        """SELECT p.* FROM paradas_viagem p JOIN viagens_carreteiro v ON v.id = p.viagem_id
+           WHERE v.operacao_id = ? AND p.fim IS NULL""", (operacao_id,))}

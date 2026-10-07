@@ -349,9 +349,35 @@ def _viagem(usuario: dict, v: dict, geo: dict | None) -> None:
     prox = svc.proxima_etapa(v)
     if prox is None:
         return
+    if _parada(usuario, v, geo):  # em manutenção: as etapas esperam o fim da parada
+        return
     _etapa_atual(usuario, v, geo, prox)
     st.markdown("<div style='height:.6rem'></div>", unsafe_allow_html=True)
+    with st.popover("🔧 Parada para manutenção (início)", **ui.LARGURA):
+        st.caption("Registre quando a carreta parar para manutenção. Ao voltar, toque em “Fim da manutenção”.")
+        obs = st.text_input("O que aconteceu?", key=f"car_par_obs_{v['id']}", placeholder="ex.: pneu furado")
+        if st.button("🔧 Iniciar parada", type="primary", key=f"car_par_ini_{v['id']}", **ui.LARGURA):
+            ui.acao(svc.iniciar_parada, usuario, v["id"], obs, _gps(geo),
+                    sucesso="Parada para manutenção registrada. A Puxada foi avisada.")
     _cancelar(usuario, v)
+
+
+def _parada(usuario: dict, v: dict, geo) -> bool:
+    p = repo.parada_ativa(v["id"])
+    if not p:
+        return False
+    ini = tempo.parse_dt(p["inicio"])
+    dur = svc.formatar_duracao((tempo.agora() - ini).total_seconds() / 3600) if ini else ""
+    st.markdown(
+        f'<div class="car-viagem" style="border-color:#c2571a"><div class="lin"><span>🔧 Parada para manutenção'
+        f'</span><b>desde {ini:%d/%m %H:%M}</b></div><div class="lin"><span>Tempo parado</span><b>{tema._e(dur)}</b></div>'
+        + (f'<div class="lin"><span>Motivo</span><b>{tema._e(p["observacao"])}</b></div>' if p.get("observacao") else "")
+        + "</div>", unsafe_allow_html=True)
+    with st.container(key="car_fim"):
+        if st.button("✅  FIM DA MANUTENÇÃO", type="primary", key=f"car_par_fim_{v['id']}", **ui.LARGURA):
+            ui.acao(svc.encerrar_parada, usuario, v["id"], sucesso="Manutenção encerrada — siga com a viagem.")
+    st.caption("As etapas da viagem voltam depois do fim da manutenção.")
+    return True
 
 
 def _etapa_atual(usuario: dict, v: dict, geo: dict | None, prox: str) -> None:
@@ -398,18 +424,13 @@ def _desfazer(usuario: dict, v: dict) -> None:
 
 
 # --- Agendamento da descarga (entre carregar e sair da cervejaria) ------------------
-def _chips_janelas(js: list[dict]) -> None:
-    """Quadro das janelas do dia: verde = tem vaga, vermelho = lotada, cinza = já passou."""
+def _chips_janelas(hs: list[dict]) -> None:
+    """Grade de horários do dia: verde = livre, vermelho = doca ocupada, cinza = já passou."""
     itens = []
-    for j in js:
-        if j["passou"]:
-            cls, txt = "fim", "encerrada"
-        elif j["livres"] <= 0:
-            cls, txt = "cheia", "lotada"
-        else:
-            cls, txt = "ok", f"{j['livres']} de {j['slots']} vaga{'s' if int(j['slots']) > 1 else ''}"
-        prod = f"<i>{tema._e(j['produto'])}</i>" if j.get("produto") else ""
-        itens.append(f'<div class="car-jan {cls}"><b>{tema._e(j["rotulo"])}</b><span>{txt}</span>{prod}</div>')
+    for h in hs:
+        cls = "fim" if h["passou"] else "ok" if h["livre"] else "cheia"
+        txt = "passou" if h["passou"] else f"até {h['fim']:%H:%M}" if h["livre"] else "ocupado"
+        itens.append(f'<div class="car-jan {cls}"><b>{h["hora"]}</b><span>{txt}</span></div>')
     st.markdown(f'<div class="car-jans">{"".join(itens)}</div>', unsafe_allow_html=True)
 
 
@@ -426,33 +447,34 @@ def _form_agenda(usuario: dict, v: dict, chave: str, botao: str, sucesso: str, g
     produto = c2.radio("📦 Produto *", TIPOS_DESCARGA_APP, horizontal=True, key=f"{chave}_p",
                        index=TIPOS_DESCARGA_APP.index(v["desc_tipo"]) if v.get("desc_tipo") in TIPOS_DESCARGA_APP
                        else None)
-    hora = janela_id = None
+    hora = None
     pode = True
     if janelas_service.tem_janelas(v["operacao_id"]):
         if not produto:
-            st.caption("Escolha o produto para ver as janelas com vaga.")
+            st.caption("Escolha o produto para ver os horários livres.")
             pode = False
         else:
-            js = janelas_service.janelas_do_dia(v["operacao_id"], data, produto, ignorar_viagem=v["id"])
-            if not js:
-                st.warning(f"A revenda não recebe {produto.lower()} em {data:%d/%m} ({janelas_service.DIAS[data.weekday()]}). "
-                           "Escolha outro dia.")
+            hs = janelas_service.horarios(v["operacao_id"], data, produto, ignorar_viagem=v["id"])
+            livres = [h for h in hs if h["livre"] and not h["passou"]]
+            if not hs:
+                st.warning(f"A revenda não recebe descarga em {data:%d/%m}. Escolha outro dia.")
                 pode = False
             else:
-                st.markdown(f"**🕒 Janelas de {data:%d/%m}** · vagas de agora ({tempo.agora():%H:%M})")
-                _chips_janelas(js)
-                livres = [j for j in js if j["livres"] > 0 and not j["passou"]]
+                st.markdown(f"**🕒 Horários de {data:%d/%m} para {produto.lower()}** · livres agora "
+                            f"({tempo.agora():%H:%M}). A descarga ocupa a doca do início até o horário de fim.")
+                with st.expander(f"Ver a grade do dia ({len(livres)} horário(s) livre(s))"):
+                    _chips_janelas(hs)
                 if not livres:
-                    st.error("Todas as janelas deste dia estão lotadas. Escolha outro dia.")
+                    st.error("Não há horário livre neste dia para este produto. Escolha outro dia.")
                     pode = False
                 else:
-                    ids = [j["id"] for j in livres]
-                    nomes = {j["id"]: f"{j['rotulo']}  ·  {j['livres']} vaga(s)" for j in livres}
-                    atual = v.get("desc_janela_id") if v.get("desc_data") == data.isoformat() else None
-                    janela_id = st.radio("Escolha a janela de chegada *", ids, format_func=nomes.get,
-                                         index=ids.index(atual) if atual in ids else None,
-                                         key=f"{chave}_j_{data}_{produto}")
-            if st.button("🔄 Atualizar vagas", key=f"{chave}_upd"):
+                    ops_h = [h["hora"] for h in livres]
+                    nomes = {h["hora"]: h["rotulo"] for h in livres}
+                    atual = v.get("desc_hora") if v.get("desc_data") == data.isoformat() else None
+                    hora = st.selectbox("Escolha o horário de chegada *", ops_h, format_func=nomes.get,
+                                        index=ops_h.index(atual) if atual in ops_h else None,
+                                        placeholder="Selecione o horário...", key=f"{chave}_j_{data}_{produto}")
+            if st.button("🔄 Atualizar horários", key=f"{chave}_upd"):
                 st.rerun()
     else:
         atual_hora = dt.datetime.strptime(v["desc_hora"], "%H:%M").time() if v.get("desc_hora") else None
@@ -461,7 +483,7 @@ def _form_agenda(usuario: dict, v: dict, chave: str, botao: str, sucesso: str, g
         ok = st.button(botao, key=f"{chave}_ok", type="primary", disabled=not pode, **ui.LARGURA)
     if ok:
         try:
-            nova = svc.agendar_descarga(usuario, v["id"], data, hora, produto, _gps(geo), janela_id=janela_id)
+            nova = svc.agendar_descarga(usuario, v["id"], data, hora, produto, _gps(geo))
         except RegraNegocioError as e:
             st.error(str(e))
         else:
@@ -471,7 +493,7 @@ def _form_agenda(usuario: dict, v: dict, chave: str, botao: str, sucesso: str, g
 
 def _agendar(usuario: dict, v: dict, geo) -> None:
     tema.secao("🗓️ Agendar a descarga na revenda",
-               "Escolha o dia, o produto e a janela com vaga. O armazém recebe a tarefa na hora.")
+               "Escolha o dia, o produto e um horário livre. O armazém recebe a tarefa na hora.")
     with st.container(key="car_form"):
         _form_agenda(usuario, v, f"car_ag_{v['id']}", "🗓️  AGENDAR DESCARGA",
                      "Descarga agendada para {data} às {hora}. O armazém já foi avisado.", geo)
@@ -483,8 +505,8 @@ def _agenda_resumo(usuario: dict, v: dict, geo) -> None:
 
     d = dt.date.fromisoformat(v["desc_data"])
     jan = janelas_service.janela_de_agendamento(logistica_repo.janelas(v["operacao_id"], False), v["desc_data"],
-                                                v.get("desc_hora"), v.get("desc_janela_id"))
-    quando = f"janela {jan}" if jan else f"às {v.get('desc_hora') or '--:--'}"
+                                                v.get("desc_hora"), v.get("desc_janela_id"), v.get("desc_tipo"))
+    quando = f"das {jan.replace('–', ' às ')}" if jan else f"às {v.get('desc_hora') or '--:--'}"
     st.markdown(f'<div class="car-nf">🗓️ <b>Descarga agendada:</b> {d:%d/%m/%Y} · {quando} · '
                 f'{tema._e(v.get("desc_tipo") or "")}</div>', unsafe_allow_html=True)
     with st.expander("✏️ Editar agendamento da descarga"):

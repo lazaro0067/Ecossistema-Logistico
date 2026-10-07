@@ -403,6 +403,19 @@ CREATE TABLE IF NOT EXISTS servicos_motorista (
     fim          TEXT
 );
 
+-- Paradas na viagem registradas pelo motorista no App Carreteiro (ex.: manutenção): início e fim
+CREATE TABLE IF NOT EXISTS paradas_viagem (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    viagem_id    INTEGER NOT NULL,
+    motorista_id INTEGER,
+    tipo         TEXT DEFAULT 'Manutenção',
+    observacao   TEXT,
+    inicio       TEXT NOT NULL,
+    fim          TEXT,
+    lat          REAL,
+    lon          REAL
+);
+
 CREATE TABLE IF NOT EXISTS vinculos_pedidos (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     operacao_id       INTEGER NOT NULL REFERENCES operacoes(id),
@@ -721,7 +734,28 @@ MIGRACOES: list[tuple[str, str]] = [
         ALTER TABLE carretas ADD COLUMN perfil TEXT;
         CREATE INDEX IF NOT EXISTS ix_serv_mot ON servicos_motorista(motorista_id, inicio);
     """),
+    # Slots por tempo de doca (descartável/retornável por período) + parada de manutenção na viagem
+    ("025_slots_tempo_doca", lambda conn: _mig_025(conn)),
 ]
+
+
+def _mig_025(conn) -> None:
+    from config.settings import OPERACOES_CONSOLIDADAS
+
+    conn.executescript("""
+        ALTER TABLE janelas_descarga ADD COLUMN dur_desc_min INTEGER;
+        ALTER TABLE janelas_descarga ADD COLUMN dur_ret_min INTEGER;
+        CREATE INDEX IF NOT EXISTS ix_parada_viagem ON paradas_viagem(viagem_id);
+    """)
+    # Sobe o padrão da operação: 20h–02h (descartável 1h30 · retornável 2h30) e 02h–20h (1h · 2h)
+    ops = [r[0] for r in conn.execute("SELECT id, nome FROM operacoes").fetchall()
+           if r[1] not in OPERACOES_CONSOLIDADAS]
+    conn.execute("UPDATE janelas_descarga SET ativo = 0")
+    for op in ops:
+        for ini, fim, dd, dr in (("20:00", "02:00", 90, 150), ("02:00", "20:00", 60, 120)):
+            conn.execute("""INSERT INTO janelas_descarga (operacao_id, hora_inicio, hora_fim, slots, dias, ativo,
+                            dur_desc_min, dur_ret_min) VALUES (?, ?, ?, 1, '0,1,2,3,4,5,6', 1, ?, ?)""",
+                         (op, ini, fim, dd, dr))
 
 
 def _mig_022(conn) -> None:
@@ -795,6 +829,23 @@ def init_db(db_path=None) -> None:
                 conn.execute("INSERT INTO operacoes (nome, cnpj, cidade, uf) VALUES (?, ?, ?, ?)",
                              (nome, cnpj, cidade, uf))
         _garantir_consolidadas(conn)
+        _slots_padrao(conn)
+
+
+def _slots_padrao(conn) -> None:
+    """Filial que nunca teve período de descarga recebe o padrão (20h–02h: 1h30/2h30 · 02h–20h: 1h/2h)."""
+    from config.settings import OPERACOES_CONSOLIDADAS
+
+    for r in conn.execute("SELECT id, nome FROM operacoes").fetchall():
+        op, nome = r[0], r[1]
+        if nome in OPERACOES_CONSOLIDADAS:
+            continue
+        if conn.execute("SELECT 1 FROM janelas_descarga WHERE operacao_id = ?", (op,)).fetchone():
+            continue
+        for ini, fim, dd, dr in (("20:00", "02:00", 90, 150), ("02:00", "20:00", 60, 120)):
+            conn.execute("""INSERT INTO janelas_descarga (operacao_id, hora_inicio, hora_fim, slots, dias, ativo,
+                            dur_desc_min, dur_ret_min) VALUES (?, ?, ?, 1, '0,1,2,3,4,5,6', 1, ?, ?)""",
+                         (op, ini, fim, dd, dr))
 
 
 # Senha inicial do Master definida pelo dono do sistema (só o hash fica no código).

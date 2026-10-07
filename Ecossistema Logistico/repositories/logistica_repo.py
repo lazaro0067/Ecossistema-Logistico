@@ -133,13 +133,16 @@ def janelas_df(operacao_id: int) -> pd.DataFrame:
 
 
 def salvar_janela(operacao_id: int, jid: int | None, inicio: str, fim: str, slots: int, dias: str,
-                  produto: str | None, ativo: bool = True) -> None:
+                  produto: str | None, ativo: bool = True, dur_desc_min: int | None = None,
+                  dur_ret_min: int | None = None) -> None:
     if jid:
         execute("""UPDATE janelas_descarga SET hora_inicio = ?, hora_fim = ?, slots = ?, dias = ?, produto = ?,
-                   ativo = ? WHERE id = ?""", (inicio, fim, slots, dias, produto, 1 if ativo else 0, jid))
+                   ativo = ?, dur_desc_min = ?, dur_ret_min = ? WHERE id = ?""",
+                (inicio, fim, slots, dias, produto, 1 if ativo else 0, dur_desc_min, dur_ret_min, jid))
     else:
-        execute("""INSERT INTO janelas_descarga (operacao_id, hora_inicio, hora_fim, slots, dias, produto, ativo)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""", (operacao_id, inicio, fim, slots, dias, produto, 1 if ativo else 0))
+        execute("""INSERT INTO janelas_descarga (operacao_id, hora_inicio, hora_fim, slots, dias, produto, ativo,
+                   dur_desc_min, dur_ret_min) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (operacao_id, inicio, fim, slots, dias, produto, 1 if ativo else 0, dur_desc_min, dur_ret_min))
 
 
 # --- Vínculos de pedidos / viagens -------------------------------------------

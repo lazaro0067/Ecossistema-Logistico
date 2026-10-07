@@ -33,8 +33,8 @@ def grade(operacao_id: int) -> pd.DataFrame:
     ds = dias()
     carretas = logistica_repo.carretas_df(operacao_id)
     if carretas.empty:
-        return pd.DataFrame(columns=["placa", "modelo", "capacidade_hl", "data", "status", "sugestao", "observacao",
-                                     "manual", "pedidos"])
+        return pd.DataFrame(columns=["placa", "modelo", "perfil", "capacidade_hl", "data", "status", "sugestao",
+                                     "observacao", "manual", "pedidos"])
     manual = logistica_repo.disponibilidade_df(operacao_id, ds[0].isoformat(), ds[-1].isoformat())
     manual = {(r["placa"], r["data"]): r for r in manual.to_dict("records")}
     from repositories import pedidos_puxada_repo
@@ -49,6 +49,7 @@ def grade(operacao_id: int) -> pd.DataFrame:
             pedidos.setdefault((str(r["placa"]).upper(), r["data"]), []).append(
                 f"{r['numero_pedido']} ({r['tipo']}){' 🕒 ' + slot if slot != '—' else ''}"
                 f"{' ✅' if r['status'] == 'Finalizado' else ''}")
+    em_manut = carreteiro_repo.paradas_ativas(operacao_id)
     viagens = carreteiro_repo.viagens_df(operacao_id)
     ativas = {}
     if not viagens.empty:
@@ -87,8 +88,12 @@ def grade(operacao_id: int) -> pd.DataFrame:
                         status, obs = "Disponível", ""
                 else:
                     status, obs = "Disponível", ""
+            if v and v["id"] in em_manut and d == ds[0] and not eh_manual:
+                obs = "🔧 parada p/ manutenção · " + obs
             ped = pedidos.get((placa, d.isoformat()), [])
-            linhas.append({"placa": c["placa"], "modelo": c.get("modelo"), "capacidade_hl": c.get("capacidade_hl"),
+            perfil = c.get("perfil") if isinstance(c.get("perfil"), str) and c.get("perfil") else "Sem perfil"
+            linhas.append({"placa": c["placa"], "modelo": c.get("modelo"), "perfil": perfil,
+                           "capacidade_hl": c.get("capacidade_hl"),
                            "data": d, "status": status, "sugestao": sugestao, "observacao": obs, "manual": eh_manual,
                            "pedidos": " · ".join(ped)})
     return pd.DataFrame(linhas)
@@ -126,3 +131,26 @@ def salvar_dia(operacao_id: int, data: dt.date, linhas: list[dict], usuario: str
         planejar(operacao_id, l["placa"], data, l["status"], obs, usuario, sug)
         n += 1
     return n
+
+
+def resumo_por_perfil(g: pd.DataFrame, d) -> pd.DataFrame:
+    """Disponibilidade do dia aberta por perfil do veículo (9 eixos / LS)."""
+    from config.settings import PERFIS_VEICULO
+
+    dia = g[g["data"] == d]
+    if dia.empty:
+        return pd.DataFrame()
+    linhas = []
+    for perfil, grupo in dia.groupby("perfil", sort=False):
+        disp = grupo[grupo["status"] == "Disponível"]
+        linhas.append({
+            "perfil": perfil, "paletes": PERFIS_VEICULO.get(perfil),
+            "total": len(grupo), "disponivel": len(disp),
+            "retornavel": int((disp["sugestao"] == "Retornável").sum()),
+            "descartavel": int((disp["sugestao"] == "Descartável").sum()),
+            "sem_sugestao": int(disp["sugestao"].map(lambda v: not isinstance(v, str) or not v).sum()),
+            "ind_frota": int((grupo["status"] == "Indisponível Frota").sum()),
+            "ind_viagem": int((grupo["status"] == "Indisponível Viagem").sum()),
+        })
+    ordem = {p: i for i, p in enumerate(PERFIS_VEICULO)}
+    return pd.DataFrame(linhas).sort_values("perfil", key=lambda s: s.map(lambda p: ordem.get(p, 99)))

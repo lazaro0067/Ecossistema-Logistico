@@ -83,6 +83,11 @@ def _dialogo_viagem(vid: int) -> None:
                         and g.get("distancia_m") is not None else "registrado")
                        + ("" if dentro is None or dentro != dentro else (" ✅" if int(dentro) else " ⚠️ fora do raio"))})
     ui.tabela(pd.DataFrame(linhas), column_config={"etapa": "Etapa", "data_hora": "Data/hora", "gps": "GPS"})
+    pars = repo.paradas_df([vid])
+    for p in pars.to_dict("records"):
+        fim = _fmt(p["fim"]) if isinstance(p.get("fim"), str) else "em andamento"
+        st.warning(f"🔧 Parada para manutenção: {_fmt(p['inicio'])} → {fim}"
+                   + (f" · {p['observacao']}" if isinstance(p.get("observacao"), str) else ""))
     _fotos(vid, prefixo="dlg_")
 
 
@@ -97,6 +102,8 @@ def _ao_vivo(operacao_id: int) -> None:
     def em(*etapas):
         return tab_ativas[[f in etapas for f in fases]] if fases else tab_ativas
 
+    manut = repo.paradas_ativas(operacao_id)
+    em_manut = ativas[ativas["id"].isin(list(manut))] if not ativas.empty else ativas
     parados = svc.placas_na_revenda(operacao_id)
     parados = parados[~parados["placa"].isin(ativas["placa"])] if not ativas.empty else parados
     tab_parados = parados.assign(chegada=parados["chegada"].dt.strftime(_FMT),
@@ -113,6 +120,8 @@ def _ao_vivo(operacao_id: int) -> None:
          "dados": em("apresentado", "chamado", "carregado"), "colunas": _COLS_VIAGEM},
         {"titulo": "Retornando", "valor": fases.count("saida"), "icone": "↩️", "status": "info",
          "dados": em("saida"), "colunas": _COLS_VIAGEM},
+        {"titulo": "Parada p/ manutenção", "valor": len(em_manut), "icone": "🔧",
+         "status": "critico" if len(em_manut) else "bom", "dados": _tabela_viagens(em_manut), "colunas": _COLS_VIAGEM},
         {"titulo": "Placas paradas na revenda", "valor": len(parados), "icone": "🅿️", "status": "neutro",
          "dados": tab_parados, "colunas": col_parados},
         {"titulo": "Finalizadas hoje", "valor": len(finalizadas), "icone": "✅",
@@ -142,6 +151,11 @@ def _ao_vivo(operacao_id: int) -> None:
                 ag = tempo.parse_dt(r["agendamento"])
                 if ag and tempo.agora() > ag:
                     status, selo = "critico", "Agendamento vencido"
+            pm = manut.get(int(r["id"]))
+            if pm:
+                ini = tempo.parse_dt(pm["inicio"])
+                onde, status = "🔧 Em manutenção", "critico"
+                selo = f"parada há {svc.formatar_duracao(_desde(pm['inicio']))}" if ini else "manutenção"
             cards.append({
                 "titulo": f"{r['placa']} · {r['motorista']}", "icone": "🚛", "valor": onde, "status": status,
                 "selo": selo or svc.ETAPAS[fase]["nome"],
@@ -225,6 +239,15 @@ def _viagens(usuario: dict, operacao_id: int) -> None:
         ui.tabela(ev, column_config={"etapa": "Etapa", "ts": "Data/hora", "lat": "Latitude", "lon": "Longitude",
                                      "precisao_m": "Precisão (m)", "distancia_m": "Distância da revenda (m)",
                                      "dentro_raio": "Raio da revenda"})
+    pars = repo.paradas_df([vid])
+    if not pars.empty:
+        st.markdown("**🔧 Paradas para manutenção**")
+        ui.tabela(pars.assign(
+            inicio=pars["inicio"].map(_fmt), fim=pars["fim"].map(lambda x: _fmt(x) if isinstance(x, str) else "em andamento"),
+            duracao=[svc.formatar_duracao(((tempo.parse_dt(f) if isinstance(f, str) else tempo.agora())
+                                           - tempo.parse_dt(i)).total_seconds() / 3600) for i, f in zip(pars["inicio"], pars["fim"])],
+        )[["inicio", "fim", "duracao", "observacao"]], column_config={
+            "inicio": "Início", "fim": "Fim", "duracao": "Tempo parado", "observacao": "Motivo"}, baixar=False)
     if v.get("observacao"):
         st.caption(f"📝 {v['observacao']}")
     _fotos(vid)

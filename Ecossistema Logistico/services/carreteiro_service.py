@@ -445,9 +445,9 @@ def agendar_descarga(usuario: dict, viagem_id: int, data: dt.date | None, hora: 
     from services import janelas_service
 
     if janelas_service.tem_janelas(v["operacao_id"]):
-        # a revenda trabalha com janelas: a vaga é conferida na hora de gravar (pode ter acabado de lotar)
-        j = janelas_service.validar_reserva(v["operacao_id"], data, janela_id, produto, ignorar_viagem=viagem_id)
-        hora_txt, janela_id = j["hora_inicio"], j["id"]
+        # slots por tempo de doca: o horário é conferido na hora de gravar (pode ter acabado de ser ocupado)
+        x = janelas_service.validar_reserva(v["operacao_id"], data, hora, produto, ignorar_viagem=viagem_id)
+        hora_txt, janela_id = x["hora"], x["periodo"]["id"]
     else:
         if not hora:
             raise RegraNegocioError("Escolha a hora prevista de chegada.")
@@ -567,6 +567,51 @@ def cancelar_viagem(viagem_id: int, motivo: str, usuario_nome: str) -> None:
     repo.atualizar(viagem_id, status=repo.CANCELADA,
                    observacao=f"Cancelada por {usuario_nome} em {tempo.agora_str()}: {motivo.strip()}")
     integrar(viagem_id)
+
+
+def iniciar_parada(usuario: dict, viagem_id: int, obs: str = "", geo: dict | None = None) -> int:
+    """🔧 Parada para manutenção durante a viagem (início)."""
+    v = _viagem_do_usuario(usuario, viagem_id)
+    if v["status"] != repo.EM_VIAGEM:
+        raise RegraNegocioError("Esta viagem não está em andamento.")
+    if repo.parada_ativa(viagem_id):
+        raise RegraNegocioError("Já existe uma parada de manutenção em andamento.")
+    g = geo or {}
+    pid = repo.iniciar_parada(viagem_id, v["motorista_id"], "Manutenção", (obs or "").strip() or None, agora_seg(),
+                              g.get("lat"), g.get("lon"))
+    _avisar_parada(v, f"🔧 {v['motorista']} parou para manutenção", f"Placa {v['placa']} · pedido "
+                   f"{v['numero_pedido']}{' · ' + obs.strip() if (obs or '').strip() else ''}")
+    return pid
+
+
+def encerrar_parada(usuario: dict, viagem_id: int) -> None:
+    v = _viagem_do_usuario(usuario, viagem_id)
+    p = repo.parada_ativa(viagem_id)
+    if not p:
+        raise RegraNegocioError("Nenhuma parada de manutenção em andamento.")
+    repo.encerrar_parada(p["id"], agora_seg())
+    ini = tempo.parse_dt(p["inicio"])
+    dur = formatar_duracao((tempo.agora() - ini).total_seconds() / 3600) if ini else ""
+    _avisar_parada(v, f"✅ {v['motorista']} voltou à viagem", f"Placa {v['placa']} · manutenção durou {dur}")
+
+
+def _avisar_parada(v: dict, titulo: str, texto: str) -> None:
+    try:
+        from core.auth import pode_acessar_aba
+        from repositories import motoristas_repo
+
+        agora = tempo.agora().strftime("%Y-%m-%d %H:%M:%S")
+        for u in usuarios_repo.listar(apenas_ativos=True):
+            if u["perfil"] == PERFIL_MOTORISTA:
+                continue
+            sessao = usuarios_repo.carregar_sessao(u["id"])
+            if v["operacao_id"] not in (sessao.get("operacoes") or [v["operacao_id"]]):
+                continue
+            if pode_acessar_aba(sessao, "puxada", "carreteiro"):
+                motoristas_repo.criar_notificacao(u["id"], "parada", f"parada:{v['id']}:{agora}", titulo, texto,
+                                                  "puxada", agora)
+    except Exception:
+        pass
 
 
 def cancelar_pelo_motorista(usuario: dict, viagem_id: int, justificativa: str) -> None:
