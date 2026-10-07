@@ -58,6 +58,56 @@ _CSS = f"""
     border-radius: 14px !important; }}
 .st-key-car_fim button p {{ color: #fff !important; font-size: 1.15rem !important; font-weight: 800; }}
 .st-key-car_form input {{ height: 2.9rem; font-size: 1rem; }}
+/* --- visual do app (cartões coloridos e botões grandes) --- */
+.stApp {{ background: linear-gradient(180deg, #eef4ff 0%, #f7f9fc 260px, #f7f9fc 100%); }}
+.car-topo {{ position: relative; overflow: hidden; box-shadow: 0 14px 30px -18px rgba(11,31,58,.75); }}
+.car-topo:after {{ content: "🚛"; position: absolute; right: -.4rem; bottom: -1.1rem; font-size: 4.6rem; opacity: .13; }}
+.car-topo .chip {{ display: inline-block; margin-top: .45rem; padding: .18rem .65rem; border-radius: 999px;
+    font-size: .78rem; font-weight: 800; background: rgba(255,255,255,.16); border: 1px solid rgba(255,255,255,.28); }}
+.car-viagem {{ box-shadow: 0 6px 16px -12px rgba(11,31,58,.35); border-radius: 18px; }}
+.car-card {{ border-radius: 18px; padding: .9rem 1.05rem; margin: .5rem 0 .7rem; color: #fff;
+    box-shadow: 0 12px 24px -16px rgba(11,31,58,.7); }}
+.car-card b {{ display: block; font-size: 1.05rem; }}
+.car-card span {{ display: block; font-size: .85rem; opacity: .92; margin-top: .15rem; }}
+.car-card .car-big {{ font-size: 1.45rem; font-weight: 900; margin-top: .2rem; letter-spacing: -.01em; }}
+.car-card.azul {{ background: linear-gradient(135deg, #2a78d6, #1b4fa0); }}
+.car-card.verde {{ background: linear-gradient(135deg, #12a150, #0b7a3b); }}
+.car-card.laranja {{ background: linear-gradient(135deg, #f08a3c, #d4622a); }}
+.car-card.roxo {{ background: linear-gradient(135deg, #7a4fc9, #5a34a3); }}
+.car-step {{ display: flex; align-items: center; gap: .6rem; margin: .8rem 0 .35rem; }}
+.car-step span {{ width: 1.7rem; height: 1.7rem; flex: none; border-radius: 50%; background: {AZUL}; color: #fff;
+    display: grid; place-items: center; font-weight: 900; font-size: .9rem; box-shadow: 0 0 0 4px rgba(42,120,214,.15); }}
+.car-step b {{ color: #0B1F3A; font-size: .98rem; display: block; }}
+.car-step i {{ color: #6b6a65; font-size: .78rem; font-style: normal; display: block; }}
+.car-vazio {{ background: #fff4e5; border: 1.5px dashed #f0a94f; color: #8a4b08; border-radius: 14px;
+    padding: .8rem; text-align: center; font-weight: 700; font-size: .9rem; }}
+.car-prog {{ height: 10px; background: #e3e9f3; border-radius: 99px; overflow: hidden; margin: .1rem 0 .2rem; }}
+.car-prog i {{ display: block; height: 100%; background: linear-gradient(90deg, {VERDE}, #4cc94c); border-radius: 99px; }}
+.car-prog-tx {{ font-size: .8rem; color: #52514e; font-weight: 700; margin-bottom: .3rem; }}
+/* pills: produto, dia e horários viram quadrados para tocar */
+.st-key-car_prod [data-testid="stButtonGroup"] button {{ min-height: 3.4rem; min-width: 9rem; border-radius: 16px;
+    font-size: 1.05rem; font-weight: 800; border: 2px solid #c9d6ea; background: #fff; }}
+.st-key-car_prod [data-testid="stButtonGroup"] button[kind="pillsActive"] {{ background: {AZUL}; border-color: {AZUL}; color: #fff; }}
+.st-key-car_prod [data-testid="stButtonGroup"] button[kind="pillsActive"] p {{ color: #fff; }}
+.st-key-car_dias [data-testid="stButtonGroup"] button {{ min-height: 2.9rem; border-radius: 14px; font-weight: 700;
+    border: 2px solid #d9e2ef; background: #fff; }}
+.st-key-car_dias [data-testid="stButtonGroup"] button[kind="pillsActive"] {{ background: #0B1F3A; border-color: #0B1F3A; }}
+.st-key-car_dias [data-testid="stButtonGroup"] button[kind="pillsActive"] p {{ color: #fff; }}
+.st-key-car_horas [data-testid="stButtonGroup"] {{ gap: .5rem; }}
+.st-key-car_horas [data-testid="stButtonGroup"] button {{ width: 6.6rem; min-height: 4.1rem; border-radius: 16px;
+    background: #ecfdf3; border: 2px solid #34c27a; white-space: normal; line-height: 1.2;
+    box-shadow: 0 6px 12px -10px rgba(15,81,50,.8); transition: transform .08s ease; }}
+.st-key-car_horas [data-testid="stButtonGroup"] button p {{ color: #0f5132; font-weight: 800; font-size: .95rem; }}
+.st-key-car_horas [data-testid="stButtonGroup"] button:hover {{ background: #34c27a; transform: translateY(-2px); }}
+.st-key-car_horas [data-testid="stButtonGroup"] button:hover p {{ color: #fff; }}
+.st-key-car_horas [data-testid="stButtonGroup"] button[kind="pillsActive"] {{ background: {VERDE}; border-color: {VERDE}; }}
+.st-key-car_horas [data-testid="stButtonGroup"] button[kind="pillsActive"] p {{ color: #fff; }}
+.st-key-nav_mod_motorista [data-testid="stButtonGroup"] button {{ border-radius: 999px; font-weight: 700; }}
+.st-key-nav_mod_motorista [data-testid="stButtonGroup"] button[kind="segmented_controlActive"] {{ background: #0B1F3A; color: #fff; }}
+.st-key-nav_mod_motorista [data-testid="stButtonGroup"] button[kind="segmented_controlActive"] p {{ color: #fff; }}
+.st-key-car_relato a {{ background: linear-gradient(135deg, #f08a3c, #d4622a) !important; border: none !important;
+    border-radius: 16px !important; min-height: 3.1rem; box-shadow: 0 10px 20px -14px rgba(212,98,42,.9); }}
+.st-key-car_relato a p, .st-key-car_relato a span {{ color: #fff !important; font-weight: 800; font-size: 1.02rem; }}
 </style>
 """
 
@@ -103,7 +153,11 @@ def tela_login() -> None:
                                   help="Ao abrir o app de novo, você continua de onde parou sem digitar a senha.")
             if st.form_submit_button("Entrar", type="primary", **ui.LARGURA):
                 usuario = autenticar(acesso, senha)
-                if usuario:
+                bloq = bloqueio(usuario) if usuario else None
+                if bloq:
+                    st.error(f"⛔ Acesso permitido somente a partir de {bloq:%d/%m} às {bloq:%H:%M} "
+                             "(interjornada de 11 h depois de finalizar a viagem). Bom descanso! 😴")
+                elif usuario:
                     session.logar(usuario)
                     if lembrar:
                         from core.auth import gerar_token
@@ -112,8 +166,45 @@ def tela_login() -> None:
                         if token:
                             st.query_params["k"] = token
                     st.rerun()
-                st.error("Acesso ou senha inválidos.")
+                else:
+                    st.error("Acesso ou senha inválidos.")
     st.caption("Esqueceu a senha ou ainda não tem acesso? Fale com a equipe da Puxada da sua unidade.")
+
+
+def bloqueio(usuario: dict) -> dt.datetime | None:
+    """Motorista que finalizou a viagem só entra de novo depois das 11 h de interjornada."""
+    from services import disp_motoristas_service
+
+    try:
+        return disp_motoristas_service.bloqueio_do_usuario(usuario)
+    except Exception:
+        return None
+
+
+def tela_bloqueado(usuario: dict, livre: dt.datetime) -> None:
+    """Tela de descanso: mostra até quando o acesso está bloqueado e encerra a sessão."""
+    from config.settings import INTERJORNADA_H
+
+    _topo_login("Interjornada em andamento")
+    ui.mostrar_avisos()
+    falta = max((livre - tempo.agora()).total_seconds() / 3600, 0)
+    pct = max(0.0, min(100.0, 100 - falta / INTERJORNADA_H * 100))
+    nome = (usuario.get("nome") or "").split()[0] if usuario.get("nome") else ""
+    st.markdown(
+        f'<div style="background:linear-gradient(135deg,#7a4fc9,#5a34a3);color:#fff;border-radius:22px;'
+        f'padding:1.3rem 1.2rem;text-align:center;box-shadow:0 18px 36px -20px rgba(90,52,163,.9)">'
+        f'<div style="font-size:2.6rem">😴</div><div style="font-size:1.3rem;font-weight:900">Bom descanso{", " + tema._e(nome) if nome else ""}!</div>'
+        f'<div style="opacity:.9;margin:.3rem 0 .8rem">Seu acesso ao app volta em</div>'
+        f'<div style="font-size:2rem;font-weight:900;letter-spacing:-.02em">{livre:%H:%M}</div>'
+        f'<div style="opacity:.9">{livre:%d/%m/%Y} · faltam {svc.formatar_duracao(falta)}</div>'
+        f'<div style="height:10px;background:rgba(255,255,255,.25);border-radius:99px;margin:.9rem 0 .2rem;overflow:hidden">'
+        f'<div style="height:100%;width:{pct:.0f}%;background:#fff"></div></div>'
+        f'<div style="font-size:.8rem;opacity:.85">Interjornada de {INTERJORNADA_H} h contada do “Finalizar viagem”.</div></div>',
+        unsafe_allow_html=True)
+    st.caption("Precisa entrar antes? Fale com a equipe da Puxada — ela pode liberar o seu acesso.")
+    session.sair()
+    if "k" in st.query_params:
+        del st.query_params["k"]
 
 
 def _sair() -> None:
@@ -190,12 +281,25 @@ def _fmt(ts) -> str:
     return d.strftime("%d/%m %H:%M") if d else "—"
 
 
+def _status_chip(mot: dict) -> str:
+    v = repo.viagem_ativa_motorista(mot["id"])
+    if v:
+        prox = svc.proxima_etapa(v)
+        return f"🚛 Em viagem · pedido {v['numero_pedido']}" + (f" · próximo: {svc.ETAPAS[prox]['nome']}" if prox else "")
+    from repositories import motoristas_repo
+
+    if motoristas_repo.servico_ativo(mot["id"]):
+        return "🔧 Em serviço"
+    return "🟢 Disponível para viagem"
+
+
 def _topo(usuario: dict, mot: dict) -> None:
     st.markdown(_CSS, unsafe_allow_html=True)
     c1, c2 = st.columns([3, 1.2])
     with c1:
         st.markdown(f'<div class="car-topo"><b>🚛 Olá, {tema._e(mot["nome"].split()[0])}!</b>'
-                    f'<span>App Carreteiro · {tema._e(tempo.agora().strftime("%d/%m/%Y %H:%M"))}</span></div>',
+                    f'<span>App Carreteiro · {tema._e(tempo.agora().strftime("%d/%m/%Y %H:%M"))}</span><br>'
+                    f'<span class="chip">{tema._e(_status_chip(mot))}</span></div>',
                     unsafe_allow_html=True)
     with c2:
         if st.button("🚪 Sair", key="car_sair", **ui.LARGURA):
@@ -228,7 +332,12 @@ def _linha_do_tempo(v: dict) -> None:
         partes.append(f'<div class="car-passo {cls}"><div class="ic">{e["icone"] if ts or cls == "atual" else "•"}</div>'
                       f'<div class="nm">{tema._e(e["nome"])}{extra}</div>'
                       f'<div class="hr">{_fmt(ts) if ts else ""}</div></div>')
-    st.markdown(f'<div class="car-passos">{"".join(partes)}</div>', unsafe_allow_html=True)
+    feitas = sum(1 for c in svc.ORDEM if v.get(svc.ETAPAS[c]["coluna"]))
+    pct = feitas / len(svc.ORDEM) * 100
+    st.markdown(f'<div class="car-prog-tx">Etapa {min(feitas + 1, len(svc.ORDEM))} de {len(svc.ORDEM)}'
+                f'{" · viagem concluída 🎉" if feitas == len(svc.ORDEM) else ""}</div>'
+                f'<div class="car-prog"><i style="width:{pct:.0f}%"></i></div>'
+                f'<div class="car-passos">{"".join(partes)}</div>', unsafe_allow_html=True)
 
 
 def _gps(valor: dict | None) -> dict | None:
@@ -406,7 +515,11 @@ def _etapa_atual(usuario: dict, v: dict, geo: dict | None, prox: str) -> None:
                 tipo, msg = svc.mensagem_apresentacao(nova) or ("success", "Apresentação registrada.")
                 ui.avisar(msg, "error" if tipo == "error" else "success")
             elif prox == "fim":
-                ui.avisar(f"Viagem finalizada! TMV: {svc.formatar_duracao(_horas(nova['ts_inicio'], nova['ts_fim']))}.")
+                from config.settings import INTERJORNADA_H
+
+                livre = tempo.parse_dt(nova["ts_fim"]) + dt.timedelta(hours=INTERJORNADA_H)
+                ui.avisar(f"✅ Viagem finalizada! TMV: {svc.formatar_duracao(_horas(nova['ts_inicio'], nova['ts_fim']))}. "
+                          f"Bom descanso! 😴 Você estará disponível novamente às {livre:%H:%M} de {livre:%d/%m}.")
             else:
                 ui.avisar(f"{e['nome']} registrado às {tempo.agora().strftime('%H:%M')}.")
             st.rerun()
@@ -424,106 +537,122 @@ def _desfazer(usuario: dict, v: dict) -> None:
 
 
 # --- Agendamento da descarga (entre carregar e sair da cervejaria) ------------------
-def _chips_janelas(hs: list[dict]) -> None:
-    """Grade de horários do dia: verde = livre, vermelho = doca ocupada, cinza = já passou."""
-    itens = []
-    for h in hs:
-        cls = "fim" if h["passou"] else "ok" if h["livre"] else "cheia"
-        txt = "passou" if h["passou"] else f"até {h['fim']:%H:%M}" if h["livre"] else "ocupado"
-        itens.append(f'<div class="car-jan {cls}"><b>{h["hora"]}</b><span>{txt}</span></div>')
-    st.markdown(f'<div class="car-jans">{"".join(itens)}</div>', unsafe_allow_html=True)
+ICONE_PRODUTO = {"Retornável": "♻️", "Descartável": "🥫", "Misto": "🔀"}
 
 
-def _form_agenda(usuario: dict, v: dict, chave: str, botao: str, sucesso: str, geo) -> None:
-    """Dia + produto + janela (com as vagas de agora). Sem janelas cadastradas: hora livre."""
+def _passo(n: int, titulo: str, sub: str = "") -> None:
+    st.markdown(f'<div class="car-step"><span>{n}</span><div><b>{tema._e(titulo)}</b>'
+                f'{f"<i>{tema._e(sub)}</i>" if sub else ""}</div></div>', unsafe_allow_html=True)
+
+
+def _rot_dia(d: dt.date) -> str:
+    from services import janelas_service
+
+    n = (d - tempo.hoje()).days
+    return "Hoje" if n == 0 else "Amanhã" if n == 1 else janelas_service.DIAS[d.weekday()]
+
+
+def _agenda_bloco(usuario: dict, v: dict, geo, sucesso: str) -> None:
+    """Agendar/trocar a descarga em 3 toques: produto → dia → horário livre (o toque no horário já agenda)."""
     from config.settings import TIPOS_DESCARGA_APP
     from services import janelas_service
 
-    atual_data = dt.date.fromisoformat(v["desc_data"]) if v.get("desc_data") else tempo.hoje()
-    atual_data = max(atual_data, tempo.hoje())
-    c1, c2 = st.columns(2)
-    data = c1.date_input("📅 Dia da chegada na revenda *", value=atual_data, format="DD/MM/YYYY",
-                         min_value=tempo.hoje(), max_value=tempo.hoje() + dt.timedelta(days=15), key=f"{chave}_d")
-    produto = c2.radio("📦 Produto *", TIPOS_DESCARGA_APP, horizontal=True, key=f"{chave}_p",
-                       index=TIPOS_DESCARGA_APP.index(v["desc_tipo"]) if v.get("desc_tipo") in TIPOS_DESCARGA_APP
-                       else None)
-    hora = None
-    pode = True
-    if janelas_service.tem_janelas(v["operacao_id"]):
-        if not produto:
-            st.caption("Escolha o produto para ver os horários livres.")
-            pode = False
-        else:
-            hs = janelas_service.horarios(v["operacao_id"], data, produto, ignorar_viagem=v["id"])
-            livres = [h for h in hs if h["livre"] and not h["passou"]]
-            if not hs:
-                st.warning(f"A revenda não recebe descarga em {data:%d/%m}. Escolha outro dia.")
-                pode = False
-            else:
-                st.markdown(f"**🕒 Horários de {data:%d/%m} para {produto.lower()}** · livres agora "
-                            f"({tempo.agora():%H:%M}). A descarga ocupa a doca do início até o horário de fim.")
-                if livres:
-                    with st.expander(f"👆 Ver a grade do dia — {len(livres)} horário(s) livre(s)"):
-                        st.caption("Só aparecem os horários livres. Toque no horário para agendar na hora.")
-                        atual_g = v.get("desc_hora") if v.get("desc_data") == data.isoformat() else None
-                        for ini in range(0, len(livres), 3):
-                            for col, h in zip(st.columns(3), livres[ini:ini + 3]):
-                                fim = f"{h['fim']:%H:%M}" + (" (+1)" if h["fim"].date() > data else "")
-                                rot = f"{'✅ ' if h['hora'] == atual_g else '🕒 '}{h['hora']} → {fim}"
-                                if col.button(rot, key=f"{chave}_g_{data}_{produto}_{h['hora']}", **ui.LARGURA):
-                                    _confirmar_agenda(usuario, v, data, h["hora"], produto, sucesso, geo)
-                if not livres:
-                    st.error("Não há horário livre neste dia para este produto. Escolha outro dia.")
-                    pode = False
-                else:
-                    ops_h = [h["hora"] for h in livres]
-                    nomes = {h["hora"]: h["rotulo"] for h in livres}
-                    atual = v.get("desc_hora") if v.get("desc_data") == data.isoformat() else None
-                    hora = st.selectbox("Escolha o horário de chegada *", ops_h, format_func=nomes.get,
-                                        index=ops_h.index(atual) if atual in ops_h else None,
-                                        placeholder="Selecione o horário...", key=f"{chave}_j_{data}_{produto}")
-            if st.button("🔄 Atualizar horários", key=f"{chave}_upd"):
-                st.rerun()
-    else:
-        atual_hora = dt.datetime.strptime(v["desc_hora"], "%H:%M").time() if v.get("desc_hora") else None
-        hora = st.time_input("🕒 Hora prevista *", value=atual_hora, step=dt.timedelta(minutes=30), key=f"{chave}_h")
-    with st.container(key="car_etapa" if botao.startswith("🗓️") else f"{chave}_salvar"):
-        ok = st.button(botao, key=f"{chave}_ok", type="primary", disabled=not pode, **ui.LARGURA)
-    if ok:
-        _confirmar_agenda(usuario, v, data, hora, produto, sucesso, geo)
+    chave = f"car_ag_{v['id']}"
+    ver = st.session_state.get(f"{chave}_ver", 0)
+    hoje = tempo.hoje()
+    _passo(1, "Qual produto você vai descarregar?")
+    with st.container(key="car_prod"):
+        produto = st.pills("Produto", TIPOS_DESCARGA_APP, key=f"{chave}_p", selection_mode="single",
+                           default=v.get("desc_tipo") if v.get("desc_tipo") in TIPOS_DESCARGA_APP else None,
+                           format_func=lambda t: f"{ICONE_PRODUTO.get(t, '')} {t}", label_visibility="collapsed")
+    if not produto:
+        st.caption("👆 Toque no produto para ver os dias e horários livres da doca.")
+        return
+    com_slots = janelas_service.tem_janelas(v["operacao_id"])
+    dias = [hoje + dt.timedelta(days=i) for i in range(7)]
+    livres = {d: janelas_service.horarios_livres(v["operacao_id"], d, produto, ignorar_viagem=v["id"])
+              for d in dias} if com_slots else {}
+    atual_d = dt.date.fromisoformat(v["desc_data"]) if v.get("desc_data") else None
+    padrao = atual_d if atual_d in dias else next((d for d in dias if livres.get(d)), dias[0])
+
+    def rot(d):
+        base = f"{_rot_dia(d)} {d:%d/%m}"
+        if not com_slots:
+            return base
+        n = len(livres[d])
+        return f"{base} · {n} livre{'s' if n != 1 else ''}" if n else f"{base} · lotado"
+
+    _passo(2, "Que dia você chega na revenda?")
+    with st.container(key="car_dias"):
+        dia = st.pills("Dia", dias, key=f"{chave}_d_{produto}", selection_mode="single", default=padrao,
+                       format_func=rot, label_visibility="collapsed") or padrao
+    if not com_slots:
+        _passo(3, "Que horas você chega?")
+        atual_h = dt.datetime.strptime(v["desc_hora"], "%H:%M").time() if v.get("desc_hora") else None
+        hora = st.time_input("Hora prevista", value=atual_h, step=dt.timedelta(minutes=30), key=f"{chave}_h",
+                             label_visibility="collapsed")
+        with st.container(key="car_etapa"):
+            if st.button("🗓️  AGENDAR DESCARGA", key=f"{chave}_ok", type="primary", **ui.LARGURA):
+                _confirmar_agenda(usuario, v, dia, hora, produto, sucesso, geo, chave)
+        return
+    hs = livres[dia]
+    _passo(3, "Toque no horário livre — já fica agendado",
+           f"{_rot_dia(dia)} {dia:%d/%m} · {ICONE_PRODUTO.get(produto, '')} {produto.lower()} · "
+           f"atualizado às {tempo.agora():%H:%M}")
+    if not hs:
+        todos = janelas_service.horarios(v["operacao_id"], dia, produto, ignorar_viagem=v["id"])
+        st.markdown(f'<div class="car-vazio">{"🚫 A revenda não recebe descarga neste dia." if not todos else "😕 Todos os horários deste dia já foram ocupados."}'
+                    "<br>Escolha outro dia acima.</div>", unsafe_allow_html=True)
+        return
+    atual_h = v.get("desc_hora") if atual_d == dia and v.get("desc_tipo") == produto else None
+    opcoes = [h["hora"] for h in hs]
+    fins = {h["hora"]: f"{h['fim']:%H:%M}" + (" +1d" if h["fim"].date() > dia else "") for h in hs}
+    with st.container(key="car_horas"):
+        esc = st.pills("Horário", opcoes, key=f"{chave}_h_{dia}_{produto}_{ver}", selection_mode="single",
+                       format_func=lambda h: f"{'✅' if h == atual_h else '🕒'} {h} até {fins[h]}",
+                       label_visibility="collapsed")
+    st.caption("Cada quadrado é um horário livre da doca: do início até o fim da sua descarga.")
+    if esc and esc != atual_h:
+        _confirmar_agenda(usuario, v, dia, esc, produto, sucesso, geo, chave)
 
 
-def _confirmar_agenda(usuario: dict, v: dict, data, hora, produto, sucesso: str, geo) -> None:
+def _confirmar_agenda(usuario: dict, v: dict, data, hora, produto, sucesso: str, geo, chave: str) -> None:
+    st.session_state[f"{chave}_ver"] = st.session_state.get(f"{chave}_ver", 0) + 1
+    st.session_state.pop(f"{chave}_trocar", None)
     try:
         nova = svc.agendar_descarga(usuario, v["id"], data, hora, produto, _gps(geo))
     except RegraNegocioError as e:
-        st.error(str(e))
+        ui.avisar(str(e), "error")
     else:
         ui.avisar(sucesso.format(data=f"{data:%d/%m}", hora=nova.get("desc_hora") or ""))
-        st.rerun()
+    st.rerun()
 
 
 def _agendar(usuario: dict, v: dict, geo) -> None:
-    tema.secao("🗓️ Agendar a descarga na revenda",
-               "Escolha o dia, o produto e um horário livre. O armazém recebe a tarefa na hora.")
+    st.markdown('<div class="car-card azul"><b>🗓️ Agende a descarga na revenda</b>'
+                '<span>3 toques: produto, dia e horário. O armazém recebe na hora.</span></div>',
+                unsafe_allow_html=True)
     with st.container(key="car_form"):
-        _form_agenda(usuario, v, f"car_ag_{v['id']}", "🗓️  AGENDAR DESCARGA",
-                     "Descarga agendada para {data} às {hora}. O armazém já foi avisado.", geo)
+        _agenda_bloco(usuario, v, geo, "✅ Descarga agendada para {data} às {hora}. O armazém já foi avisado.")
 
 
 def _agenda_resumo(usuario: dict, v: dict, geo) -> None:
-    from services import janelas_service
     from repositories import logistica_repo
+    from services import janelas_service
 
     d = dt.date.fromisoformat(v["desc_data"])
     jan = janelas_service.janela_de_agendamento(logistica_repo.janelas(v["operacao_id"], False), v["desc_data"],
                                                 v.get("desc_hora"), v.get("desc_janela_id"), v.get("desc_tipo"))
-    quando = f"das {jan.replace('–', ' às ')}" if jan else f"às {v.get('desc_hora') or '--:--'}"
-    st.markdown(f'<div class="car-nf">🗓️ <b>Descarga agendada:</b> {d:%d/%m/%Y} · {quando} · '
-                f'{tema._e(v.get("desc_tipo") or "")}</div>', unsafe_allow_html=True)
-    with st.expander("✏️ Editar agendamento da descarga"):
-        _form_agenda(usuario, v, f"car_aged_{v['id']}", "💾 Salvar alteração",
-                     "Agendamento alterado para {data} às {hora}. O armazém foi avisado.", geo)
+    quando = jan.replace("–", " → ") if jan else (v.get("desc_hora") or "--:--")
+    prod = v.get("desc_tipo") or ""
+    st.markdown(f'<div class="car-card verde"><b>🗓️ Descarga agendada</b><div class="car-big">'
+                f'{_rot_dia(d)} {d:%d/%m} · {tema._e(quando)}</div>'
+                f'<span>{ICONE_PRODUTO.get(prod, "")} {tema._e(prod)} · o armazém já está sabendo</span></div>',
+                unsafe_allow_html=True)
+    chave = f"car_ag_{v['id']}"
+    if st.toggle("🔁 Trocar dia ou horário", key=f"{chave}_trocar"):
+        with st.container(key="car_form"):
+            _agenda_bloco(usuario, v, geo, "🔁 Descarga remarcada para {data} às {hora}. O armazém foi avisado.")
 
 
 def _cancelar(usuario: dict, v: dict) -> None:
@@ -760,6 +889,14 @@ def _area_dados(usuario: dict, mot: dict) -> None:
         _sair()
 
 
+def _relato(mot: dict) -> None:
+    """📝 Faça seu relato aqui — abre o formulário cadastrado pela Puxada (Acessos dos motoristas)."""
+    link = repo.link_relato(mot["operacao_id"])
+    if link:
+        with st.container(key="car_relato"):
+            st.link_button("📝  Faça seu relato aqui", link, **ui.LARGURA)
+
+
 def render(usuario: dict) -> None:
     mot = repo.motorista_do_usuario(usuario["id"])
     if not mot:
@@ -768,8 +905,13 @@ def render(usuario: dict) -> None:
         if st.button("🚪 Sair"):
             _sair()
         return
+    livre = bloqueio(usuario)
+    if livre:
+        tela_bloqueado(usuario, livre)
+        return
     _topo(usuario, mot)
     ui.mostrar_avisos()
+    _relato(mot)
     if mot.get("cnh_validade"):
         from services.motoristas_service import status_cnh
 

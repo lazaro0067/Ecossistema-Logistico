@@ -62,10 +62,25 @@ def formatar_duracao(horas) -> str:
 ETAPAS_OPCIONAIS = {"agendado"}  # viagens antigas (antes do agendamento no app) seguem sem ela
 
 
+def _feito(v: dict, chave: str) -> bool:
+    """Etapa registrada? (vazio, None e NaN/NaT de tabelas pandas contam como não feita)."""
+    x = v.get(ETAPAS[chave]["coluna"])
+    if x is None or (isinstance(x, float) and x != x):
+        return False
+    try:
+        import pandas as pd
+
+        if pd.isna(x):
+            return False
+    except (TypeError, ValueError):
+        pass
+    return bool(str(x).strip())
+
+
 def proxima_etapa(v: dict) -> str | None:
     for i, chave in enumerate(ORDEM):
-        if not v.get(ETAPAS[chave]["coluna"]):
-            depois = any(v.get(ETAPAS[c]["coluna"]) for c in ORDEM[i + 1:])
+        if not _feito(v, chave):
+            depois = any(_feito(v, c) for c in ORDEM[i + 1:])
             if chave in ETAPAS_OPCIONAIS and depois:
                 continue
             return chave
@@ -73,7 +88,7 @@ def proxima_etapa(v: dict) -> str | None:
 
 
 def ultima_etapa(v: dict) -> str | None:
-    feitas = [c for c in ORDEM if v.get(ETAPAS[c]["coluna"])]
+    feitas = [c for c in ORDEM if _feito(v, c)]
     return feitas[-1] if feitas else None
 
 
@@ -213,7 +228,15 @@ def registrar_etapa(usuario: dict, viagem_id: int, etapa: str, geo: dict | None 
         raise RegraNegocioError(f"“{ETAPAS[etapa]['nome']}” já foi registrado.")
     repo.registrar_evento(viagem_id, etapa, ts, _geo_com_raio(v["operacao_id"], etapa, geo))
     integrar(viagem_id)
-    return repo.viagem(viagem_id)
+    nova = repo.viagem(viagem_id)
+    if etapa == "fim":
+        try:
+            from services import disp_motoristas_service
+
+            disp_motoristas_service.apos_finalizar(nova)
+        except Exception:
+            pass
+    return nova
 
 
 def desfazer_ultima(usuario: dict, viagem_id: int) -> str:
@@ -665,6 +688,13 @@ def salvar_revenda(operacao_id: int, lat, lon, raio_m) -> None:
     if not 30 <= raio_m <= 5000:
         raise RegraNegocioError("O raio deve ficar entre 30 e 5.000 metros.")
     repo.salvar_revenda(operacao_id, lat, lon, raio_m)
+
+
+def salvar_link_relato(operacao_id: int, link: str | None) -> None:
+    link = (link or "").strip()
+    if link and not link.lower().startswith(("http://", "https://")):
+        raise RegraNegocioError("O link precisa começar com https://")
+    repo.salvar_link_relato(operacao_id, link or None)
 
 
 def _login_motorista(acesso: str) -> str:

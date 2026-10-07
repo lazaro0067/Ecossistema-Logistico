@@ -23,18 +23,32 @@ def _mes(mes_ano: str) -> tuple[str, str]:
     return f"{mes_ano}-01", f"{mes_ano}-{_dias_mes(mes_ano):02d}"
 
 
-def base_acumulada(operacao_id: int) -> bool:
-    """True quando a coluna C é o acumulado do mês (série de cada indicador nunca diminui ao longo do mês)."""
-    d = ressuprimento_repo.diario_ops_df(operacao_id)
+def _acumulada(d: pd.DataFrame) -> bool:
+    """Decide pelos dados: a coluna C é o acumulado do mês (série que nunca diminui) ou o HL do dia?
+    Sem evidência suficiente vale o padrão atual do relatório: HL do dia, somado no mês."""
     if d.empty:
-        return True
+        return False
     d = d.assign(mes=d["data"].str[:7])
     votos = []
     for _, g in d.groupby(["operacao_id", "cesta", "mes"]):
         v = pd.to_numeric(g.sort_values("data")["volume_real_hl"], errors="coerce").fillna(0).tolist()
         if len(v) >= 4 and max(v) > 0:
             votos.append(all(b >= a * 0.995 for a, b in zip(v, v[1:])))
-    return True if not votos else sum(votos) >= 0.6 * len(votos)
+    return bool(votos) and sum(votos) >= 0.6 * len(votos)
+
+
+def base_acumulada(operacao_id: int) -> bool:
+    """True quando a coluna C é o acumulado do mês (série de cada indicador nunca diminui ao longo do mês)."""
+    d = ressuprimento_repo.diario_ops_df(operacao_id)
+    if d.empty:
+        return False
+    d = d.assign(mes=d["data"].str[:7])
+    votos = []
+    for _, g in d.groupby(["operacao_id", "cesta", "mes"]):
+        v = pd.to_numeric(g.sort_values("data")["volume_real_hl"], errors="coerce").fillna(0).tolist()
+        if len(v) >= 4 and max(v) > 0:
+            votos.append(all(b >= a * 0.995 for a, b in zip(v, v[1:])))
+    return bool(votos) and sum(votos) >= 0.6 * len(votos)
 
 
 def diario_normalizado(operacao_id: int, mes_ano: str, acumulado: bool | None = None) -> pd.DataFrame:
@@ -43,7 +57,7 @@ def diario_normalizado(operacao_id: int, mes_ano: str, acumulado: bool | None = 
     d = ressuprimento_repo.diario_ops_df(operacao_id, de, ate)
     if d.empty:
         return pd.DataFrame(columns=["data", "cesta", "dia", "acum", "dia_sellin", "acum_sellin"])
-    acumulado = base_acumulada(operacao_id) if acumulado is None else acumulado
+    acumulado = _acumulada(d) if acumulado is None else acumulado
     partes = []
     for _, g in d.groupby(["operacao_id", "cesta"]):
         g = g.sort_values("data").copy()
@@ -67,7 +81,7 @@ def real_do_mes(operacao_id: int, mes_ano: str, acumulado: bool | None = None) -
     d = ressuprimento_repo.diario_ops_df(operacao_id, de, ate)
     if d.empty:
         return pd.Series(dtype=float), pd.Series(dtype=float), None
-    acumulado = base_acumulada(operacao_id) if acumulado is None else acumulado
+    acumulado = _acumulada(d) if acumulado is None else acumulado
     for c in ("volume_real_hl", "volume_sellin_hl"):
         d[c] = pd.to_numeric(d[c], errors="coerce").fillna(0.0)
     d = d.sort_values("data")
@@ -189,7 +203,7 @@ def acompanhamento(operacao_id: int, ano: int, meses: list[int]) -> pd.DataFrame
     meses = meses or list(range(1, 13))
     hoje = tempo.hoje()
     reais, tends, metas, dias_total, dias_com_dado = [], [], [], 0, set()
-    acumulado = base_acumulada(operacao_id)
+    acumulado = None  # decidido mês a mês (relatório atual: HL do dia, somado)
     for m in meses:
         mes_ano = f"{ano}-{m:02d}"
         r, _, ultima = real_do_mes(operacao_id, mes_ano, acumulado)
@@ -231,7 +245,7 @@ def acompanhamento(operacao_id: int, ano: int, meses: list[int]) -> pd.DataFrame
     txt = real_txt_do_mes(operacao_id, f"{ano}-{meses[0]:02d}") if len(meses) == 1 else pd.Series(dtype=object)
     df["real_txt"] = df["cesta"].map(txt) if not txt.empty else None
     df.attrs.update(dias_preenchidos=preenchidos, dias_periodo=dias_total, fator=fator,
-                    com_ponto=bool(txt.dropna().astype(str).str.contains(r"\.").any()) if not txt.empty else True)
+                    com_ponto=bool(txt.dropna().astype(str).str.contains(r"\.").any()) if not txt.dropna().empty else True)
     return df
 
 

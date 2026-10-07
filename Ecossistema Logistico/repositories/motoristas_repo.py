@@ -134,6 +134,19 @@ def ultimas_viagens(operacao_id: int) -> dict[int, dict]:
     return {r["motorista_id"]: r for r in linhas}  # a última sobrescreve
 
 
+def ultima_finalizacao(motorista_id: int) -> dict | None:
+    """Última viagem finalizada do motorista + quando a Puxada liberou o acesso antes das 11 h."""
+    r = query_all("""SELECT v.id, v.ts_fim, v.numero_pedido, v.operacao_id, m.acesso_liberado_em
+                     FROM viagens_carreteiro v JOIN motoristas m ON m.id = v.motorista_id
+                     WHERE v.motorista_id = ? AND v.ts_fim IS NOT NULL AND v.status <> 'Cancelada'
+                     ORDER BY v.ts_fim DESC LIMIT 1""", (motorista_id,))
+    return r[0] if r else None
+
+
+def liberar_acesso(motorista_id: int, quando: str) -> None:
+    execute("UPDATE motoristas SET acesso_liberado_em = ? WHERE id = ?", (quando, motorista_id))
+
+
 def viagens_ativas(operacao_id: int) -> dict[int, dict]:
     linhas = query_all("""SELECT motorista_id, id, numero_pedido, placa, destino, ts_inicio, desc_data, desc_hora
                           FROM viagens_carreteiro WHERE operacao_id = ? AND status = 'Em viagem'""", (operacao_id,))

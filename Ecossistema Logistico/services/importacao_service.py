@@ -65,12 +65,13 @@ LAYOUTS: dict[str, dict] = {
         "rotulo": "Relatório 02.03.04 — Posição de estoque", "frequencia_dias": 1,
         "tabela": "estoque", "chaves": ["operacao_id", "cod"], "por_operacao": True, "modo": "substituir_operacao",
         "campos": {
-            "cod": C("Código", "int", True, ["cod", "codigo", "cod_produto", "cod_clean"], ["cod"]),
+            "cod": C("Código", "int", True, ["cod", "codigo", "cod_produto", "cod_clean", "codigoproduto"], ["cod"]),
             "descricao": C("Descrição", apelidos=["descricao"], contem=["desc"]),
             "inicial": C("Inicial", "float", apelidos=["inicial", "estoque_inicial"], contem=["inic"]),
             "entrada": C("Entradas", "float", apelidos=["ent", "entrada", "entradas"], contem=["entr", "ent"]),
             "saida": C("Saídas", "float", apelidos=["saida", "saidas"], contem=["said", "sai"]),
-            "disponivel": C("Disponível", "float", True, ["disp", "disponivel", "saldo_disponivel"], ["disp"]),
+            "disponivel": C("Disponível", "float", True, ["disp", "disponivel", "saldo_disponivel", "saldodisponivel"],
+                            ["disp"]),
             "saldo_dia": C("Saldo do dia", "float", apelidos=["saldo_dia"]),
         },
     },
@@ -310,6 +311,16 @@ def _numero_ponto(v) -> float:
         return numero_br(v)
 
 
+def _ponto_decimal(s: pd.Series) -> bool:
+    """A coluna usa ponto como separador decimal (ex.: 1561.8003, -108.714 ao lado de 2441.99)?"""
+    textos = s.dropna().map(lambda v: v if isinstance(v, (int, float)) else str(v).strip())
+    if textos.map(lambda v: isinstance(v, float) and v != int(v)).any():
+        return True
+    limpos = textos[textos.map(lambda v: isinstance(v, str) and v != "")].map(lambda v: re.sub(r"[R$\s]", "", v))
+    return bool(not limpos.empty and not limpos.str.contains(",").any()
+                and limpos.map(lambda v: bool(_PONTO_DECIMAL.fullmatch(v))).any())
+
+
 def _to_float(s: pd.Series) -> pd.Series:
     """Converte a coluna olhando todos os valores juntos: se nenhum tem vírgula e algum mostra ponto como
     decimal (2441.99 / 2441.990 / 0.5), o ponto é decimal em todos — "441.990" vira 441,99 e não 441 mil."""
@@ -358,8 +369,15 @@ def preparar(layout_key: str, df: pd.DataFrame, mapeamento: dict[str, str | None
             saida[k] = _to_int(serie)
         elif c.tipo == "float":
             # Ressuprimento: o número vem como está na coluna — "1.307" é mil trezentos e sete (ponto = milhar)
-            saida[k] = serie.map(numero_br) if layout_key == "ressuprimento" else _to_float(serie)
-            if layout_key == "ressuprimento" and k == "volume_real_hl":
+            decimal = layout_key == "ressuprimento" and _ponto_decimal(serie)
+            if layout_key == "ressuprimento" and not decimal:
+                saida[k] = serie.map(numero_br)
+            else:
+                saida[k] = _to_float(serie)
+            if decimal and k == "volume_real_hl":
+                # relatório com número "de verdade" (Excel: 1561.8003) — o sistema formata em pt-BR
+                saida["volume_txt"] = ""
+            elif layout_key == "ressuprimento" and k == "volume_real_hl":
                 # guarda o número como está escrito no relatório (com ou sem ponto) para mostrar igual
                 saida["volume_txt"] = serie.map(lambda v: "" if v is None or (isinstance(v, float) and pd.isna(v))
                                                 else re.sub(r"\.0$", "", str(v).strip()))

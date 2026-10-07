@@ -256,3 +256,51 @@ def _avisar_puxada(operacao_id: int, titulo: str, texto: str, chave: str) -> Non
                 repo.criar_notificacao(u["id"], "interjornada", chave, titulo, texto, "puxada", agora_)
     except Exception:
         pass
+
+
+# --- Fim da viagem: descanso obrigatório e bloqueio do acesso ao app -------------------------------
+def apos_finalizar(v: dict) -> dt.datetime | None:
+    """Ao tocar em ✅ Finalizar viagem: começa a interjornada de 11 h (a Puxada é avisada)."""
+    fim_viagem = _dt(v.get("ts_fim"))
+    if not fim_viagem:
+        return None
+    livre = fim_viagem + dt.timedelta(hours=INTERJORNADA_H)
+    atual = repo.interjornada_atual(v["motorista_id"])
+    if not (atual and _dt(atual["fim_previsto"]) and _dt(atual["fim_previsto"]) > fim_viagem):
+        repo.iniciar_interjornada(v["operacao_id"], v["motorista_id"], v["id"],
+                                  fim_viagem.strftime("%Y-%m-%d %H:%M:%S"), livre.strftime("%Y-%m-%d %H:%M:%S"))
+    nome = v.get("motorista") or "Motorista"
+    _avisar_puxada(v["operacao_id"], f"🏁 {nome} finalizou a viagem — interjornada",
+                   f"Pedido {v.get('numero_pedido') or ''} · {v.get('placa') or ''}. Descanso até "
+                   f"{livre:%d/%m %H:%M} (app bloqueado até lá).", f"fimviagem:{v['id']}")
+    return livre
+
+
+def bloqueio_acesso(motorista_id: int) -> dt.datetime | None:
+    """Até quando o motorista não pode entrar no app (11 h após Finalizar viagem). None = liberado."""
+    r = repo.ultima_finalizacao(motorista_id)
+    if not r:
+        return None
+    fim = _dt(r["ts_fim"])
+    if not fim:
+        return None
+    liberado = _dt(r.get("acesso_liberado_em"))
+    if liberado and liberado >= fim:
+        return None
+    livre = fim + dt.timedelta(hours=INTERJORNADA_H)
+    return livre if livre > tempo.agora() else None
+
+
+def bloqueio_do_usuario(usuario: dict) -> dt.datetime | None:
+    from config.settings import PERFIL_MOTORISTA
+    from repositories import carreteiro_repo
+
+    if not usuario or usuario.get("perfil") != PERFIL_MOTORISTA:
+        return None
+    mot = carreteiro_repo.motorista_do_usuario(usuario["id"])
+    return bloqueio_acesso(mot["id"]) if mot else None
+
+
+def liberar_acesso(motorista_id: int, usuario: str = "") -> None:
+    """A Puxada libera o app antes das 11 h (ex.: finalizou a viagem por engano)."""
+    repo.liberar_acesso(motorista_id, tempo.agora().strftime("%Y-%m-%d %H:%M:%S"))

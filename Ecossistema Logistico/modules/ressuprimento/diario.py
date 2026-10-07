@@ -17,7 +17,7 @@ def render(usuario: dict, operacao_id: int) -> None:
     principais = [c for c in ("Cerveja", "Nab") if c in indicadores] or indicadores[:2]
     graficos.mostrar(graficos.barras(piv["Dia"], {c: piv[c].round(0) for c in principais}, empilhado=True,
                                      titulo="HL carregado por dia", sufixo=" HL"), key="g_dia")
-    st.caption("HL do dia = acumulado da data (coluna C) − acumulado do dia anterior, por indicador.")
+    st.caption("HL do dia = soma da coluna C do relatório na data (coluna F), por indicador (coluna E) e filial (coluna A).")
     vis = piv.copy()
     for c in indicadores + ["Total do dia"]:
         vis[c] = vis[c].map(ui.numero)

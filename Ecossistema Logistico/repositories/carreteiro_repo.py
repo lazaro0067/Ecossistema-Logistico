@@ -49,6 +49,15 @@ def salvar_revenda(operacao_id: int, lat: float | None, lon: float | None, raio_
     execute("UPDATE operacoes SET lat = ?, lon = ?, raio_m = ? WHERE id = ?", (lat, lon, raio_m, operacao_id))
 
 
+def link_relato(operacao_id: int) -> str:
+    r = query_one("SELECT link_relato FROM operacoes WHERE id = ?", (operacao_id,)) or {}
+    return (r.get("link_relato") or "").strip()
+
+
+def salvar_link_relato(operacao_id: int, link: str | None) -> None:
+    execute("UPDATE operacoes SET link_relato = ? WHERE id = ?", (link or None, operacao_id))
+
+
 # --- Listas de seleção ---------------------------------------------------------
 def destinos() -> list[dict]:
     return query_all("SELECT id, nome, cidade, uf FROM fabricas ORDER BY nome")
@@ -119,6 +128,17 @@ def apagar_evento(vid: int, etapa: str) -> None:
 def eventos_df(vid: int) -> pd.DataFrame:
     return query_df("SELECT etapa, ts, lat, lon, precisao_m, distancia_m, dentro_raio FROM viagem_eventos "
                     "WHERE viagem_id = ? ORDER BY ts, id", (vid,))
+
+
+def ultimas_posicoes(ids: list[int]) -> dict[int, dict]:
+    """Por viagem: o último ponto de GPS registrado (etapa, hora, lat/lon, precisão)."""
+    if not ids:
+        return {}
+    marcas = ", ".join("?" * len(ids))
+    linhas = query_all(f"""SELECT viagem_id, etapa, ts, lat, lon, precisao_m FROM viagem_eventos
+                           WHERE viagem_id IN ({marcas}) AND lat IS NOT NULL AND lon IS NOT NULL
+                           ORDER BY ts, id""", list(ids))
+    return {r["viagem_id"]: r for r in linhas}  # o último sobrescreve
 
 
 def geo_viagens(ids: list[int]) -> pd.DataFrame:

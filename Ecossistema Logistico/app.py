@@ -67,10 +67,17 @@ def tela_login() -> None:
                                       autocomplete="current-password")
                 if st.form_submit_button("Entrar", type="primary", **ui.LARGURA):
                     usuario = autenticar(email, senha)
-                    if usuario:
+                    from modules.puxada.app_motorista import bloqueio
+
+                    bloq = bloqueio(usuario) if usuario else None
+                    if bloq:
+                        st.error(f"⛔ Acesso permitido somente a partir de {bloq:%d/%m} às {bloq:%H:%M} "
+                                 "(interjornada de 11 h depois de finalizar a viagem).")
+                    elif usuario:
                         session.logar(usuario)
                         st.rerun()
-                    st.error("E-mail ou senha inválidos.")
+                    else:
+                        st.error("E-mail ou senha inválidos.")
             if ui.botao("Esqueci minha senha", key="btn_esqueci"):
                 st.session_state["_tela"] = "esqueci"
                 st.rerun()

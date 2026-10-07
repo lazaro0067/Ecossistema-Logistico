@@ -772,6 +772,10 @@ MIGRACOES: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS ix_interj_mot ON interjornadas(motorista_id, inicio);
         CREATE INDEX IF NOT EXISTS ix_manut_op ON manutencoes(operacao_id, data);
     """),
+    ("027_relato_bloqueio_acesso", """
+        ALTER TABLE operacoes ADD COLUMN link_relato TEXT;
+        ALTER TABLE motoristas ADD COLUMN acesso_liberado_em TEXT;
+    """),
 ]
 
 
