@@ -113,9 +113,25 @@ _CSS = f"""
 .stApp [data-testid="stWidgetLabel"] *, .stApp .eco-secao h3, .stApp .eco-secao p, .stApp h1, .stApp h2, .stApp h3 {{
     color: #fff !important; }}
 .stApp [data-testid="stCaptionContainer"] {{ opacity: .85; }}
-.stApp [data-testid="stExpander"] details {{ background: rgba(255,255,255,.08) !important;
-    border: 1px solid rgba(255,255,255,.22) !important; border-radius: 14px !important; }}
-.stApp [data-testid="stExpander"] summary * {{ color: #fff !important; }}
+/* tudo que tem fundo branco (botões, expansores, formulários) fica com a letra azul */
+.stApp [data-testid="stExpander"] details, .stApp [data-testid="stForm"] {{ background: #fff !important;
+    border: none !important; border-radius: 16px !important; }}
+.stApp [data-testid="stExpander"] [data-testid="stMarkdownContainer"],
+.stApp [data-testid="stExpander"] [data-testid="stCaptionContainer"],
+.stApp [data-testid="stExpander"] [data-testid="stWidgetLabel"] *,
+.stApp [data-testid="stExpander"] summary *,
+.stApp [data-testid="stForm"] [data-testid="stMarkdownContainer"],
+.stApp [data-testid="stForm"] [data-testid="stCaptionContainer"],
+.stApp [data-testid="stForm"] [data-testid="stWidgetLabel"] * {{ color: {TEAL_ESC} !important; }}
+.stApp [data-testid="stExpander"] summary svg {{ fill: {TEAL_ESC} !important; color: {TEAL_ESC} !important; }}
+.stApp button [data-testid="stMarkdownContainer"], .stApp button p {{ color: {TEAL_ESC} !important; font-weight: 700; }}
+.stApp [data-testid="stPopover"] button svg {{ color: {TEAL_ESC} !important; fill: {TEAL_ESC} !important; }}
+.stApp [data-testid="stButtonGroup"] button[kind="pillsActive"] p,
+.stApp [data-testid="stButtonGroup"] button[kind="pillsActive"] [data-testid="stMarkdownContainer"],
+.stApp .st-key-car_horas [data-testid="stButtonGroup"] button:hover p {{ color: #fff !important; }}
+.stApp button[kind="primary"] [data-testid="stMarkdownContainer"], .stApp button[kind="primary"] p,
+.stApp button[kind="primaryFormSubmit"] [data-testid="stMarkdownContainer"],
+.stApp button[kind="primaryFormSubmit"] p {{ color: #fff !important; }}
 [data-testid="stPopoverBody"] {{ background: #163d91 !important; color: #fff !important; }}
 [data-testid="stPopoverBody"] [data-testid="stMarkdownContainer"] {{ color: #fff !important; }}
 .stApp [data-testid="stAlert"] [data-testid="stMarkdownContainer"] {{ color: inherit !important; }}
@@ -136,7 +152,8 @@ _CSS = f"""
 .car-home-tit {{ color: #fff; font-weight: 800; font-size: 1.05rem; margin: .4rem 0 .5rem; }}
 .st-key-car_voltar button {{ background: rgba(255,255,255,.14) !important; border: 1px solid rgba(255,255,255,.35) !important;
     border-radius: 999px !important; min-height: 2.4rem; }}
-.st-key-car_voltar button p {{ color: #fff !important; font-weight: 700; }}
+.stApp .st-key-car_voltar button p, .stApp .st-key-car_voltar button [data-testid="stMarkdownContainer"] {{
+    color: #fff !important; font-weight: 700; }}
 .block-container {{ padding-bottom: 6.5rem !important; }}
 .car-topo {{ background: linear-gradient(160deg, {TINTA} 0%, {TEAL_ESC} 70%, {TEAL} 100%) !important; border-radius: 22px !important;
     padding: 1.1rem 1.2rem !important; box-shadow: 0 16px 30px -20px rgba(11,37,99,.9) !important; }}
@@ -162,7 +179,9 @@ _CSS = f"""
 .st-key-car_verde button, .st-key-car_etapa button, .st-key-car_fim button {{ background: {TEAL} !important;
     border: none !important; border-radius: 12px !important; min-height: 3.6rem !important;
     box-shadow: 0 6px 14px -8px rgba(29,71,166,.9) !important; }}
-.st-key-car_verde button p, .st-key-car_etapa button p, .st-key-car_fim button p {{ color: #fff !important; font-weight: 700 !important;
+.stApp .st-key-car_verde button p, .stApp .st-key-car_etapa button p, .stApp .st-key-car_fim button p,
+.stApp .st-key-car_verde button [data-testid="stMarkdownContainer"], .stApp .st-key-car_etapa button [data-testid="stMarkdownContainer"],
+.stApp .st-key-car_fim button [data-testid="stMarkdownContainer"] {{ color: #fff !important; font-weight: 700 !important;
     letter-spacing: .01em; }}
 .st-key-car_verde button:active, .st-key-car_etapa button:active, .st-key-car_fim button:active {{ background: {TEAL_ESC} !important; }}
 .st-key-car_prod [data-testid="stButtonGroup"] button[kind="pillsActive"],
@@ -174,7 +193,8 @@ _CSS = f"""
 [data-testid="stExpander"], [data-testid="stPopover"] button {{ border-radius: 12px !important; }}
 .st-key-car_relato a {{ background: linear-gradient(135deg, #f08a3c, #d4622a) !important; border: none !important;
     border-radius: 16px !important; min-height: 3.1rem; box-shadow: 0 10px 20px -14px rgba(212,98,42,.9); }}
-.st-key-car_relato a p, .st-key-car_relato a span {{ color: #fff !important; font-weight: 800; font-size: 1.02rem; }}
+.stApp .st-key-car_relato a p, .stApp .st-key-car_relato a span,
+.stApp .st-key-car_relato a [data-testid="stMarkdownContainer"] {{ color: #fff !important; font-weight: 800; font-size: 1.02rem; }}
 </style>
 """
 
