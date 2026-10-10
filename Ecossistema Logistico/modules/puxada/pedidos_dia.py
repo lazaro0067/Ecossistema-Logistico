@@ -368,6 +368,25 @@ def render(usuario: dict, operacao_id: int) -> None:
 
 
 # --- Armazém --------------------------------------------------------------------------------
+def _caixa_finalizados(usuario: dict, fechados: list[dict], consolidada: bool) -> None:
+    """Pedidos finalizados (e cancelados/reprogramados) saem da grade e ficam numa caixa: clicando na placa abre."""
+    if not fechados:
+        return
+    fin = [r for r in fechados if r["status"] == "Finalizado"]
+    outros = len(fechados) - len(fin)
+    titulo = f"✅ Finalizados · {len(fin)}" + (f"  ·  ⛔ cancelados/reprogramados · {outros}" if outros else "")
+    with st.expander(titulo, expanded=False):
+        st.caption("Clique na placa para abrir o pedido (e reabrir, se precisar).")
+        for ini in range(0, len(fechados), 4):
+            for col, r in zip(st.columns(4), fechados[ini:ini + 4]):
+                icone = svc.STATUS_ICONE.get(r["status"], "")
+                with col.popover(f"{icone} {r['placa']} · {r['numero_pedido']}", **ui.LARGURA):
+                    st.markdown(_CSS + _card(r, consolidada), unsafe_allow_html=True)
+                    if r["status"] == "Finalizado":
+                        if st.button("↩️ Reabrir", key=f"pp_reab_{r['id']}", **ui.LARGURA):
+                            ui.acao(svc.reabrir, int(r["id"]), sucesso="Pedido reaberto — voltou para a lista.")
+
+
 def tela_armazem(usuario: dict, operacao_id: int) -> None:
     hoje = tempo.hoje()
     consolidada = operacoes_repo.e_consolidada(operacao_id)
@@ -406,7 +425,11 @@ def tela_armazem(usuario: dict, operacao_id: int) -> None:
     if lista.empty:
         st.info("Nenhum pedido para este dia.")
         return
-    regs = sorted(lista.to_dict("records"), key=lambda r: (*svc.ordem_armazem(r), str(r["placa"])))
+    todos = sorted(lista.to_dict("records"), key=lambda r: (*svc.ordem_armazem(r), str(r["placa"])))
+    regs = [r for r in todos if r["status"] == "Aberto"]
+    fechados = [r for r in todos if r["status"] != "Aberto"]
+    if not regs:
+        st.success("✅ Nenhum pedido aberto aqui — tudo finalizado.")
     for ini in range(0, len(regs), 3):
         for col, r in zip(st.columns(3), regs[ini:ini + 3]):
             with col:
@@ -415,9 +438,7 @@ def tela_armazem(usuario: dict, operacao_id: int) -> None:
                     if st.button("✅ Finalizado", key=f"pp_fin_{r['id']}", type="primary", **ui.LARGURA):
                         ui.acao(svc.finalizar, int(r["id"]), usuario.get("nome") or "",
                                 sucesso=f"Pedido {r['numero_pedido']} finalizado.")
-                elif r["status"] == "Finalizado":
-                    if st.button("↩️ Reabrir", key=f"pp_reab_{r['id']}", **ui.LARGURA):
-                        ui.acao(svc.reabrir, int(r["id"]), sucesso="Pedido reaberto.")
+    _caixa_finalizados(usuario, fechados, consolidada)
     ui.downloads(svc.tabela(lista, consolidada), "gestao_pedidos_armazem", key="dl_pp_arm")
 
 
