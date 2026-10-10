@@ -51,6 +51,8 @@ _CSS = """
     color:#173a6b; border:1px solid #cfe0f6; }
 .pt-card .mn { font-size:.78rem; margin-top:.3rem; padding:.3rem .45rem; border-radius:8px; background:#fff1e6;
     color:#7a3a07; border:1px solid #f3cfae; }
+.pt-card .cg { font-size:.78rem; margin-top:.3rem; padding:.3rem .45rem; border-radius:8px; background:#f1ebfb;
+    color:#4a2a8a; border:1px solid #dccbf5; }
 .pt-card.prio { box-shadow:0 0 0 2px #f0c75e; }
 .pt-star { font-size:.66rem; font-weight:800; padding:.05rem .4rem; border-radius:999px; background:#fff4d6;
     color:#8a5a00; border:1px solid #f0c75e; margin-left:.3rem; }
@@ -155,6 +157,8 @@ def _card(r: dict) -> str:
     inativo = r.get("status") in ("Cancelado", "No-show")
     apagado = ";opacity:.55" if inativo else ""
     extra = ""
+    if not inativo and r.get("status") != "Descarregado" and patio_service.carga_txt(r.get("_itens")):
+        extra += f'<div class="cg">📦 <b>Carga:</b> {_e(patio_service.carga_txt(r.get("_itens")))}</div>'
     if not inativo:
         if r.get("_depois"):
             extra += f'<div class="nx">📦 <b>Depois carrega:</b> {_e(patio_service.depois_txt(r["_depois"]))}</div>'
@@ -194,6 +198,29 @@ def _depois_descarga(regs: list[dict]) -> None:
         ui.tabela(patio_service.tabela_depois(ativos), baixar="depois_da_descarga")
 
 
+def _itens_cargas(regs: list[dict]) -> None:
+    """O que cada carreta do dia traz: itens da Puxada Marcada do pedido que o motorista ligou à viagem."""
+    ativos = [r for r in regs if r.get("status") not in ("Cancelado", "No-show")]
+    tab = patio_service.tabela_itens(ativos)
+    sem = [r for r in ativos if _txt(r.get("pedido_app")) and (r.get("_itens") is None or len(r["_itens"]) == 0)]
+    if tab.empty and not sem:
+        return
+    with st.expander(f"📦 O que cada carreta traz · {tab['Placa'].nunique() if not tab.empty else 0} carga(s) · "
+                     f"{ui.numero(tab['Paletes'].sum()) if not tab.empty else 0} paletes"):
+        st.caption("Itens da Puxada Marcada (coluna Q = pedido, R = código, S = produto, T = paletes). "
+                   "Caixas = paletes × caixas por palete da 01.11.")
+        if not tab.empty:
+            ui.tabela(tab, column_config={
+                "Código": st.column_config.NumberColumn("Código", format="%d"),
+                "Paletes": st.column_config.NumberColumn("Paletes", format="%.1f"),
+                "Caixas (unid. venda)": st.column_config.NumberColumn("Caixas (unid. venda)", format="%.0f")},
+                baixar="itens_das_cargas")
+        if sem:
+            st.caption("⚠️ Pedido sem itens na Puxada Marcada: "
+                       + ", ".join(f"{_txt(r.get('placa'))} (ped. {_txt(r.get('pedido_app'))})" for r in sem)
+                       + " — atualize o relatório da Puxada Marcada.")
+
+
 def _manutencoes(operacao_id: int, dia: dt.date) -> None:
     from repositories import manutencao_repo
 
@@ -223,6 +250,7 @@ def quadro_dia(operacao_id: int, dia: dt.date, df: pd.DataFrame) -> None:
         r["_faixa"] = jsvc.janela_de_agendamento(js_todas, r.get("data"), r.get("hora"), r.get("janela_id"),
                                                  _txt(r.get("tipo_carga")) or None)
     _depois_descarga(regs)
+    _itens_cargas(regs)
     tema.secao(f"🗓️ Agenda de {dia:%d/%m/%Y} ({jsvc.DIAS[dia.weekday()]})",
                "Cada coluna é um período da doca. 📱 = agendado pelo motorista no App Carreteiro.")
     if not ps:

@@ -17,11 +17,21 @@ def marcado_por_dia(operacao_id: int, desde: dt.date | None = None) -> pd.DataFr
     from repositories import operacoes_repo
     f_sql, ids = operacoes_repo.filtro("operacao_id", operacao_id)
     df = query_df(f"""
-        SELECT data_puxada, cod, SUM(cx_marcadas) AS cx_marcadas, SUM(cx_solicitadas) AS cx_solicitadas,
-               SUM(hl_marcado) AS hl_marcado
+        SELECT data_puxada, cod, numero_pedido, cx_marcadas, cx_solicitadas, hl_marcado
         FROM pedidos_marcados WHERE {f_sql} AND data_puxada >= ?
-        GROUP BY data_puxada, cod ORDER BY data_puxada
     """, (*ids, desde.isoformat()))
+    if not df.empty:
+        # pedido que o motorista já carregou na fábrica sai de D0/D1/D2 (conta só como trânsito)
+        from repositories import ressuprimento_repo
+        from services import transito_service
+
+        carregados = transito_service.numeros_carregados(operacao_id)
+        if carregados:
+            df = df[~df["numero_pedido"].map(ressuprimento_repo._num).isin(carregados)]
+        for c in ("cx_marcadas", "cx_solicitadas", "hl_marcado"):
+            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
+        df = (df.groupby(["data_puxada", "cod"], as_index=False)[["cx_marcadas", "cx_solicitadas", "hl_marcado"]]
+              .sum().sort_values("data_puxada").reset_index(drop=True))
     if not df.empty:
         hoje = tempo.hoje()
         df["dia"] = df["data_puxada"].map(lambda d: _rotulo_dia(d, hoje))
@@ -71,7 +81,12 @@ def sugestao(operacao_id: int, data_alvo: dt.date | None = None, meta_doi: float
 
     meta = pos["doi_meta"] if meta_doi is None else pd.Series(meta_doi, index=pos.index)
     pos["meta_usada"] = meta
-    pos["estoque_alvo"] = np.maximum(pos["disponivel"] + pos["marcado_cx"] - pos["linear_cx_dia"] * dias, 0.0)
+    from services import transito_service
+
+    tr = transito_service.transito_por_cod(operacao_id)
+    pos["transito_cx"] = pos["cod"].map(tr).fillna(0.0) if not tr.empty else 0.0
+    pos["estoque_alvo"] = np.maximum(pos["disponivel"] + pos["transito_cx"] + pos["marcado_cx"]
+                                     - pos["linear_cx_dia"] * dias, 0.0)
     nec = np.maximum(meta * pos["linear_cx_dia"] - pos["estoque_alvo"] - pos["ja_marcado_alvo"], 0.0)
     if arredondar_palete:
         cx_pal = pos["cx_pallet"].where(pos["cx_pallet"] > 0, 1)
@@ -114,6 +129,11 @@ def projecao_falta(operacao_id: int, dia: dt.date) -> pd.DataFrame:
     no_dia = marc[marc["data_puxada"] == dia.isoformat()] if not marc.empty else marc
     pos["entrada_antes"] = pos["cod"].map(antes.groupby("cod")["cx_marcadas"].sum() if not antes.empty else {}).fillna(0.0)
     pos["entrada_dia"] = pos["cod"].map(no_dia.groupby("cod")["cx_marcadas"].sum() if not no_dia.empty else {}).fillna(0.0)
+    from services import transito_service
+
+    tr = transito_service.transito_por_cod(operacao_id)
+    pos["transito"] = pos["cod"].map(tr).fillna(0.0) if not tr.empty else 0.0
+    pos["entrada_antes"] = pos["entrada_antes"] + pos["transito"]  # carregado na fábrica chega antes
     lin = pos["linear_cx_dia"]
     pos["estoque_inicio"] = pos["disponivel"] + pos["entrada_antes"] - lin * dias
     pos["estoque_fim"] = pos["estoque_inicio"] + pos["entrada_dia"] - lin

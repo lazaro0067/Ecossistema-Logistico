@@ -72,11 +72,13 @@ def render(operacao_id: int, key: str, mostrar_download: bool = True) -> None:
             st.caption("Mostrando os 120 primeiros — use os filtros para refinar.")
     else:
         tab = vis.assign(status=vis["status_comercial"].map(lambda s: f"{STATUS[s][1]} {s}"))
-        ui.tabela(tab[["cod", "descricao", "marca", "tipo", "categoria_detalhada", "disponivel", "d0", "d1", "d2",
+        ui.tabela(tab[["cod", "descricao", "marca", "tipo", "categoria_detalhada", "disponivel", "transito", "d0", "d1", "d2",
                        "projetado", "linear_cx_dia", "doi", "status"]], column_config={
             "cod": st.column_config.NumberColumn("Código", format="%d"), "descricao": "Produto", "marca": "Marca",
             "tipo": "Tipo", "categoria_detalhada": "Embalagem",
             "disponivel": st.column_config.NumberColumn("Estoque (cx)", format="%.0f"),
+            "transito": st.column_config.NumberColumn("🚚 Trânsito", format="%.0f",
+                                                      help="Já carregado na fábrica, vindo para o armazém"),
             "d0": st.column_config.NumberColumn("D0", format="%.0f"),
             "d1": st.column_config.NumberColumn("D1", format="%.0f"),
             "d2": st.column_config.NumberColumn("D2", format="%.0f"),
@@ -97,14 +99,15 @@ def _cards(df) -> None:
   <div class="rot" style="justify-content:space-between"><span>CÓD {r.cod} · {tema._e(r.tipo)} · {tema._e(r.categoria_detalhada)}</span>
   {tema.selo(STATUS[r.status_comercial][0], r.status_comercial)}</div>
   <div style="font-weight:700;font-size:1rem;margin:.3rem 0">{tema._e(r.descricao)}</div>
-  <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:.4rem;font-size:.82rem;background:#f6f8fb;border-radius:10px;padding:.5rem .6rem">
+  <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:.4rem;font-size:.82rem;background:#f6f8fb;border-radius:10px;padding:.5rem .6rem">
     <div><div style="color:#52514e">Estoque</div><b>{ui.numero(r.disponivel)} cx</b></div>
+    <div><div style="color:#7a4fc9">🚚 Trânsito</div><b>{ui.numero(r.transito)}</b></div>
     <div><div style="color:#52514e">D0</div><b>{ui.numero(r.d0)}</b></div>
     <div><div style="color:#52514e">D1</div><b>{ui.numero(r.d1)}</b></div>
     <div><div style="color:#52514e">D2</div><b>{ui.numero(r.d2)}</b></div>
     <div><div style="color:#52514e">Cobertura</div><b>{doi}</b></div>
   </div>
-  <div class="det" style="margin-top:.35rem">Projetado (estoque + puxadas): <b>{ui.numero(r.projetado)} cx</b></div>
+  <div class="det" style="margin-top:.35rem">Projetado (estoque + trânsito + puxadas): <b>{ui.numero(r.projetado)} cx</b></div>
 </div>""")
     c1, c2 = st.columns(2)
     metade = (len(partes) + 1) // 2
@@ -144,11 +147,11 @@ def _grupo(vis, operacao_id: int, key: str) -> None:
     c1, c2, c3 = st.columns([2, 1, 1])
     status_sel = c1.multiselect("Mostrar status", list(STATUS), default=["Stock Out", "Stock Low"],
                                 format_func=lambda s: f"{STATUS[s][1]} {s}", key=f"{key}_g_status")
-    so_marc = c2.toggle("Só com puxada D0–D2", value=False, key=f"{key}_g_marc")
+    so_marc = c2.toggle("Só com trânsito/puxada D0–D2", value=False, key=f"{key}_g_marc")
     ordem = c3.selectbox("Ordenar por", ["Cobertura", "Produto", "Estoque"], key=f"{key}_g_ord")
     g = vis[vis["status_comercial"].isin(status_sel)] if status_sel else vis
     if so_marc:
-        g = g[(g["d0"] + g["d1"] + g["d2"]) > 0]
+        g = g[(g["transito"] + g["d0"] + g["d1"] + g["d2"]) > 0]
     g = g.sort_values({"Cobertura": "doi", "Produto": "descricao", "Estoque": "disponivel"}[ordem],
                       na_position="last")
     if g.empty:
@@ -166,14 +169,14 @@ def _grupo(vis, operacao_id: int, key: str) -> None:
         linhas.append(
             f'<tr class="{_CLASSE.get(r.status_comercial, "")}"><td>{STATUS[r.status_comercial][1]} '
             f'{_h.escape(_curto(r.descricao, 48))}</td><td><b>{ui.numero(r.disponivel)}</b></td>'
-            + "".join(f'<td class="{"z" if not v else ""}">{n(v)}</td>' for v in (r.d0, r.d1, r.d2))
+            + "".join(f'<td class="{"z" if not v else ""}">{n(v)}</td>' for v in (r.transito, r.d0, r.d1, r.d2))
             + f"<td>{doi}</td></tr>")
     st.markdown(
         _CSS_GRUPO + f'<div class="eg-box"><div class="eg-tit"><b>📦 Estoque · {_h.escape(filial)}</b>'
         f'<span>{agora:%d/%m %H:%M} · {len(g)} produto(s)</span></div>'
-        '<table class="eg-tab"><thead><tr><th>Produto</th><th>Estoque</th><th>D0</th><th>D1</th><th>D2</th>'
+        '<table class="eg-tab"><thead><tr><th>Produto</th><th>Estoque</th><th>Trâns.</th><th>D0</th><th>D1</th><th>D2</th>'
         f'<th>Cob.</th></tr></thead><tbody>{"".join(linhas)}</tbody></table>'
-        '<div class="eg-leg">Estoque em caixas · D0/D1/D2 = puxadas marcadas · Cob. = dias de cobertura · '
+        '<div class="eg-leg">Estoque em caixas · Trâns. = já carregado, vindo para o armazém · D0/D1/D2 = puxadas marcadas · Cob. = dias de cobertura · '
         '🔴 Stock Out · 🟡 Stock Low · 🟢 Ideal · 🔵 Over</div></div>', unsafe_allow_html=True)
     st.caption("📸 Tire o print do quadro acima ou copie o texto abaixo para colar no grupo.")
     texto = [f"*📦 Estoque {filial} — {agora:%d/%m %H:%M}*", ""]
@@ -183,7 +186,8 @@ def _grupo(vis, operacao_id: int, key: str) -> None:
             continue
         texto.append(f"{STATUS[rot][1]} *{rot}* ({len(sub)})")
         for r in sub.itertuples():
-            puxada = " + ".join(f"{d} {ui.numero(v)}" for d, v in (("D0", r.d0), ("D1", r.d1), ("D2", r.d2)) if v)
+            puxada = " + ".join(f"{d} {ui.numero(v)}" for d, v in (("🚚 trânsito", r.transito), ("D0", r.d0),
+                                                                    ("D1", r.d1), ("D2", r.d2)) if v)
             doi = "" if r.doi != r.doi else f" · {ui.numero(r.doi, 1)}d"
             texto.append(f"• {_curto(r.descricao, 40)} — {ui.numero(r.disponivel)} cx{doi}"
                          + (f" · puxada {puxada}" if puxada else ""))

@@ -57,6 +57,7 @@ MODULOS = {
         "estoque": "📊 Gestão de Estoque",
         "sugestao": "🛒 Sugestão & Marcação por Dia",
         "cestas": "📈 Acompanhamento (Cestas)",
+        "gestao_dia": "📅 Gestão do Dia & Metas Semanais",
         "diario": "📅 Carregamento Dia a Dia",
         "politica": "📦 Política de Estoque",
         "metas": "🎯 Metas Mensais",
@@ -116,7 +117,7 @@ GRUPOS_ABAS = {
         "📁 Bases": ["bases"],
         "📦 Estoque": ["estoque", "ruptura", "politica"],
         "🛒 Marcação": ["sugestao", "puxada_pedidos", "diario"],
-        "📈 Acompanhamento": ["cestas", "metas"],
+        "📈 Acompanhamento": ["cestas", "gestao_dia", "metas"],
     },
     "vendas": {
         "🛍️ Comercial": ["comercial"],

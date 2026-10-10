@@ -50,7 +50,7 @@ def salvar_meta(operacao_id: int, mes_ano: str, cesta: str, meta: float) -> None
 
 # --- Pedidos marcados (Puxada) -------------------------------------------
 def pedidos_marcados_df(operacao_id: int, data_puxada: str | None = None) -> pd.DataFrame:
-    sql, p = """SELECT data_puxada, numero_pedido, cod, descricao, cx_solicitadas, cx_marcadas,
+    sql, p = """SELECT data_puxada, numero_pedido, cod, descricao, paletes, cx_solicitadas, cx_marcadas,
                        hl_marcado, status_item, dt_atualizacao
                 FROM pedidos_marcados WHERE """ + operacoes_repo.filtro("operacao_id", operacao_id)[0], \
         list(operacoes_repo.ids_efetivos(operacao_id))
@@ -58,6 +58,33 @@ def pedidos_marcados_df(operacao_id: int, data_puxada: str | None = None) -> pd.
         sql += " AND data_puxada = ?"
         p.append(data_puxada)
     return query_df(sql + " ORDER BY data_puxada DESC, numero_pedido, cod", p)
+
+
+def _num(txt) -> str:
+    """Número do pedido só com dígitos, sem zeros à esquerda (para casar 0004501 com 4501)."""
+    import re
+
+    return re.sub(r"\D", "", str(txt or "")).lstrip("0")
+
+
+def itens_dos_pedidos(operacao_id: int, numeros: list[str]) -> pd.DataFrame:
+    """Itens da Puxada Marcada (coluna Q = pedido) dos pedidos informados: código, produto, paletes e caixas."""
+    alvo = {_num(n) for n in numeros if _num(n)}
+    cols = ["numero_pedido", "data_puxada", "cod", "descricao", "paletes", "cx_marcadas", "hl_marcado"]
+    if not alvo:
+        return pd.DataFrame(columns=cols)
+    f_sql, ids = operacoes_repo.filtro("operacao_id", operacao_id)
+    df = query_df(f"""SELECT numero_pedido, data_puxada, cod, descricao, COALESCE(paletes, 0) AS paletes,
+                             COALESCE(cx_marcadas, 0) AS cx_marcadas, COALESCE(hl_marcado, 0) AS hl_marcado
+                      FROM pedidos_marcados WHERE {f_sql}""", ids)
+    if df.empty:
+        return pd.DataFrame(columns=cols)
+    df = df[df["numero_pedido"].map(_num).isin(alvo)]
+    # o mesmo pedido pode vir em mais de uma data do relatório: fica a data mais recente
+    if not df.empty:
+        ult = df.groupby(df["numero_pedido"].map(_num))["data_puxada"].transform("max")
+        df = df[df["data_puxada"] == ult]
+    return df[cols].reset_index(drop=True)
 
 
 def datas_puxada(operacao_id: int) -> list[str]:

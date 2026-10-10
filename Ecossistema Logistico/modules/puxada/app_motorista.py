@@ -15,7 +15,7 @@ from services import carreteiro_service as svc
 from services import usuarios_service
 from services.erros import RegraNegocioError
 
-VERDE, AZUL, LARANJA = "#0ca30c", "#2a78d6", "#ec835a"
+VERDE, AZUL, LARANJA = "#16a34a", "#4f46e5", "#f97316"
 
 _CSS = f"""
 <style>
@@ -105,6 +105,43 @@ _CSS = f"""
 .st-key-nav_mod_motorista [data-testid="stButtonGroup"] button {{ border-radius: 999px; font-weight: 700; }}
 .st-key-nav_mod_motorista [data-testid="stButtonGroup"] button[kind="segmented_controlActive"] {{ background: #0B1F3A; color: #fff; }}
 .st-key-nav_mod_motorista [data-testid="stButtonGroup"] button[kind="segmented_controlActive"] p {{ color: #fff; }}
+/* --- cara de app: cores vivas, cartões arredondados e barra de abas fixa embaixo --- */
+.stApp {{ background: radial-gradient(1200px 380px at 50% -120px, #c7d2fe 0%, #eef2ff 45%, #f8fafc 100%) !important; }}
+.block-container {{ padding-bottom: 6.5rem !important; }}
+.car-topo {{ background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 55%, #db2777 100%) !important; border-radius: 24px !important;
+    padding: 1.1rem 1.2rem !important; box-shadow: 0 18px 36px -20px rgba(79,70,229,.9) !important; }}
+.car-topo .av {{ float: left; width: 3rem; height: 3rem; border-radius: 50%; background: rgba(255,255,255,.22);
+    display: grid; place-items: center; font-weight: 900; font-size: 1.15rem; margin-right: .75rem;
+    border: 2px solid rgba(255,255,255,.55); }}
+.car-viagem {{ border: none !important; border-radius: 20px !important; background: #fff;
+    box-shadow: 0 10px 24px -18px rgba(30,27,75,.55) !important; position: relative; overflow: hidden; }}
+.car-viagem:before {{ content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 6px;
+    background: linear-gradient(180deg, #4f46e5, #db2777); }}
+.car-viagem .lin span {{ color: #6b7280 !important; }}
+.car-passo .ic {{ box-shadow: 0 4px 10px -6px rgba(0,0,0,.4); }}
+.car-passo.feito .ic {{ background: linear-gradient(135deg, #22c55e, #16a34a) !important; border-color: #16a34a !important; }}
+.car-passo.atual .ic {{ background: linear-gradient(135deg, #6366f1, #4f46e5) !important; border-color: #4f46e5 !important;
+    animation: carpulse 1.6s ease-in-out infinite; }}
+@keyframes carpulse {{ 0%,100% {{ box-shadow: 0 0 0 0 rgba(79,70,229,.45); }} 50% {{ box-shadow: 0 0 0 9px rgba(79,70,229,0); }} }}
+.car-prog i {{ background: linear-gradient(90deg, #22c55e, #4f46e5, #db2777) !important; }}
+.st-key-car_verde button {{ background: linear-gradient(135deg, #22c55e, #16a34a) !important; border: none !important;
+    border-radius: 18px !important; min-height: 3.9rem !important; }}
+.st-key-car_etapa button {{ background: linear-gradient(135deg, #6366f1, #4f46e5 60%, #7c3aed) !important; border: none !important;
+    border-radius: 18px !important; min-height: 3.9rem !important; box-shadow: 0 12px 22px -14px rgba(79,70,229,.95); }}
+.st-key-car_fim button {{ background: linear-gradient(135deg, #22c55e, #059669) !important; border: none !important;
+    border-radius: 18px !important; min-height: 3.9rem !important; }}
+.st-key-car_verde button:active, .st-key-car_etapa button:active, .st-key-car_fim button:active {{ transform: scale(.98); }}
+[data-testid="stExpander"], [data-testid="stPopover"] button {{ border-radius: 16px !important; }}
+.st-key-nav_mod_motorista {{ position: fixed; left: 0; right: 0; bottom: 0; z-index: 999; background: rgba(255,255,255,.96);
+    backdrop-filter: blur(8px); border-top: 1px solid #e5e7eb; padding: .45rem .6rem calc(.45rem + env(safe-area-inset-bottom));
+    box-shadow: 0 -10px 24px -18px rgba(30,27,75,.6); }}
+.st-key-nav_mod_motorista [data-testid="stButtonGroup"] {{ display: flex; width: 100%; max-width: 640px; margin: 0 auto; }}
+.st-key-nav_mod_motorista [data-testid="stButtonGroup"] button {{ flex: 1; border: none !important; border-radius: 14px !important;
+    background: transparent; min-height: 3rem; }}
+.st-key-nav_mod_motorista [data-testid="stButtonGroup"] button p {{ font-size: .86rem; font-weight: 800; color: #6b7280; }}
+.st-key-nav_mod_motorista [data-testid="stButtonGroup"] button[kind="segmented_controlActive"] {{
+    background: linear-gradient(135deg, #eef2ff, #fae8ff) !important; }}
+.st-key-nav_mod_motorista [data-testid="stButtonGroup"] button[kind="segmented_controlActive"] p {{ color: #4f46e5 !important; }}
 .st-key-car_relato a {{ background: linear-gradient(135deg, #f08a3c, #d4622a) !important; border: none !important;
     border-radius: 16px !important; min-height: 3.1rem; box-shadow: 0 10px 20px -14px rgba(212,98,42,.9); }}
 .st-key-car_relato a p, .st-key-car_relato a span {{ color: #fff !important; font-weight: 800; font-size: 1.02rem; }}
@@ -297,8 +334,11 @@ def _topo(usuario: dict, mot: dict) -> None:
     st.markdown(_CSS, unsafe_allow_html=True)
     c1, c2 = st.columns([3, 1.2])
     with c1:
-        st.markdown(f'<div class="car-topo"><b>🚛 Olá, {tema._e(mot["nome"].split()[0])}!</b>'
-                    f'<span>App Carreteiro · {tema._e(tempo.agora().strftime("%d/%m/%Y %H:%M"))}</span><br>'
+        partes = mot["nome"].split()
+        iniciais = (partes[0][:1] + (partes[-1][:1] if len(partes) > 1 else "")).upper()
+        st.markdown(f'<div class="car-topo"><div class="av">{tema._e(iniciais)}</div>'
+                    f'<b>Olá, {tema._e(partes[0].title())}! 👋</b>'
+                    f'<span>App Carreteiro · {tema._e(tempo.agora().strftime("%d/%m %H:%M"))}</span><br>'
                     f'<span class="chip">{tema._e(_status_chip(mot))}</span></div>',
                     unsafe_allow_html=True)
     with c2:
@@ -678,7 +718,7 @@ def _horas(a, b) -> float | None:
     return (db - da).total_seconds() / 3600 if da and db else None
 
 
-AREAS = ["🚛 Viagem", "💵 Minhas variáveis", "🧾 Minhas viagens", "👤 Meus dados"]
+AREAS = ["🚛 Viagem", "💵 Variáveis", "🧾 Histórico", "👤 Perfil"]
 
 
 def _continuar(v: dict) -> bool:

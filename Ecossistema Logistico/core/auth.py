@@ -65,7 +65,8 @@ _ABAS_IRMAS = {"armazem.pedidos": "armazem.patio", "puxada.pedidos_dia": "puxada
                "puxada.manutencao": "puxada.disponibilidade",
                "puxada.farol": "puxada.tmv_tma",
                "ressuprimento.puxada_pedidos": "ressuprimento.sugestao",
-               "ressuprimento.ruptura": "ressuprimento.estoque"}
+               "ressuprimento.ruptura": "ressuprimento.estoque",
+               "ressuprimento.gestao_dia": "ressuprimento.cestas"}
 
 
 def pode_acessar_aba(usuario: dict, modulo: str, aba: str) -> bool:

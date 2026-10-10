@@ -160,6 +160,27 @@ CREATE TABLE IF NOT EXISTS metas_ressuprimento (
     UNIQUE (operacao_id, mes_ano, cesta)
 );
 
+-- Dias em que a filial não puxa (recalcula metas semanais/diárias e a tendência)
+CREATE TABLE IF NOT EXISTS ressup_sem_puxada (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id INTEGER NOT NULL REFERENCES operacoes(id),
+    data        TEXT NOT NULL,
+    UNIQUE (operacao_id, data)
+);
+
+-- Ajuste do gestor sobre a meta semanal (percentual a mais/a menos, por semana do mês)
+CREATE TABLE IF NOT EXISTS ressup_ajuste_semana (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id   INTEGER NOT NULL REFERENCES operacoes(id),
+    mes_ano       TEXT NOT NULL,
+    semana_ini    TEXT NOT NULL,
+    ajuste_pct    REAL DEFAULT 0,
+    observacao    TEXT,
+    atualizado_por TEXT,
+    atualizado_em TEXT,
+    UNIQUE (operacao_id, mes_ano, semana_ini)
+);
+
 -- ============ ARMAZÉM / ESTOQUE ============
 CREATE TABLE IF NOT EXISTS armazens (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -775,6 +796,9 @@ MIGRACOES: list[tuple[str, str]] = [
     ("027_relato_bloqueio_acesso", """
         ALTER TABLE operacoes ADD COLUMN link_relato TEXT;
         ALTER TABLE motoristas ADD COLUMN acesso_liberado_em TEXT;
+    """),
+    ("028_paletes_puxada_marcada", """
+        ALTER TABLE pedidos_marcados ADD COLUMN paletes REAL DEFAULT 0;
     """),
 ]
 

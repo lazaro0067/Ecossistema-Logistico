@@ -80,17 +80,21 @@ LAYOUTS: dict[str, dict] = {
         "digito_verificador": True,
         "tabela": "pedidos_marcados", "chaves": [], "por_operacao": True, "modo": "substituir_data",
         "campos": {
-            "data_puxada": C("Data da puxada", "date", apelidos=["data_puxada", "data"], contem=["data_puxada", "data"]),
-            "numero_pedido": C("Nº do pedido", apelidos=["no_pedido", "n_pedido", "numero_pedido", "pedido"],
-                               contem=["pedido"]),
+            # um relatório só: a data de cada linha define se o pedido é D0, D1 ou D2
+            "data_puxada": C("Data da puxada", "date", apelidos=["data_puxada", "dt_puxada", "data_agendamento",
+                                                                 "data_carregamento", "data_entrega", "data"],
+                             contem=["puxada", "agend", "carreg", "entrega", "data"]),
+            "numero_pedido": C("Nº do pedido (coluna Q)", apelidos=["no_pedido", "n_pedido", "numero_pedido", "pedido"],
+                               contem=["pedido"], posicao=16, prioriza_posicao=True),
             "cod": C("Código (coluna R)", "int", True, ["codigo", "cod"], ["codigo", "cod"], posicao=17,
                      prioriza_posicao=True),
-            "descricao": C("Produto", apelidos=["produto", "descricao"], contem=["produto", "desc"]),
+            "descricao": C("Produto (coluna S)", apelidos=["produto", "descricao"], contem=["produto", "desc"],
+                           posicao=18, prioriza_posicao=True),
+            "paletes": C("Quantidade paletes - item (coluna T)", "float", True,
+                         ["quantidade_palets_item", "quantidade_paletes_item", "qtd_paletes"],
+                         ["palet", "palle"], posicao=19, prioriza_posicao=True),
             "cx_solicitadas": C("Caixas solicitadas", "float", apelidos=["qtdeskus_item", "solicitado"],
                                 contem=["qtdeskus", "solicit"]),
-            "cx_marcadas": C("Caixas marcadas (coluna W)", "float", apelidos=["marcado", "cx_marcadas"],
-                             contem=["marcad"], posicao=22, prioriza_posicao=True),
-            "hl_marcado": C("HL", "float", apelidos=["hl", "hl_marcado"], contem=["hecto", "hl"]),
             "status_item": C("Status", apelidos=["status_item", "status"], contem=["status"]),
         },
     },
@@ -455,6 +459,9 @@ def gravar(layout_key: str, dados: pd.DataFrame, operacao_id: int | None, mes_an
         extras_produto = df[[c for c in ("cod", "tipo", "categoria") if c in df]].copy()
         df = df.drop(columns=[c for c in ("tipo", "categoria") if c in df])
 
+    if layout_key == "pedidos_marcados":
+        df = _caixas_da_puxada(df)
+
     if layout["por_operacao"]:
         df.insert(0, "operacao_id", operacao_id)
     if tabela in ("estoque", "linear_vendas", "curva_abc", "pedidos_marcados", "politica_estoque", "contas_pagar"):
@@ -479,6 +486,27 @@ def gravar(layout_key: str, dados: pd.DataFrame, operacao_id: int | None, mes_an
         _atualizar_tipo_categoria(extras_produto)
     registrar_log(operacao_id if layout["por_operacao"] else None, layout_key, n, arquivo, usuario)
     return n
+
+
+def _caixas_da_puxada(df: pd.DataFrame) -> pd.DataFrame:
+    """Puxada marcada: a quantidade vem em PALETES (coluna T). Unidade de venda (caixas) = paletes ×
+    caixas por palete da 01.11; HL = caixas × fator HL da 01.11."""
+    from database.connection import query_df
+
+    df = df.copy()
+    prod = query_df("SELECT cod, cx_pallet, fator_hl FROM produtos")
+    cxp = dict(zip(prod["cod"].astype(int), pd.to_numeric(prod["cx_pallet"], errors="coerce").fillna(0))) \
+        if not prod.empty else {}
+    fhl = dict(zip(prod["cod"].astype(int), pd.to_numeric(prod["fator_hl"], errors="coerce").fillna(0))) \
+        if not prod.empty else {}
+    pal = pd.to_numeric(df.get("paletes", 0), errors="coerce").fillna(0.0)
+    cod = df["cod"].astype(int)
+    df["paletes"] = pal
+    df["cx_marcadas"] = pal * cod.map(cxp).fillna(0.0)
+    df["hl_marcado"] = df["cx_marcadas"] * cod.map(fhl).fillna(0.0)
+    if "numero_pedido" in df:
+        df["numero_pedido"] = df["numero_pedido"].map(lambda v: re.sub(r"\.0$", "", str(v or "").strip()))
+    return df
 
 
 def _gravar_multi_operacao(df: pd.DataFrame, operacao_padrao: int | None, agora: str) -> int:

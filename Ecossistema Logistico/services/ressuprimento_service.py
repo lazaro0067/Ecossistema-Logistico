@@ -132,6 +132,11 @@ def aderencia_mensal(operacao_id: int, mes_ano: str) -> pd.DataFrame:
     dias, ref = _dias_mes(mes_ano), dia_referencia(operacao_id, mes_ano)
     mes_corrente = mes_ano == tempo.mes_atual()
     fator = (dias / ref) if (mes_corrente and ref) else 1.0
+    if mes_corrente and ref:
+        from services import gestao_metas_service as gm
+
+        a, mm = (int(x) for x in mes_ano.split("-"))
+        fator = gm.fator_tendencia(operacao_id, mes_ano, min(dt.date(a, mm, ref), tempo.hoje()))
     df["projecao_hl"] = df["real_hl"] * fator
     df["aderencia_sellin"] = (df["real_hl"] / df["sellin_hl"].where(df["sellin_hl"] > 0) * 100).round(1)
     df["atingimento"] = (df["real_hl"] / df["meta_hl"].where(df["meta_hl"] > 0) * 100).round(1)
@@ -210,9 +215,12 @@ def acompanhamento(operacao_id: int, ano: int, meses: list[int]) -> pd.DataFrame
         if not r.empty:
             reais.append(r)
             # tendência: só no mês corrente — projeta o acumulado até o fim do mês pelo último dia com dado
-            ref = dt.date.fromisoformat(ultima).day if ultima else 0
+            # dias de puxada: desconta os dias marcados como "sem puxada" (📅 Gestão do dia)
+            from services import gestao_metas_service as gm
+
             corrente = (ano, m) == (hoje.year, hoje.month)
-            tends.append(r * (_dias_mes(mes_ano) / ref if corrente and ref else 1.0))
+            ult = min(dt.date.fromisoformat(ultima), hoje) if ultima else None
+            tends.append(r * (gm.fator_tendencia(operacao_id, mes_ano, ult) if corrente else 1.0))
             d = ressuprimento_repo.diario_df(operacao_id, mes_ano)
             dias_com_dado |= set(d["data"])
         metas.append(ressuprimento_repo.metas_df(operacao_id, mes_ano))

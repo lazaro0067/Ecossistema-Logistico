@@ -24,7 +24,20 @@ def _gravar(layout_key, df, mapa, operacao_id, usuario, arquivo, data_padrao=Non
     except RegraNegocioError as e:
         st.error(str(e))
         return False
-    ui.avisar(f"{imp.LAYOUTS[layout_key]['rotulo'].split(' —')[0]}: {ui.numero(n)} linhas gravadas.")
+    extra = ""
+    campo = imp.LAYOUTS[layout_key].get("data_padrao")
+    if campo and campo in dados:
+        hoje = tempo.hoje()
+        partes = []
+        for d, g in dados.groupby(campo):
+            try:
+                dd = dt.date.fromisoformat(str(d)[:10])
+            except ValueError:
+                continue
+            k = (dd - hoje).days
+            partes.append(f"{'D' + str(k) if k >= 0 else 'anterior'} {dd:%d/%m}: {len(g)} item(ns)")
+        extra = " · " + " · ".join(partes) if partes else ""
+    ui.avisar(f"{imp.LAYOUTS[layout_key]['rotulo'].split(' —')[0]}: {ui.numero(n)} linhas gravadas{extra}.")
     return True
 
 
@@ -47,12 +60,7 @@ def card_base(layout_key: str, operacao_id: int, usuario: dict, titulo: str, fre
         st.caption("🔒 Visão consolidada — escolha uma filial no menu para enviar esta base.")
         return
     if layout.get("data_padrao"):
-        hoje = tempo.hoje()
-        opcoes = {f"D{i} · {(hoje + dt.timedelta(days=i)):%d/%m}": (hoje + dt.timedelta(days=i)).isoformat()
-                  for i in range(3)}
-        escolha = st.radio("Dia da puxada (se o arquivo não tiver data)", list(opcoes), horizontal=True,
-                           key=f"{prefixo}dia_{layout_key}_{operacao_id}")
-        data_padrao = opcoes[escolha]
+        st.caption("📅 Envie um relatório só: o sistema lê a data de cada linha e separa D0, D1 e D2.")
     if layout.get("digito_verificador"):
         remover_digito = st.checkbox("Código com dígito verificador", value=True,
                                      key=f"{prefixo}dv_{layout_key}_{operacao_id}",
@@ -77,6 +85,20 @@ def card_base(layout_key: str, operacao_id: int, usuario: dict, titulo: str, fre
         return
 
     mapa = imp.sugerir_mapeamento(layout_key, list(df.columns))
+    campo_data = layout.get("data_padrao")
+    if campo_data and not mapa.get(campo_data):
+        # arquivo sem coluna de data: o usuário escolhe o dia da puxada
+        hoje = tempo.hoje()
+        opcoes = {f"D{i} · {(hoje + dt.timedelta(days=i)):%d/%m}": (hoje + dt.timedelta(days=i)).isoformat()
+                  for i in range(3)}
+        st.warning("Não achei a coluna de data no arquivo. Escolha o dia da puxada:")
+        escolha = st.radio("Dia da puxada", list(opcoes), horizontal=True, key=f"{prefixo}dia_{layout_key}_{operacao_id}")
+        data_padrao = opcoes[escolha]
+        if st.button("📥 Gravar", type="primary", key=f"{prefixo}grv_dia_{layout_key}"):
+            if _gravar(layout_key, df, mapa, operacao_id, usuario, arq.name, data_padrao, remover_digito, mes_ano):
+                st.session_state[marca] = fid
+                st.rerun()
+        return
     if not imp.faltando(layout_key, mapa):
         with st.spinner("Gravando..."):
             if _gravar(layout_key, df, mapa, operacao_id, usuario, arq.name, data_padrao, remover_digito, mes_ano):

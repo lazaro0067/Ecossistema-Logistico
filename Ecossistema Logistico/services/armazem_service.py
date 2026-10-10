@@ -62,7 +62,11 @@ def estoque_comercial(operacao_id: int) -> pd.DataFrame:
         datas = sorted(marc["data_puxada"].unique())[:3]
         for i, d in enumerate(datas):
             df[f"d{i}"] = df["cod"].map(marc[marc["data_puxada"] == d].groupby("cod")["cx_marcadas"].sum()).fillna(0.0)
-    df["projetado"] = df["disponivel"] + df["d0"] + df["d1"] + df["d2"]
+    from services import transito_service
+
+    tr = transito_service.transito_por_cod(operacao_id)
+    df["transito"] = df["cod"].map(tr).fillna(0.0) if not tr.empty else 0.0
+    df["projetado"] = df["disponivel"] + df["transito"] + df["d0"] + df["d1"] + df["d2"]
     return df
 
 

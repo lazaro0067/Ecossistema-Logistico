@@ -38,6 +38,16 @@ def enriquecer(operacao_id: int, regs: list[dict]) -> list[dict]:
         peds = pd.DataFrame()
     pedidos = peds.to_dict("records") if not peds.empty else []
     manuts: dict = {}
+    # itens que a carreta traz: Puxada Marcada (coluna Q = pedido) do(s) pedido(s) da viagem
+    from repositories import ressuprimento_repo
+
+    todos = [n for r in regs for n in ped_repo.numeros(r.get("pedido_app"))]
+    try:
+        itens = ressuprimento_repo.itens_dos_pedidos(operacao_id, todos)
+    except Exception:
+        itens = pd.DataFrame()
+    if not itens.empty:
+        itens["_n"] = itens["numero_pedido"].map(ressuprimento_repo._num)
     for r in regs:
         op = int(r.get("operacao_id") or operacao_id)
         placa = _txt(r.get("placa")).upper()
@@ -64,6 +74,8 @@ def enriquecer(operacao_id: int, regs: list[dict]) -> list[dict]:
             ms = [m for m in manutencao_repo.ativas_da_placa(op, placa, data) if m["data"] <= fim] if data else []
             manuts[chave] = ms[0] if ms else None
         r["_manut"] = manuts[chave]
+        meus = {ressuprimento_repo._num(n) for n in ped_repo.numeros(r.get("pedido_app"))}
+        r["_itens"] = itens[itens["_n"].isin(meus)].drop(columns="_n") if not itens.empty and meus else None
         r["_prio"] = bool((r["_depois"] and ped_svc.e_prioritario(r["_depois"]))
                           or (r["_manut"] and ped_svc._v(r["_manut"].get("prioridade"))))
     return regs
@@ -102,4 +114,29 @@ def tabela_depois(regs: list[dict]) -> pd.DataFrame:
                        "Placa": _txt(r.get("placa")), "Status": _txt(r.get("status")),
                        "Depois carrega": depois_txt(r.get("_depois")) or "—",
                        "Depois vai para manutenção": manut_txt(r.get("_manut")) or "—"})
+    return pd.DataFrame(linhas)
+
+
+def carga_txt(itens) -> str:
+    """'12 itens · 26 paletes · 1.840 cx' (itens da Puxada Marcada do pedido da viagem)."""
+    if itens is None or len(itens) == 0:
+        return ""
+    from core import ui
+
+    return (f"{len(itens)} item(ns) · {ui.numero(itens['paletes'].sum(), 1).rstrip('0').rstrip(',')} palete(s) · "
+            f"{ui.numero(itens['cx_marcadas'].sum())} cx")
+
+
+def tabela_itens(regs: list[dict]) -> pd.DataFrame:
+    linhas = []
+    for r in regs:
+        it = r.get("_itens")
+        if it is None or len(it) == 0:
+            continue
+        for i in it.to_dict("records"):
+            linhas.append({"Hora": _txt(r.get("hora")) or "—", "Placa": _txt(r.get("placa")),
+                           "Motorista": _txt(r.get("motorista")) or "—", "Pedido": i["numero_pedido"],
+                           "Código": int(i["cod"]) if i["cod"] == i["cod"] else None, "Produto": i["descricao"],
+                           "Paletes": float(i["paletes"] or 0), "Caixas (unid. venda)": float(i["cx_marcadas"] or 0),
+                           "HL": round(float(i["hl_marcado"] or 0), 2)})
     return pd.DataFrame(linhas)
