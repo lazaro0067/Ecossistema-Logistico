@@ -57,8 +57,10 @@ LAYOUTS: dict[str, dict] = {
                      posicao=0),
             "linear_cx_dia": C("Linear (coluna E)", "float", True, ["linear", "linear_vendas", "media_venda"],
                                posicao=4, prioriza_posicao=True),
-            "tipo": C("Tipo (Cerveja/NAB)", apelidos=["tipo"]),
-            "categoria": C("Categoria", apelidos=["categoria"]),
+            "descricao": C("Descrição (coluna B)", apelidos=["descricao", "produto"], contem=["desc"], posicao=1),
+            "tipo": C("Tipo (coluna C)", apelidos=["tipo"], posicao=2),
+            # coluna D: embalagem (Descartável / Retornável / Chopp) — atualiza o cadastro do produto
+            "categoria": C("Categoria / embalagem (coluna D)", apelidos=["categoria", "embalagem"], posicao=3),
         },
     },
     "estoque": {
@@ -456,8 +458,10 @@ def gravar(layout_key: str, dados: pd.DataFrame, operacao_id: int | None, mes_an
 
     extras_produto = None
     if layout_key == "linear":
-        extras_produto = df[[c for c in ("cod", "tipo", "categoria") if c in df]].copy()
-        df = df.drop(columns=[c for c in ("tipo", "categoria") if c in df])
+        extras_produto = df[[c for c in ("cod", "descricao", "tipo", "categoria") if c in df]].copy()
+        if "categoria" in extras_produto:
+            extras_produto["categoria"] = extras_produto["categoria"].map(produtos_service.embalagem)
+        df = df.drop(columns=[c for c in ("descricao", "tipo", "categoria") if c in df])
 
     if layout_key == "pedidos_marcados":
         df = _caixas_da_puxada(df)
@@ -561,7 +565,14 @@ def _gravar_multi_operacao(df: pd.DataFrame, operacao_padrao: int | None, agora:
 def _atualizar_tipo_categoria(df: pd.DataFrame) -> None:
     from database.connection import get_conn
 
-    linhas = [(r.get("tipo") or None, r.get("categoria") or None, r["cod"]) for r in _registros(df)]
+    regs = _registros(df)
+    linhas = [((str(r.get("tipo") or "").strip().upper() or None), r.get("categoria") or None, r["cod"]) for r in regs]
     with get_conn() as conn:
+        # produto da linear que ainda não está na 01.11: entra no cadastro com a descrição da linear
+        for r in regs:
+            desc = str(r.get("descricao") or "").strip()
+            if desc and desc.lower() not in ("nan", "none"):
+                conn.execute("INSERT INTO produtos (cod, descricao) SELECT ?, ? WHERE NOT EXISTS "
+                             "(SELECT 1 FROM produtos WHERE cod = ?)", (r["cod"], desc, r["cod"]))
         conn.executemany("UPDATE produtos SET tipo = COALESCE(?, tipo), categoria = COALESCE(?, categoria) "
                          "WHERE cod = ?", linhas)

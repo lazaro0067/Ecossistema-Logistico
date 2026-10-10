@@ -44,7 +44,7 @@ def render(operacao_id: int, key: str, mostrar_download: bool = True) -> None:
     f1, f2, f3, f4 = st.columns([2, 1, 1, 1])
     busca = f1.text_input("🔍 Código ou nome do produto", key=f"{key}_busca")
     tipo = f2.selectbox("Tipo", ["Todos", "CERVEJA", "NAB", "MARKETPLACE", "OUTROS"], key=f"{key}_tipo")
-    cat = f3.selectbox("Embalagem", ["Todas", "Retornável", "Descartável", "Outros"], key=f"{key}_cat")
+    cat = f3.selectbox("Embalagem", ["Todas", "Retornável", "Descartável", "Chopp", "Outros"], key=f"{key}_cat")
     marcas = ["Todas"] + sorted(df["marca"].unique())
     marca = f4.selectbox("Marca", marcas, key=f"{key}_marca")
 

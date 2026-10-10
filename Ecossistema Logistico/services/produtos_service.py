@@ -15,8 +15,33 @@ def tipo_sku(desc) -> str:
     return "OUTROS"
 
 
-def categoria_detalhada(desc) -> str:
+def embalagem(txt) -> str | None:
+    """Coluna D da linear: 'DESCARTAVÉL' → Descartável · 'RETORNÁVEL' → Retornável · 'CHOP' → Chopp."""
+    import unicodedata
+
+    t = unicodedata.normalize("NFKD", str(txt or "")).encode("ascii", "ignore").decode().upper().strip()
+    if not t or t in ("NAN", "NONE"):
+        return None
+    if t.startswith("DESC"):
+        return "Descartável"
+    if t.startswith("RET"):
+        return "Retornável"
+    if t.startswith("CHOP"):
+        return "Chopp"
+    return t.title()
+
+
+EMBALAGENS = ["Retornável", "Descartável", "Chopp", "Outros"]
+
+
+def categoria_detalhada(desc, categoria=None) -> str:
+    """Embalagem: a da linear (cadastro) quando existir; senão, deduzida da descrição."""
+    emb = embalagem(categoria) if categoria is not None else None
+    if emb in EMBALAGENS:
+        return emb
     d = str(desc or "").upper()
+    if "CHOPP" in d or "KEG" in d or "BARRIL" in d:
+        return "Chopp"
     if "RET" in d or "RGB" in d:
         return "Retornável"
     if any(k in d for k in ("DESC", "LATA", " LT", "LONG", "PET")):

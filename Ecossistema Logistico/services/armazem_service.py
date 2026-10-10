@@ -18,7 +18,8 @@ def posicao_com_indicadores(operacao_id: int) -> pd.DataFrame:
     df["descricao"] = df["descricao"].fillna("").astype(str).str.strip()
     df["tipo"] = df["tipo"].where(df["tipo"].notna() & (df["tipo"].astype(str).str.len() > 0),
                                   df["descricao"].map(produtos_service.tipo_sku))
-    df["categoria_detalhada"] = df["descricao"].map(produtos_service.categoria_detalhada)
+    cat = df["categoria"] if "categoria" in df else pd.Series(None, index=df.index)
+    df["categoria_detalhada"] = [produtos_service.categoria_detalhada(d, c) for d, c in zip(df["descricao"], cat)]
     df["marca"] = df["descricao"].map(produtos_service.marca)
     df["hl"] = df["disponivel"] * df["fator_hl"]
     df["paletes"] = np.where(df["cx_pallet"] > 0, df["disponivel"] / df["cx_pallet"], 0.0)

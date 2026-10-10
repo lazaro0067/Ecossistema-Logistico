@@ -34,6 +34,27 @@ def posicao_estoque_df(operacao_id: int) -> pd.DataFrame:
 
 
 def _posicao_filial(operacao_id: int) -> pd.DataFrame:
+    df = _estoque_filial(operacao_id)
+    if df.empty:
+        return df
+    # produto com venda na linear e fora da grade de estoque (02.03.04) = Stock Out (disponível 0)
+    fora = query_df("""
+        SELECT l.cod, COALESCE(p.descricao, 'Cód ' || CAST(l.cod AS TEXT)) AS descricao, p.tipo, p.categoria,
+               0 AS inicial, 0 AS entrada, 0 AS saida, 0 AS disponivel,
+               COALESCE(p.fator_hl, 0) AS fator_hl, COALESCE(p.cx_pallet, 0) AS cx_pallet,
+               l.linear_cx_dia, COALESCE(m.doi_meta, 7.0) AS doi_meta, NULL AS dt_atualizacao
+        FROM linear_vendas l
+        LEFT JOIN produtos p  ON p.cod = l.cod
+        LEFT JOIN metas_doi m ON m.operacao_id = l.operacao_id AND m.cod = l.cod
+        WHERE l.operacao_id = ? AND COALESCE(l.linear_cx_dia, 0) > 0
+          AND NOT EXISTS (SELECT 1 FROM estoque e WHERE e.operacao_id = l.operacao_id AND e.cod = l.cod)
+    """, (operacao_id,))
+    if fora.empty:
+        return df
+    return pd.concat([df, fora], ignore_index=True).sort_values("cod").reset_index(drop=True)
+
+
+def _estoque_filial(operacao_id: int) -> pd.DataFrame:
     return query_df("""
         SELECT e.cod, COALESCE(p.descricao, e.descricao) AS descricao,
                p.tipo, p.categoria,

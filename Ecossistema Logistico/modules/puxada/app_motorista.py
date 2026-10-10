@@ -15,7 +15,8 @@ from services import carreteiro_service as svc
 from services import usuarios_service
 from services.erros import RegraNegocioError
 
-VERDE, AZUL, LARANJA = "#16a34a", "#4f46e5", "#f97316"
+VERDE, AZUL, LARANJA = "#2bae8c", "#2a9d8f", "#f4845f"  # paleta verde-água (estilo app de mobilidade)
+TEAL, TEAL_ESC, TINTA = "#4dbf9f", "#1f8a70", "#123c3a"
 
 _CSS = f"""
 <style>
@@ -105,43 +106,52 @@ _CSS = f"""
 .st-key-nav_mod_motorista [data-testid="stButtonGroup"] button {{ border-radius: 999px; font-weight: 700; }}
 .st-key-nav_mod_motorista [data-testid="stButtonGroup"] button[kind="segmented_controlActive"] {{ background: #0B1F3A; color: #fff; }}
 .st-key-nav_mod_motorista [data-testid="stButtonGroup"] button[kind="segmented_controlActive"] p {{ color: #fff; }}
-/* --- cara de app: cores vivas, cartões arredondados e barra de abas fixa embaixo --- */
-.stApp {{ background: radial-gradient(1200px 380px at 50% -120px, #c7d2fe 0%, #eef2ff 45%, #f8fafc 100%) !important; }}
+/* --- visual de app profissional: verde-água, branco e cartões limpos; abas fixas embaixo --- */
+.stApp {{ background: #f4f7f6 !important; }}
 .block-container {{ padding-bottom: 6.5rem !important; }}
-.car-topo {{ background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 55%, #db2777 100%) !important; border-radius: 24px !important;
-    padding: 1.1rem 1.2rem !important; box-shadow: 0 18px 36px -20px rgba(79,70,229,.9) !important; }}
-.car-topo .av {{ float: left; width: 3rem; height: 3rem; border-radius: 50%; background: rgba(255,255,255,.22);
-    display: grid; place-items: center; font-weight: 900; font-size: 1.15rem; margin-right: .75rem;
-    border: 2px solid rgba(255,255,255,.55); }}
-.car-viagem {{ border: none !important; border-radius: 20px !important; background: #fff;
-    box-shadow: 0 10px 24px -18px rgba(30,27,75,.55) !important; position: relative; overflow: hidden; }}
-.car-viagem:before {{ content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 6px;
-    background: linear-gradient(180deg, #4f46e5, #db2777); }}
-.car-viagem .lin span {{ color: #6b7280 !important; }}
-.car-passo .ic {{ box-shadow: 0 4px 10px -6px rgba(0,0,0,.4); }}
-.car-passo.feito .ic {{ background: linear-gradient(135deg, #22c55e, #16a34a) !important; border-color: #16a34a !important; }}
-.car-passo.atual .ic {{ background: linear-gradient(135deg, #6366f1, #4f46e5) !important; border-color: #4f46e5 !important;
+.car-topo {{ background: linear-gradient(160deg, {TINTA} 0%, {TEAL_ESC} 70%, {TEAL} 100%) !important; border-radius: 22px !important;
+    padding: 1.1rem 1.2rem !important; box-shadow: 0 16px 30px -20px rgba(18,60,58,.9) !important; }}
+.car-topo:after {{ opacity: .10 !important; }}
+.car-topo .av {{ float: left; width: 3rem; height: 3rem; border-radius: 50%; background: rgba(255,255,255,.16);
+    display: grid; place-items: center; font-weight: 800; font-size: 1.1rem; margin-right: .75rem;
+    border: 2px solid rgba(255,255,255,.45); }}
+.car-topo .chip {{ background: rgba(255,255,255,.14) !important; }}
+.car-viagem {{ border: 1px solid #e6ece9 !important; border-radius: 18px !important; background: #fff;
+    box-shadow: 0 8px 20px -18px rgba(18,60,58,.6) !important; }}
+.car-viagem .lin span {{ color: #6b7a76 !important; }}
+.car-passo .ic {{ box-shadow: 0 3px 8px -6px rgba(0,0,0,.4); }}
+.car-passo.feito {{ border-left-color: {TEAL} !important; }}
+.car-passo.feito .ic {{ background: #e3f6f0 !important; border-color: {TEAL} !important; }}
+.car-passo.atual .ic {{ background: {TEAL} !important; border-color: {TEAL_ESC} !important; color: #fff;
     animation: carpulse 1.6s ease-in-out infinite; }}
-@keyframes carpulse {{ 0%,100% {{ box-shadow: 0 0 0 0 rgba(79,70,229,.45); }} 50% {{ box-shadow: 0 0 0 9px rgba(79,70,229,0); }} }}
-.car-prog i {{ background: linear-gradient(90deg, #22c55e, #4f46e5, #db2777) !important; }}
-.st-key-car_verde button {{ background: linear-gradient(135deg, #22c55e, #16a34a) !important; border: none !important;
-    border-radius: 18px !important; min-height: 3.9rem !important; }}
-.st-key-car_etapa button {{ background: linear-gradient(135deg, #6366f1, #4f46e5 60%, #7c3aed) !important; border: none !important;
-    border-radius: 18px !important; min-height: 3.9rem !important; box-shadow: 0 12px 22px -14px rgba(79,70,229,.95); }}
-.st-key-car_fim button {{ background: linear-gradient(135deg, #22c55e, #059669) !important; border: none !important;
-    border-radius: 18px !important; min-height: 3.9rem !important; }}
-.st-key-car_verde button:active, .st-key-car_etapa button:active, .st-key-car_fim button:active {{ transform: scale(.98); }}
-[data-testid="stExpander"], [data-testid="stPopover"] button {{ border-radius: 16px !important; }}
-.st-key-nav_mod_motorista {{ position: fixed; left: 0; right: 0; bottom: 0; z-index: 999; background: rgba(255,255,255,.96);
-    backdrop-filter: blur(8px); border-top: 1px solid #e5e7eb; padding: .45rem .6rem calc(.45rem + env(safe-area-inset-bottom));
-    box-shadow: 0 -10px 24px -18px rgba(30,27,75,.6); }}
+@keyframes carpulse {{ 0%,100% {{ box-shadow: 0 0 0 0 rgba(77,191,159,.55); }} 50% {{ box-shadow: 0 0 0 9px rgba(77,191,159,0); }} }}
+.car-prog {{ background: #e3ebe8 !important; }}
+.car-prog i {{ background: {TEAL} !important; }}
+.car-step span {{ background: {TEAL} !important; box-shadow: 0 0 0 4px rgba(77,191,159,.2) !important; }}
+.car-card.azul {{ background: linear-gradient(160deg, {TINTA}, {TEAL_ESC}) !important; }}
+.car-card.verde {{ background: linear-gradient(160deg, {TEAL_ESC}, {TEAL}) !important; }}
+.st-key-car_verde button, .st-key-car_etapa button, .st-key-car_fim button {{ background: {TEAL} !important;
+    border: none !important; border-radius: 12px !important; min-height: 3.6rem !important;
+    box-shadow: 0 6px 14px -8px rgba(31,138,112,.9) !important; }}
+.st-key-car_verde button p, .st-key-car_etapa button p, .st-key-car_fim button p {{ color: #fff !important; font-weight: 700 !important;
+    letter-spacing: .01em; }}
+.st-key-car_verde button:active, .st-key-car_etapa button:active, .st-key-car_fim button:active {{ background: {TEAL_ESC} !important; }}
+.st-key-car_prod [data-testid="stButtonGroup"] button[kind="pillsActive"],
+.st-key-car_dias [data-testid="stButtonGroup"] button[kind="pillsActive"] {{ background: {TEAL_ESC} !important; border-color: {TEAL_ESC} !important; }}
+.st-key-car_horas [data-testid="stButtonGroup"] button {{ background: #fff !important; border: 2px solid {TEAL} !important; }}
+.st-key-car_horas [data-testid="stButtonGroup"] button p {{ color: {TEAL_ESC} !important; }}
+.st-key-car_horas [data-testid="stButtonGroup"] button:hover {{ background: {TEAL} !important; }}
+.st-key-car_horas [data-testid="stButtonGroup"] button:hover p {{ color: #fff !important; }}
+[data-testid="stExpander"], [data-testid="stPopover"] button {{ border-radius: 12px !important; }}
+.st-key-nav_mod_motorista {{ position: fixed; left: 0; right: 0; bottom: 0; z-index: 999; background: #fff;
+    border-top: 1px solid #e3ebe8; padding: .4rem .6rem calc(.4rem + env(safe-area-inset-bottom));
+    box-shadow: 0 -8px 20px -16px rgba(18,60,58,.6); }}
 .st-key-nav_mod_motorista [data-testid="stButtonGroup"] {{ display: flex; width: 100%; max-width: 640px; margin: 0 auto; }}
-.st-key-nav_mod_motorista [data-testid="stButtonGroup"] button {{ flex: 1; border: none !important; border-radius: 14px !important;
-    background: transparent; min-height: 3rem; }}
-.st-key-nav_mod_motorista [data-testid="stButtonGroup"] button p {{ font-size: .86rem; font-weight: 800; color: #6b7280; }}
-.st-key-nav_mod_motorista [data-testid="stButtonGroup"] button[kind="segmented_controlActive"] {{
-    background: linear-gradient(135deg, #eef2ff, #fae8ff) !important; }}
-.st-key-nav_mod_motorista [data-testid="stButtonGroup"] button[kind="segmented_controlActive"] p {{ color: #4f46e5 !important; }}
+.st-key-nav_mod_motorista [data-testid="stButtonGroup"] button {{ flex: 1; border: none !important; border-radius: 12px !important;
+    background: transparent !important; min-height: 3rem; }}
+.st-key-nav_mod_motorista [data-testid="stButtonGroup"] button p {{ font-size: .84rem; font-weight: 700; color: #7b8a86 !important; }}
+.st-key-nav_mod_motorista [data-testid="stButtonGroup"] button[kind="segmented_controlActive"] {{ background: #e3f6f0 !important; }}
+.st-key-nav_mod_motorista [data-testid="stButtonGroup"] button[kind="segmented_controlActive"] p {{ color: {TEAL_ESC} !important; }}
 .st-key-car_relato a {{ background: linear-gradient(135deg, #f08a3c, #d4622a) !important; border: none !important;
     border-radius: 16px !important; min-height: 3.1rem; box-shadow: 0 10px 20px -14px rgba(212,98,42,.9); }}
 .st-key-car_relato a p, .st-key-car_relato a span {{ color: #fff !important; font-weight: 800; font-size: 1.02rem; }}
@@ -151,36 +161,81 @@ _CSS = f"""
 
 _CSS_LOGIN = f"""
 <style>
-.block-container {{ max-width: 460px; padding-top: 6vh; }}
-.car-login-topo {{ background: linear-gradient(150deg, #0B1F3A 0%, #16305A 55%, #1f4a8a 100%); color:#fff;
-    border-radius: 22px; padding: 1.6rem 1.4rem 1.4rem; margin-bottom: 1rem; text-align:center;
-    box-shadow: 0 18px 40px -18px rgba(11,31,58,.5); }}
-.car-login-topo .ic {{ font-size: 2.6rem; line-height: 1; }}
-.car-login-topo b {{ display:block; font-size: 1.5rem; margin-top:.4rem; letter-spacing:-.01em; }}
-.car-login-topo span {{ opacity:.78; font-size:.9rem; }}
-.st-key-car_login [data-testid="stForm"] {{ background:#fff; border-radius:18px; border:1px solid #e1e0d9;
-    padding: 1.2rem 1.1rem; }}
-.st-key-car_login input {{ height: 3rem; font-size: 1.05rem; }}
-.st-key-car_login [data-testid="stFormSubmitButton"] button {{ background:{VERDE} !important;
-    border-color:{VERDE} !important; min-height: 3.2rem; border-radius: 14px !important; }}
-.st-key-car_login [data-testid="stFormSubmitButton"] button p {{ color:#fff !important; font-size:1.1rem !important;
-    font-weight:800; }}
+.stApp {{ background: #fff !important; }}
+.block-container {{ max-width: 480px; padding-top: 0 !important; padding-left: 1rem !important; padding-right: 1rem !important; }}
+header[data-testid="stHeader"] {{ background: transparent; }}
+.car-hero {{ margin: 0 -1rem; position: relative; height: 46vh; min-height: 300px; overflow: hidden; border-radius: 0 0 4px 4px;
+    background: linear-gradient(180deg, #0d2b2a 0%, #123c3a 55%, #1b5a52 100%); }}
+.car-hero svg {{ position: absolute; inset: 0; width: 100%; height: 100%; }}
+.car-hero:after {{ content: ""; position: absolute; inset: 0;
+    background: linear-gradient(180deg, rgba(0,0,0,0) 45%, rgba(0,0,0,.55) 100%); }}
+.car-hero h1 {{ position: absolute; left: 1.6rem; bottom: 1.3rem; z-index: 2; margin: 0; padding: 0; color: #fff !important;
+    font-size: 2.3rem; font-weight: 600; letter-spacing: -.02em; line-height: 1.1; }}
+.car-hero h1 small {{ display: block; font-size: .95rem; font-weight: 400; opacity: .85; margin-top: .35rem; letter-spacing: 0; }}
+.car-login-corpo {{ padding: 1.6rem .6rem .4rem; }}
+.car-login-corpo p {{ color: #5b6b67; font-size: .92rem; margin: 0 0 .2rem; }}
+.st-key-car_login {{ padding: 0 .6rem; }}
+.st-key-car_login [data-testid="stForm"] {{ border: none !important; padding: 0 !important; }}
+.st-key-car_login input {{ height: 3.1rem; font-size: 1.05rem; border-radius: 10px !important; }}
+.st-key-car_login [data-testid="stFormSubmitButton"] button {{ background: {TEAL} !important; border: none !important;
+    min-height: 3.6rem; border-radius: 8px !important; box-shadow: 0 6px 14px -8px rgba(31,138,112,.9); }}
+.st-key-car_login [data-testid="stFormSubmitButton"] button p {{ color: #fff !important; font-size: 1.25rem !important;
+    font-weight: 500; }}
+.st-key-car_login_aj button {{ background: #fff !important; border: 2px solid {TEAL} !important; min-height: 3.6rem;
+    border-radius: 8px !important; }}
+.st-key-car_login_aj button p {{ color: {TEAL} !important; font-size: 1.15rem !important; font-weight: 500; }}
+.st-key-car_login_aj {{ padding: 0 .6rem; }}
+.car-login-rod {{ text-align: center; color: #3d4a47; font-size: 1.05rem; padding: 1.4rem 1rem 2rem; }}
 [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"] {{ display: none; }}
 </style>
 """
 
+# Ilustração própria (estrada ao entardecer e carreta) — sem imagens externas
+_HERO_SVG = """<svg viewBox="0 0 400 300" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
+<defs><linearGradient id="ceu" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0d2b2a"/>
+<stop offset=".6" stop-color="#1f6f62"/><stop offset="1" stop-color="#f2b880"/></linearGradient>
+<linearGradient id="chao" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#20403c"/><stop offset="1" stop-color="#0b1c1b"/></linearGradient></defs>
+<rect width="400" height="300" fill="url(#ceu)"/><circle cx="300" cy="168" r="34" fill="#f7d39a" opacity=".55"/>
+<path d="M0 182 L70 150 L130 172 L200 140 L270 170 L340 148 L400 166 L400 200 L0 200Z" fill="#17423d" opacity=".9"/>
+<rect y="196" width="400" height="104" fill="url(#chao)"/>
+<path d="M170 196 L230 196 L330 300 L70 300Z" fill="#2c3e3b"/>
+<path d="M199 205 L201 205 L203 222 L197 222Z M196 234 L204 234 L207 260 L193 260Z M191 272 L209 272 L213 300 L187 300Z" fill="#e9e3c8" opacity=".8"/>
+<g transform="translate(118 150)"><rect x="0" y="6" width="112" height="42" rx="3" fill="#e8efed"/>
+<rect x="0" y="6" width="112" height="9" fill="#4dbf9f"/><rect x="114" y="18" width="36" height="30" rx="4" fill="#4dbf9f"/>
+<rect x="124" y="22" width="20" height="11" rx="2" fill="#123c3a"/><rect x="0" y="48" width="152" height="5" fill="#123c3a"/>
+<circle cx="20" cy="56" r="8" fill="#0b1c1b"/><circle cx="36" cy="56" r="8" fill="#0b1c1b"/><circle cx="96" cy="56" r="8" fill="#0b1c1b"/>
+<circle cx="134" cy="56" r="8" fill="#0b1c1b"/><circle cx="20" cy="56" r="3" fill="#9fb3ae"/><circle cx="36" cy="56" r="3" fill="#9fb3ae"/>
+<circle cx="96" cy="56" r="3" fill="#9fb3ae"/><circle cx="134" cy="56" r="3" fill="#9fb3ae"/>
+<rect x="148" y="38" width="5" height="4" fill="#f7d39a"/></g></svg>"""
 
-def _topo_login(sub: str) -> None:
+
+def _topo_login(sub: str, titulo: str = "Seja bem-vindo") -> None:
     st.markdown(_CSS_LOGIN, unsafe_allow_html=True)
-    st.markdown(f'<div class="car-login-topo"><div class="ic">🚛</div><b>App Carreteiro</b>'
-                f'<span>{tema._e(sub)}</span></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="car-hero">{_HERO_SVG}<h1>{tema._e(titulo)}<small>{tema._e(sub)}</small></h1></div>',
+                unsafe_allow_html=True)
 
 
 def tela_login() -> None:
     """Login do link exclusivo dos motoristas (CPF, celular ou e-mail)."""
     from core.auth import autenticar
 
-    _topo_login("Grupo Lima · registre cada passo da sua viagem")
+    _topo_login("App Carreteiro · Grupo Lima")
+    if not st.session_state.get("car_login_aberto"):
+        st.markdown('<div class="car-login-corpo"><p>Registre cada etapa da sua viagem, agende a descarga e '
+                    'acompanhe suas variáveis.</p></div>', unsafe_allow_html=True)
+        with st.container(key="car_login"):
+            with st.form("car_login_ini"):
+                if st.form_submit_button("Login", type="primary", **ui.LARGURA):
+                    st.session_state["car_login_aberto"] = True
+                    st.rerun()
+        with st.container(key="car_login_aj"):
+            with st.popover("Primeiro acesso / senha", **ui.LARGURA):
+                st.markdown("O acesso é criado pela **equipe da Puxada** da sua unidade. Peça o seu login "
+                            "(CPF ou celular) e a senha provisória — no primeiro acesso você cria a sua senha.")
+        st.markdown('<div class="car-login-rod">Grupo Lima</div>', unsafe_allow_html=True)
+        return
+    st.markdown('<div class="car-login-corpo"><p>Entre com o seu CPF ou celular e a senha.</p></div>',
+                unsafe_allow_html=True)
     with st.container(key="car_login"):
         with st.form("car_login_form"):
             acesso = st.text_input("CPF, celular ou e-mail", placeholder="Só os números do CPF ou celular",
@@ -205,7 +260,12 @@ def tela_login() -> None:
                     st.rerun()
                 else:
                     st.error("Acesso ou senha inválidos.")
-    st.caption("Esqueceu a senha ou ainda não tem acesso? Fale com a equipe da Puxada da sua unidade.")
+    with st.container(key="car_login_aj"):
+        if st.button("Voltar", key="car_login_voltar", **ui.LARGURA):
+            st.session_state.pop("car_login_aberto", None)
+            st.rerun()
+    st.markdown('<div class="car-login-rod">Esqueceu a senha? Fale com a Puxada da sua unidade.</div>',
+                unsafe_allow_html=True)
 
 
 def bloqueio(usuario: dict) -> dt.datetime | None:
@@ -222,14 +282,14 @@ def tela_bloqueado(usuario: dict, livre: dt.datetime) -> None:
     """Tela de descanso: mostra até quando o acesso está bloqueado e encerra a sessão."""
     from config.settings import INTERJORNADA_H
 
-    _topo_login("Interjornada em andamento")
+    _topo_login("Interjornada em andamento", "Bom descanso")
     ui.mostrar_avisos()
     falta = max((livre - tempo.agora()).total_seconds() / 3600, 0)
     pct = max(0.0, min(100.0, 100 - falta / INTERJORNADA_H * 100))
     nome = (usuario.get("nome") or "").split()[0] if usuario.get("nome") else ""
     st.markdown(
-        f'<div style="background:linear-gradient(135deg,#7a4fc9,#5a34a3);color:#fff;border-radius:22px;'
-        f'padding:1.3rem 1.2rem;text-align:center;box-shadow:0 18px 36px -20px rgba(90,52,163,.9)">'
+        f'<div style="background:linear-gradient(160deg,#123c3a,#1f8a70);color:#fff;border-radius:18px;margin:1rem 0 0;'
+        f'padding:1.3rem 1.2rem;text-align:center;box-shadow:0 16px 30px -20px rgba(18,60,58,.9)">'
         f'<div style="font-size:2.6rem">😴</div><div style="font-size:1.3rem;font-weight:900">Bom descanso{", " + tema._e(nome) if nome else ""}!</div>'
         f'<div style="opacity:.9;margin:.3rem 0 .8rem">Seu acesso ao app volta em</div>'
         f'<div style="font-size:2rem;font-weight:900;letter-spacing:-.02em">{livre:%H:%M}</div>'
@@ -252,7 +312,7 @@ def _sair() -> None:
 
 
 def tela_criar_senha(usuario: dict) -> None:
-    _topo_login(f"Olá, {usuario['nome'].split()[0]}! Crie a sua senha para começar.")
+    _topo_login("Crie a sua senha para começar.", f"Olá, {usuario['nome'].split()[0].title()}!")
     with st.container(key="car_login"):
         with st.form("car_criar_senha"):
             nova = st.text_input("Nova senha", type="password", autocomplete="new-password")
@@ -273,7 +333,7 @@ def tela_criar_senha(usuario: dict) -> None:
 def tela_nao_motorista(usuario: dict) -> None:
     from core.segredos import segredo
 
-    _topo_login("Link exclusivo dos motoristas")
+    _topo_login("Link exclusivo dos motoristas", "App Carreteiro")
     st.warning(f"{usuario['nome'].split()[0]}, este endereço é só para motoristas. "
                "A gestão da puxada fica no link principal do sistema.")
     url = (segredo("APP_URL") or "").rstrip("/")
