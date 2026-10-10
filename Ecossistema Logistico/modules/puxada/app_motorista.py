@@ -108,31 +108,22 @@ _CSS = f"""
 .st-key-nav_mod_motorista [data-testid="stButtonGroup"] button[kind="segmented_controlActive"] {{ background: #0B1F3A; color: #fff; }}
 .st-key-nav_mod_motorista [data-testid="stButtonGroup"] button[kind="segmented_controlActive"] p {{ color: #fff; }}
 /* --- visual de app profissional: verde-água, branco e cartões limpos; abas fixas embaixo --- */
-.stApp {{ background: linear-gradient(180deg, {TINTA} 0%, #163d91 45%, #1f55c4 100%) fixed !important; color: #fff; }}
+.stApp {{ background: #000 !important; color: #fff; }}
 .stApp [data-testid="stMarkdownContainer"], .stApp [data-testid="stCaptionContainer"],
 .stApp [data-testid="stWidgetLabel"] *, .stApp .eco-secao h3, .stApp .eco-secao p, .stApp h1, .stApp h2, .stApp h3 {{
     color: #fff !important; }}
 .stApp [data-testid="stCaptionContainer"] {{ opacity: .85; }}
-/* tudo que tem fundo branco (botões, expansores, formulários) fica com a letra azul */
-.stApp [data-testid="stExpander"] details, .stApp [data-testid="stForm"] {{ background: #fff !important;
-    border: none !important; border-radius: 16px !important; }}
-.stApp [data-testid="stExpander"] [data-testid="stMarkdownContainer"],
-.stApp [data-testid="stExpander"] [data-testid="stCaptionContainer"],
-.stApp [data-testid="stExpander"] [data-testid="stWidgetLabel"] *,
-.stApp [data-testid="stExpander"] summary *,
-.stApp [data-testid="stForm"] [data-testid="stMarkdownContainer"],
-.stApp [data-testid="stForm"] [data-testid="stCaptionContainer"],
-.stApp [data-testid="stForm"] [data-testid="stWidgetLabel"] * {{ color: {TEAL_ESC} !important; }}
-.stApp [data-testid="stExpander"] summary svg {{ fill: {TEAL_ESC} !important; color: {TEAL_ESC} !important; }}
-.stApp button [data-testid="stMarkdownContainer"], .stApp button p {{ color: {TEAL_ESC} !important; font-weight: 700; }}
-.stApp [data-testid="stPopover"] button svg {{ color: {TEAL_ESC} !important; fill: {TEAL_ESC} !important; }}
-.stApp [data-testid="stButtonGroup"] button[kind="pillsActive"] p,
-.stApp [data-testid="stButtonGroup"] button[kind="pillsActive"] [data-testid="stMarkdownContainer"],
-.stApp .st-key-car_horas [data-testid="stButtonGroup"] button:hover p {{ color: #fff !important; }}
-.stApp button[kind="primary"] [data-testid="stMarkdownContainer"], .stApp button[kind="primary"] p,
-.stApp button[kind="primaryFormSubmit"] [data-testid="stMarkdownContainer"],
-.stApp button[kind="primaryFormSubmit"] p {{ color: #fff !important; }}
-[data-testid="stPopoverBody"] {{ background: #163d91 !important; color: #fff !important; }}
+/* superfícies escuras (botões, expansores, formulários, popovers): a letra branca aparece sempre */
+.stApp [data-testid="stExpander"] details, .stApp [data-testid="stForm"] {{ background: #16191f !important;
+    border: 1px solid #2a2f3a !important; border-radius: 16px !important; }}
+.stApp [data-testid="stExpander"] summary, .stApp [data-testid="stExpander"] summary * {{ color: #fff !important;
+    fill: #fff !important; }}
+.stApp button {{ background: #1c2029 !important; border: 1px solid #343a47 !important; }}
+.stApp button p, .stApp button [data-testid="stMarkdownContainer"], .stApp button span {{ color: #fff !important; }}
+.stApp button svg {{ fill: #fff !important; color: #fff !important; }}
+.stApp button[kind="primary"], .stApp button[kind="primaryFormSubmit"] {{ background: {TEAL} !important;
+    border-color: {TEAL} !important; }}
+[data-testid="stPopoverBody"] {{ background: #16191f !important; color: #fff !important; }}
 [data-testid="stPopoverBody"] [data-testid="stMarkdownContainer"] {{ color: #fff !important; }}
 .stApp [data-testid="stAlert"] [data-testid="stMarkdownContainer"] {{ color: inherit !important; }}
 .car-viagem, .car-nf, .car-vazio, .car-jan {{ color: #1f2937 !important; }}
@@ -144,13 +135,14 @@ _CSS = f"""
 /* tela inicial do app: atalhos grandes em 2 colunas (também no celular) */
 .st-key-car_home [data-testid="stHorizontalBlock"] {{ flex-wrap: nowrap !important; gap: .7rem; }}
 .st-key-car_home [data-testid="stColumn"] {{ min-width: 0 !important; width: 50% !important; flex: 1 1 0 !important; }}
-.st-key-car_home button {{ min-height: 7.2rem; border-radius: 20px !important; background: #fff !important; border: none !important;
+.stApp .st-key-car_home button {{ min-height: 7.2rem; border-radius: 20px !important; background: linear-gradient(160deg, #1d47a6, #0b2563) !important;
+    border: 1px solid #2f6fe0 !important;
     box-shadow: 0 14px 26px -18px rgba(0,0,0,.7); }}
-.st-key-car_home button p {{ font-size: 1.12rem !important; font-weight: 800 !important; color: #0b2563 !important;
+.stApp .st-key-car_home button p {{ font-size: 1.12rem !important; font-weight: 800 !important; color: #fff !important;
     white-space: pre-line; line-height: 1.5; }}
 .st-key-car_home button:active {{ transform: scale(.98); }}
 .car-home-tit {{ color: #fff; font-weight: 800; font-size: 1.05rem; margin: .4rem 0 .5rem; }}
-.st-key-car_voltar button {{ background: rgba(255,255,255,.14) !important; border: 1px solid rgba(255,255,255,.35) !important;
+.stApp .st-key-car_voltar button {{ background: rgba(255,255,255,.14) !important; border: 1px solid rgba(255,255,255,.35) !important;
     border-radius: 999px !important; min-height: 2.4rem; }}
 .stApp .st-key-car_voltar button p, .stApp .st-key-car_voltar button [data-testid="stMarkdownContainer"] {{
     color: #fff !important; font-weight: 700; }}
