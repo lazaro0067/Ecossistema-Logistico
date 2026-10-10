@@ -207,6 +207,9 @@ def menu_lateral(usuario: dict, atual: str) -> None:
         if ui.botao("🚪  Sair", key="nav_sair"):
             session.sair()
             st.rerun()
+        from core import versao
+
+        versao.mostrar()
         if not is_postgres():
             st.caption("💽 Banco local (SQLite)")
 
@@ -247,6 +250,9 @@ def paginas_publicas() -> bool:
         tema.cabecalho("Portal Comercial", f"{APP_EMPRESA} · estoque do dia com marcações D0, D1 e D2", "🛍️",
                        [f"🏢 {link['revenda']}", "🔒 somente leitura"])
         estoque_dia.render(op, key="pub_com")
+        from core import versao
+
+        versao.mostrar()
         return True
     ops = operacoes_repo.listar(apenas_ativas=True)
     nomes = {o["id"]: o["nome"] for o in ops}
@@ -377,6 +383,10 @@ def main() -> None:
         return
 
     PAGINAS[pagina](usuario, operacao_id)
+    from core import versao
+
+    st.divider()
+    versao.mostrar()
 
 
 main()

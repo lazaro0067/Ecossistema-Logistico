@@ -1175,6 +1175,9 @@ def render(usuario: dict) -> None:
     area = st.session_state.get("car_area_ativa")
     if area not in AREAS:
         _home(mot)
+        from core import versao
+
+        versao.mostrar()
         return
     with st.container(key="car_voltar"):
         if st.button("⬅  Início", key="car_voltar_ini"):

@@ -6,6 +6,8 @@ e o usuário admin no primeiro acesso. É seguro rodar várias vezes.
 Para evoluir o banco, adicione um item em MIGRACOES (nunca altere um
 item antigo) — ele será aplicado uma única vez.
 """
+import re
+
 from config.settings import (ADMIN_EMAIL_PADRAO, ADMIN_LOGIN, ADMIN_SENHA_INICIAL, OPERACOES_CONSOLIDADAS, OPERACOES_PADRAO,
                              PERFIL_MASTER)
 from core.segredos import segredo
@@ -915,6 +917,33 @@ def _mig_022(conn) -> None:
     """)
 
 
+_ADD_COLUNA = re.compile(r"^\s*ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(\w+)", re.I)
+
+
+def _coluna_existe(conn, tabela: str, coluna: str) -> bool:
+    if getattr(conn, "pg", False):
+        r = conn.execute("SELECT 1 FROM information_schema.columns WHERE table_name = ? AND column_name = ?",
+                         (tabela.lower(), coluna.lower())).fetchone()
+        return bool(r)
+    return any(str(r[1]).lower() == coluna.lower() for r in conn.execute(f"PRAGMA table_info({tabela})").fetchall())
+
+
+def _executar_migracao(conn, script: str) -> None:
+    """Roda a migração comando a comando. "ADD COLUMN" de coluna que já existe é pulado — assim uma migração
+    interrompida no meio (ex.: deploy reiniciado) termina na próxima vez sem erro de coluna duplicada."""
+    pendentes = []
+    for stmt in script.split(";"):
+        linhas = [l for l in stmt.splitlines() if l.strip() and not l.strip().startswith("--")]
+        if not linhas:
+            continue
+        m = _ADD_COLUNA.match("\n".join(linhas))
+        if m and _coluna_existe(conn, m.group(1), m.group(2)):
+            continue
+        pendentes.append(stmt.strip())
+    if pendentes:
+        conn.executescript(";\n".join(pendentes) + ";")
+
+
 def init_db(db_path=None) -> None:
     from core.auth import hash_senha  # import tardio evita ciclo
 
@@ -924,7 +953,7 @@ def init_db(db_path=None) -> None:
         aplicadas = {r[0] for r in conn.execute("SELECT id FROM _migracoes")}
         for mig_id, sql in MIGRACOES:
             if mig_id not in aplicadas:
-                sql(conn) if callable(sql) else conn.executescript(sql)
+                sql(conn) if callable(sql) else _executar_migracao(conn, sql)
                 conn.execute("INSERT INTO _migracoes (id) VALUES (?)", (mig_id,))
 
         # Usuário master no primeiro acesso (e-mail vem do segredo ADMIN_EMAIL)
