@@ -247,9 +247,9 @@ def paginas_publicas() -> bool:
             return True
         op = int(link["operacao_id"])
         st.session_state.operacao_nome = link["revenda"]
-        tema.cabecalho("Portal Comercial", f"{APP_EMPRESA} · estoque do dia com marcações D0, D1 e D2", "🛍️",
-                       [f"🏢 {link['revenda']}", "🔒 somente leitura"])
-        estoque_dia.render(op, key="pub_com")
+        from modules.componentes import portal_app
+
+        portal_app.render(op, link["revenda"])
         from core import versao
 
         versao.mostrar()
