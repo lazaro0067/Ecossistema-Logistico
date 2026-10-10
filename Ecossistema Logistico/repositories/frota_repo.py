@@ -97,7 +97,8 @@ def motoristas_df(ids_ops: list[int]) -> pd.DataFrame:
                                (SELECT COUNT(*) FROM frota_placas p WHERE p.motorista_id = m.id) AS placas
                         FROM motoristas m LEFT JOIN operacoes o ON o.id = m.operacao_id
                         LEFT JOIN usuarios u ON u.id = m.gestor_id
-                        WHERE m.operacao_id IN ({', '.join('?' * len(ids_ops))}) ORDER BY o.nome, m.nome""",
+                        WHERE m.operacao_id IN ({', '.join('?' * len(ids_ops))}) AND COALESCE(m.terceiro, 0) = 0
+                        ORDER BY o.nome, m.nome""",
                     list(ids_ops))
 
 

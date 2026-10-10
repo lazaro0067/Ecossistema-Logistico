@@ -360,12 +360,54 @@ def _aba_importar_antigo() -> None:
     st.code(log.getvalue() or "(sem saída)", language=None)
 
 
+def _aba_links(usuario: dict) -> None:
+    """Um link do Portal Comercial por revenda — o Master copia, troca o código ou desativa."""
+    from modules.puxada.app_motorista import link_whatsapp
+    from repositories import operacoes_repo
+    from services import links_service
+
+    tema.secao("🔗 Links do Portal Comercial por revenda",
+               "Cada revenda tem o seu link (somente leitura, sem login) e só enxerga o estoque dela. "
+               "“Gerar novo link” troca o código: o link antigo para de funcionar na hora.")
+    revendas = [o for o in operacoes_repo.listar(apenas_ativas=True) if not operacoes_repo.e_consolidada(o["id"])]
+    for o in revendas:
+        link = links_service.obter(o["id"], usuario=usuario.get("nome") or "")
+        ativo = bool(int(link.get("ativo") or 0))
+        url = links_service.url(o["id"])
+        with st.container(border=True):
+            a, b = st.columns([3, 1])
+            a.markdown(f"**🏢 {o['nome']}** · {'🟢 ativo' if ativo else '🔴 desativado'}"
+                       f"  \n<span style='color:#6b6a65;font-size:.8rem'>atualizado por {link.get('atualizado_por') or '—'}"
+                       f" em {link.get('atualizado_em') or '—'}</span>", unsafe_allow_html=True)
+            novo = b.toggle("Link ativo", value=ativo, key=f"lk_at_{o['id']}")
+            if novo != ativo:
+                links_service.ativar(o["id"], novo, usuario=usuario.get("nome") or "")
+                ui.avisar(f"Link de {o['nome']} {'ativado' if novo else 'desativado'}.")
+                st.rerun()
+            if ativo:
+                st.code(url, language=None)
+            c1, c2, c3 = st.columns(3)
+            if ativo:
+                c1.link_button("🔗 Abrir", url, **ui.LARGURA)
+                msg = f"🛍️ Portal Comercial — {o['nome']}\nEstoque do dia com as puxadas D0, D1 e D2:\n{url}"
+                c2.link_button("📲 Enviar pelo WhatsApp", link_whatsapp(msg), **ui.LARGURA)
+            with c3.popover("♻️ Gerar novo link", **ui.LARGURA):
+                st.caption("O link atual deixa de funcionar. Envie o novo para o time da revenda.")
+                if st.button("Confirmar", key=f"lk_nv_{o['id']}", type="primary"):
+                    links_service.renovar(o["id"], usuario=usuario.get("nome") or "")
+                    ui.avisar(f"Novo link gerado para {o['nome']}.")
+                    st.rerun()
+
+
 def render(usuario: dict, operacao_id: int | None) -> None:
     ui.cabecalho("Gestão de Acessos", "Usuários, senhas, permissões por pasta e operações", "🔑")
-    a1, a2, a3 = st.tabs(["👤 Usuários & Permissões", "🏢 Operações", "📦 Importar sistema antigo"])
+    a1, a2, a4, a3 = st.tabs(["👤 Usuários & Permissões", "🏢 Operações", "🔗 Links do Portal Comercial",
+                              "📦 Importar sistema antigo"])
     with a1:
         _aba_usuarios(usuario)
     with a2:
         _aba_operacoes()
+    with a4:
+        _aba_links(usuario)
     with a3:
         _aba_importar_antigo()

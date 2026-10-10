@@ -18,7 +18,15 @@ def aba_comercial(usuario: dict, operacao_id: int) -> None:
         '<div class="eco-base" style="border-left:5px solid #2a78d6;margin-bottom:.8rem"><h4>📱 Portal Comercial</h4>'
         '<div class="freq">Link de consulta para o time de vendas (sem login, somente leitura).</div></div>',
         unsafe_allow_html=True)
-    st.link_button("🔗 Abrir Portal Comercial", f"?modo=comercial&op={operacao_id}")
+    from repositories import operacoes_repo
+    from services import links_service
+
+    if not operacoes_repo.e_consolidada(operacao_id):
+        link = links_service.obter(operacao_id)
+        if int(link.get("ativo") or 0):
+            st.link_button("🔗 Abrir Portal Comercial desta revenda", links_service.url(operacao_id))
+        else:
+            st.caption("🔒 O link do Portal Comercial desta revenda está desativado pelo Master.")
     estoque_dia.render(operacao_id, key="vend_est")
 
 

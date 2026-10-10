@@ -53,7 +53,8 @@ def salvar_fabrica(fid: int | None, nome: str, cidade: str, uf: str) -> int | No
 
 
 def motoristas_df(operacao_id: int) -> pd.DataFrame:
-    return query_df("SELECT id, nome, cnh, telefone FROM motoristas WHERE operacao_id = ? ORDER BY nome",
+    return query_df("SELECT id, nome, cnh, telefone FROM motoristas WHERE operacao_id = ? "
+                    "AND COALESCE(terceiro, 0) = 0 ORDER BY nome",
                     (operacao_id,))
 
 

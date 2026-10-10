@@ -17,7 +17,7 @@ def lista_df(operacao_id: int) -> pd.DataFrame:
                        FROM motoristas m
                        LEFT JOIN usuarios u ON u.id = m.usuario_id
                        LEFT JOIN usuarios g ON g.id = m.gestor_id
-                       WHERE m.operacao_id = ? ORDER BY m.nome""", (operacao_id,))
+                       WHERE m.operacao_id = ? AND COALESCE(m.terceiro, 0) = 0 ORDER BY m.nome""", (operacao_id,))
 
 
 def todos_com_cnh() -> list[dict]:

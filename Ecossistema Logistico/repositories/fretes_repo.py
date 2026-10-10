@@ -10,7 +10,7 @@ _SELECT_COTACAO = """
            s.nome AS solicitante, a.nome AS aprovador, c.aprovador_id, c.solicitante_id,
            c.observacao, c.decidido_em, c.motivo_rejeicao,
            c.numero_cte, c.notas_fiscais, c.nf_arquivo, c.cte_arquivo, c.finalizado_em,
-           c.tipo_carga, c.justificativa_aprovacao
+           c.tipo_carga, c.justificativa_aprovacao, c.numeros_pedido, c.placa, c.alerta_destino
     FROM cotacoes_frete c
     LEFT JOIN origens_destinos o ON o.id = c.origem_id
     LEFT JOIN origens_destinos d ON d.id = c.destino_id

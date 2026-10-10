@@ -233,6 +233,21 @@ def paginas_publicas() -> bool:
     from modules.ressuprimento import cestas, diario
     from repositories import operacoes_repo
 
+    if modo == "comercial":
+        # cada revenda tem o seu link (?modo=comercial&k=código) — sem escolher outra unidade
+        from services import links_service
+
+        link = links_service.por_token(st.query_params.get("k"))
+        if not link:
+            tema.cabecalho("Portal Comercial", APP_EMPRESA, "🛍️")
+            st.warning("🔒 Link inválido ou desativado. Peça o link atualizado da sua revenda à equipe de gestão.")
+            return True
+        op = int(link["operacao_id"])
+        st.session_state.operacao_nome = link["revenda"]
+        tema.cabecalho("Portal Comercial", f"{APP_EMPRESA} · estoque do dia com marcações D0, D1 e D2", "🛍️",
+                       [f"🏢 {link['revenda']}", "🔒 somente leitura"])
+        estoque_dia.render(op, key="pub_com")
+        return True
     ops = operacoes_repo.listar(apenas_ativas=True)
     nomes = {o["id"]: o["nome"] for o in ops}
     atual = _op_do_link()
@@ -266,6 +281,9 @@ def app_carreteiro() -> None:
             session.logar(usuario)
         else:
             del st.query_params["k"]
+    if not usuario and (st.query_params.get("t") or st.session_state.get("car_terceiro")):
+        app_motorista.tela_terceiro()  # terceiro (frete spot): sem login, só a viagem
+        return
     ui.mostrar_avisos()
     if not usuario:
         app_motorista.tela_login()

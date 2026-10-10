@@ -153,6 +153,10 @@ def remuneracao(operacao_id: int, mes_ano: str) -> dict:
     fabricas = logistica_repo.fabricas_df()
     fab_por_nome = {_norm(r.nome): r for r in fabricas.itertuples()}
     v = repo.viagens_mes(operacao_id, mes_ano)
+    if not v.empty:  # viagem de terceiro (frete spot) não entra na remuneração da frota própria
+        from config.settings import PREFIXO_TERCEIRO
+
+        v = v[~v["motorista"].fillna("").str.startswith(PREFIXO_TERCEIRO)]
     if not v.empty:
         v["fabrica"] = v["fabrica"].fillna("—")
         v["motorista"] = v["motorista"].fillna("—")

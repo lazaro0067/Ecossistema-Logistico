@@ -195,9 +195,13 @@ def pedido_planejado(operacao_id: int, numero_pedido: str) -> dict | None:
 
 def _viagem_do_usuario(usuario: dict, viagem_id: int) -> dict:
     v = repo.viagem(viagem_id)
-    mot = repo.motorista_do_usuario(usuario["id"])
-    if not v or not mot or v["motorista_id"] != mot["id"]:
-        raise RegraNegocioError("Viagem não encontrada.")
+    if usuario.get("terceiro"):  # terceiro (frete spot): sem login, identificado pelo código da viagem
+        if not v or not v.get("terceiro_codigo") or v["terceiro_codigo"] != usuario.get("codigo"):
+            raise RegraNegocioError("Viagem não encontrada.")
+    else:
+        mot = repo.motorista_do_usuario(usuario["id"])
+        if not v or not mot or v["motorista_id"] != mot["id"]:
+            raise RegraNegocioError("Viagem não encontrada.")
     if v["status"] != repo.EM_VIAGEM:
         raise RegraNegocioError("Esta viagem já foi encerrada.")
     return v
@@ -229,7 +233,7 @@ def registrar_etapa(usuario: dict, viagem_id: int, etapa: str, geo: dict | None 
     repo.registrar_evento(viagem_id, etapa, ts, _geo_com_raio(v["operacao_id"], etapa, geo))
     integrar(viagem_id)
     nova = repo.viagem(viagem_id)
-    if etapa == "fim":
+    if etapa == "fim" and not nova.get("terceiro"):  # terceiro não tem interjornada/bloqueio
         try:
             from services import disp_motoristas_service
 

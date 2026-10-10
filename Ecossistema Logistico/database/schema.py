@@ -181,6 +181,18 @@ CREATE TABLE IF NOT EXISTS ressup_ajuste_semana (
     UNIQUE (operacao_id, mes_ano, semana_ini)
 );
 
+-- Links públicos (somente leitura) por revenda — ex.: Portal Comercial. O Master gera/desativa.
+CREATE TABLE IF NOT EXISTS links_publicos (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id  INTEGER NOT NULL REFERENCES operacoes(id),
+    tipo         TEXT NOT NULL,
+    token        TEXT UNIQUE NOT NULL,
+    ativo        INTEGER DEFAULT 1,
+    atualizado_por TEXT,
+    atualizado_em  TEXT,
+    UNIQUE (operacao_id, tipo)
+);
+
 -- ============ ARMAZÉM / ESTOQUE ============
 CREATE TABLE IF NOT EXISTS armazens (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -832,6 +844,15 @@ MIGRACOES: list[tuple[str, str]] = [
         ALTER TABLE motoristas ADD COLUMN categoria_cnh TEXT;
         ALTER TABLE transportadoras ADD COLUMN telefone TEXT;
         CREATE INDEX IF NOT EXISTS ix_frota_placas_op ON frota_placas(operacao_id);
+    """),
+    ("030_terceiro_app", """
+        ALTER TABLE cotacoes_frete ADD COLUMN numeros_pedido TEXT;
+        ALTER TABLE cotacoes_frete ADD COLUMN placa TEXT;
+        ALTER TABLE cotacoes_frete ADD COLUMN alerta_destino TEXT;
+        ALTER TABLE viagens_carreteiro ADD COLUMN terceiro INTEGER DEFAULT 0;
+        ALTER TABLE viagens_carreteiro ADD COLUMN cotacao_id INTEGER;
+        ALTER TABLE viagens_carreteiro ADD COLUMN terceiro_codigo TEXT;
+        ALTER TABLE motoristas ADD COLUMN terceiro INTEGER DEFAULT 0;
     """),
 ]
 

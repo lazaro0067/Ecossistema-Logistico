@@ -281,6 +281,9 @@ def tela_login() -> None:
                     st.session_state["car_login_aberto"] = True
                     st.rerun()
         with st.container(key="car_login_aj"):
+            if st.button("🚚 Entrar como terceiro", key="car_login_terceiro", **ui.LARGURA):
+                st.session_state["car_terceiro"] = True
+                st.rerun()
             with st.popover("Primeiro acesso / senha", **ui.LARGURA):
                 st.markdown("O acesso é criado pela **equipe da Puxada** da sua unidade. Peça o seu login "
                             "(CPF ou celular) e a senha provisória — no primeiro acesso você cria a sua senha.")
@@ -666,6 +669,8 @@ def _etapa_atual(usuario: dict, v: dict, geo: dict | None, prox: str) -> None:
             if prox == "apresentado":
                 tipo, msg = svc.mensagem_apresentacao(nova) or ("success", "Apresentação registrada.")
                 ui.avisar(msg, "error" if tipo == "error" else "success")
+            elif prox == "fim" and usuario.get("terceiro"):
+                ui.avisar("✅ Viagem finalizada! Obrigado — a Puxada já recebeu o status.")
             elif prox == "fim":
                 from config.settings import INTERJORNADA_H
 
@@ -1039,6 +1044,82 @@ def _area_dados(usuario: dict, mot: dict) -> None:
                 st.rerun()
     if st.button("🚪 Sair do app", key="car_sair_dados", **ui.LARGURA):
         _sair()
+
+
+# --- Terceiro (frete spot): sem login, só a viagem ------------------------------------------
+def tela_terceiro() -> None:
+    """O terceiro digita o pedido → vê placa, transportadora e destino da cotação → INICIA a viagem e registra as
+    etapas. Sem outras telas e sem bloqueio de interjornada. O código da viagem fica no endereço (?t=)."""
+    from services import terceiro_service as ts
+
+    st.markdown(_CSS, unsafe_allow_html=True)
+    codigo = st.query_params.get("t")
+    v = ts.viagem_por_codigo(codigo) if codigo else None
+    c1, c2 = st.columns([3, 1.2])
+    nome = (v.get("motorista") or "").replace("Terceiro · ", "") if v else ""
+    c1.markdown(f'<div class="car-topo"><div class="av">🚚</div><b>Terceiro{" · " + tema._e(nome) if nome else ""}</b>'
+                f'<span>App Carreteiro · {tempo.agora():%d/%m %H:%M}</span><br>'
+                f'<span class="chip">{"🚛 Em viagem · pedido " + tema._e(v["numero_pedido"]) if v and v["status"] == repo.EM_VIAGEM else "Frete spot"}'
+                f'</span></div>', unsafe_allow_html=True)
+    if c2.button("🚪 Sair", key="car_terc_sair", **ui.LARGURA):
+        st.session_state.pop("car_terceiro", None)
+        if "t" in st.query_params:
+            del st.query_params["t"]
+        st.rerun()
+    ui.mostrar_avisos()
+    if v:
+        if v["status"] != repo.EM_VIAGEM:
+            st.success(f"✅ Viagem do pedido {v['numero_pedido']} encerrada ({v['status']}). Obrigado!")
+            if st.button("➕ Nova viagem", key="car_terc_nova", type="primary"):
+                del st.query_params["t"]
+                st.rerun()
+            return
+        from database.connection import query_one
+
+        cot = query_one("SELECT alerta_destino FROM cotacoes_frete WHERE id = ?", (v.get("cotacao_id"),)) or {}
+        if cot.get("alerta_destino"):
+            st.error(cot["alerta_destino"] + " — confirme o destino com a Puxada.")
+        geo = localizacao(key="geo_terceiro")
+        _viagem(ts.usuario_terceiro(v), v, geo)
+        return
+    tema.secao("Iniciar viagem", "Digite o número do pedido — placa, transportadora e destino vêm da cotação de frete.")
+    with st.container(key="car_form"):
+        pedido = st.text_input("Número do pedido *", key="car_terc_ped", placeholder="Ex.: 3189169120")
+    if not (pedido or "").strip():
+        return
+    try:
+        p = ts.previa(pedido)
+    except RegraNegocioError as e:
+        st.error(str(e))
+        return
+    c = p["cotacao"]
+    linhas = [("Pedido(s)", c.get("numeros_pedido")), ("Placa", c.get("placa") or "—"),
+              ("Transportadora", c.get("transportadora") or "—"), ("Destino (fábrica)", c.get("origem") or "—"),
+              ("Entrega na revenda", c.get("revenda") or c.get("destino") or "—"),
+              ("Data do frete", tempo.parse_dt(c["data_frete"]).strftime("%d/%m/%Y") if c.get("data_frete") else "—"),
+              ("Carga", c.get("tipo_carga") or "—")]
+    st.markdown('<div class="car-viagem">' + "".join(
+        f'<div class="lin"><span>{tema._e(a)}</span><b>{tema._e(b)}</b></div>' for a, b in linhas) + "</div>",
+        unsafe_allow_html=True)
+    if p["alerta"]:
+        st.error(p["alerta"] + " — a Puxada será avisada.")
+    if p["aviso"]:
+        st.warning(p["aviso"])
+    if p["viagem_ativa"]:
+        st.info("Este frete já tem uma viagem em andamento — toque abaixo para continuar.")
+    geo = localizacao(key="geo_terceiro_ini")
+    with st.container(key="car_verde"):
+        if st.button("▶️  CONTINUAR VIAGEM" if p["viagem_ativa"] else "🟢  INICIAR VIAGEM", key="car_terc_ini",
+                     type="primary", **ui.LARGURA):
+            try:
+                codigo = ts.iniciar(pedido, _gps(geo))
+            except RegraNegocioError as e:
+                st.error(str(e))
+            else:
+                st.query_params["t"] = codigo
+                st.session_state.pop("car_terc_ped", None)
+                ui.avisar("Viagem iniciada! Registre cada etapa por aqui. 🚛")
+                st.rerun()
 
 
 def _relato(mot: dict) -> None:

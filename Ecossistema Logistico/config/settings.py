@@ -224,6 +224,7 @@ PERFIS_VEICULO = {"9 eixos": 42, "LS": 28}
 TIPOS_VEICULO = ["Cavalo mecânico", "Carreta", "Bitrem / Rodotrem", "Truck", "Toco", "3/4", "VUC", "Utilitário",
                  "Carro", "Moto", "Empilhadeira", "Outro"]
 STATUS_PLACA = ["Ativo", "Em manutenção", "Parado", "Inativo"]
+PREFIXO_TERCEIRO = "Terceiro · "  # motorista "genérico" das viagens de terceiros (frete spot) no app
 CATEGORIAS_CNH = ["A", "B", "C", "D", "E", "AB", "AC", "AD", "AE"]
 TIPOS_MANUTENCAO = ["Preventiva", "Corretiva", "Pneus", "Elétrica", "Freios", "Lavagem", "Documentação", "Outra"]
 STATUS_MANUTENCAO = ["Programada", "Em andamento", "Concluída", "Cancelada"]

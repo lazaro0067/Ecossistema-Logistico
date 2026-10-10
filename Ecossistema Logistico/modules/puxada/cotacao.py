@@ -7,11 +7,13 @@ from core import tema, tempo, ui
 from repositories import cadastros_repo, fretes_repo, usuarios_repo
 from services import fretes_service as svc
 
-COLUNAS = ["id", "status", "data_frete", "origem", "destino", "transportadora", "tipo_carga", "motivo",
+COLUNAS = ["id", "status", "data_frete", "numeros_pedido", "placa", "alerta_destino", "origem", "destino",
+           "transportadora", "tipo_carga", "motivo",
            "valor_negociado", "valor_tabela", "justificativa_aprovacao", "solicitante", "aprovador", "numero_cte"]
 FORMATO = {"valor_negociado": st.column_config.NumberColumn("Negociado", format="R$ %.2f"),
            "valor_tabela": st.column_config.NumberColumn("Cadastrado", format="R$ %.2f"),
-           "tipo_carga": "Carga", "justificativa_aprovacao": "Justificativa (valor ≠ cadastrado)"}
+           "tipo_carga": "Carga", "justificativa_aprovacao": "Justificativa (valor ≠ cadastrado)",
+           "numeros_pedido": "Pedido(s)", "placa": "Placa", "alerta_destino": "⚠️ Alerta"}
 
 
 def _kpis(operacao_id: int) -> None:
@@ -72,6 +74,18 @@ def render(usuario: dict, operacao_id: int) -> None:
             else:
                 st.warning("Sem frete cadastrado para esta fábrica + transportadora + tipo. Informe o valor negociado "
                            "(cadastre o trecho em ⚙️ Cadastros › 🚚 Trechos spot).")
+        p1, p2 = st.columns([2, 1])
+        pedidos = p1.text_input("📦 Pedido(s) *", key="cot_pedidos", placeholder="ex.: 3189169120, 3189169121",
+                                help="Pode informar mais de um pedido. O terceiro digita um deles no app e a viagem "
+                                     "puxa placa, transportadora e destino daqui.")
+        placa = p2.text_input("🚛 Placa *", key="cot_placa", placeholder="ABC1D23").upper()
+        if pedidos and o:
+            from services import terceiro_service
+
+            prev = terceiro_service.verificar_destino({"operacao_id": operacao_id, "numeros_pedido": pedidos,
+                                                       "origem": next((x["nome"] for x in origens if x["id"] == o), "")})
+            if prev:
+                st.error(prev + " — confira antes de enviar (a Puxada será alertada).")
         c5, c6, c7 = st.columns(3)
         motivo = c5.selectbox("Motivo", MOTIVOS_FRETE, key="cot_motivo")
         data_frete = c6.date_input("Data do frete", value=tempo.hoje(), format="DD/MM/YYYY", key="cot_data")
@@ -94,9 +108,13 @@ def render(usuario: dict, operacao_id: int) -> None:
             from services.erros import RegraNegocioError
 
             try:
+                if not (pedidos or "").strip() or not (placa or "").strip():
+                    raise RegraNegocioError("Informe o(s) pedido(s) e a placa — o terceiro inicia a viagem no app "
+                                            "com o número do pedido.")
                 svc.criar_cotacao(operacao_id=operacao_id, solicitante_id=usuario["id"], origem_id=o, destino_id=d,
                                   transportadora_id=tr, centro_custo_id=cc, aprovador_id=ap, data_frete=data_frete,
-                                  motivo=motivo, valor_negociado=valor, observacao=obs, tipo_carga=tipo)
+                                  motivo=motivo, valor_negociado=valor, observacao=obs, tipo_carga=tipo,
+                                  numeros_pedido=pedidos, placa=placa)
             except RegraNegocioError as e:
                 st.error(str(e))
             else:

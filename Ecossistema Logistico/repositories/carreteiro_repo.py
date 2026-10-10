@@ -24,7 +24,7 @@ def acessos_df(operacao_id: int) -> pd.DataFrame:
                                   AS situacao,
                               u.ultimo_acesso
                        FROM motoristas m LEFT JOIN usuarios u ON u.id = m.usuario_id
-                       WHERE m.operacao_id = ? ORDER BY m.nome""", (operacao_id,))
+                       WHERE m.operacao_id = ? AND COALESCE(m.terceiro, 0) = 0 ORDER BY m.nome""", (operacao_id,))
 
 
 def ativar_usuario(usuario_id: int, ativo: bool) -> None:
@@ -36,7 +36,8 @@ def vincular_usuario(motorista_id: int, usuario_id: int | None) -> None:
 
 
 def motoristas_lista(operacao_id: int) -> list[dict]:
-    return query_all("SELECT id, nome FROM motoristas WHERE operacao_id = ? ORDER BY nome", (operacao_id,))
+    return query_all("SELECT id, nome FROM motoristas WHERE operacao_id = ? AND COALESCE(terceiro, 0) = 0 "
+                     "ORDER BY nome", (operacao_id,))
 
 
 # --- Revenda (ponto e raio para o GPS) ----------------------------------------

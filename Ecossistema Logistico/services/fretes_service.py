@@ -56,7 +56,7 @@ def texto_divergencia(negociado, tabela) -> str:
 def criar_cotacao(*, operacao_id: int, solicitante_id: int, origem_id: int, destino_id: int,
                   transportadora_id: int, centro_custo_id: int | None, aprovador_id: int,
                   data_frete: dt.date, motivo: str, valor_negociado: float, observacao: str,
-                  tipo_carga: str | None = None) -> int:
+                  tipo_carga: str | None = None, numeros_pedido: str | None = None, placa: str | None = None) -> int:
     from config.settings import SUGESTAO_PEDIDO
 
     if not all([origem_id, destino_id, transportadora_id, aprovador_id]):
@@ -68,6 +68,13 @@ def criar_cotacao(*, operacao_id: int, solicitante_id: int, origem_id: int, dest
     if valor_negociado <= 0:
         raise RegraNegocioError("Informe o valor negociado.")
 
+    from services import terceiro_service
+
+    numeros_pedido = terceiro_service.normalizar_numeros(numeros_pedido) or None
+    placa = re.sub(r"[^A-Z0-9]", "", str(placa or "").upper()) or None
+    if placa and not re.fullmatch(r"[A-Z]{3}[0-9][A-Z0-9][0-9]{2}", placa):
+        raise RegraNegocioError("Placa inválida (use ABC1D23 ou ABC1234).")
+
     aprovador = usuarios_repo.buscar(aprovador_id)
     if not aprovador or not aprovador["e_aprovador"]:
         raise RegraNegocioError("O usuário escolhido não é aprovador.")
@@ -77,7 +84,7 @@ def criar_cotacao(*, operacao_id: int, solicitante_id: int, origem_id: int, dest
             "Escolha um aprovador com alçada maior."
         )
 
-    return fretes_repo.inserir(dict(
+    cid = fretes_repo.inserir(dict(
         operacao_id=operacao_id, origem_id=origem_id, destino_id=destino_id,
         transportadora_id=transportadora_id, centro_custo_id=centro_custo_id,
         data_requisicao=tempo.hoje().isoformat(), data_frete=data_frete.isoformat(),
@@ -86,7 +93,11 @@ def criar_cotacao(*, operacao_id: int, solicitante_id: int, origem_id: int, dest
         tipo_carga=tipo_carga,
         solicitante_id=solicitante_id, aprovador_id=aprovador_id,
         observacao=observacao.strip(), status=StatusFrete.PENDENTE,
+        numeros_pedido=numeros_pedido, placa=placa,
     ))
+    if numeros_pedido:
+        terceiro_service.registrar_alerta(cid)
+    return cid
 
 
 def _pode_decidir(usuario: dict, cot: dict) -> None:
