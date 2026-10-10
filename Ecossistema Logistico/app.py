@@ -170,17 +170,25 @@ def menu_lateral(usuario: dict, atual: str) -> None:
             f'{tema._e(usuario.get("cargo") or usuario["perfil"])} · {tema._e(usuario["perfil"])}</div>',
             unsafe_allow_html=True,
         )
-        ops = operacoes_permitidas(usuario)
+        from repositories import operacoes_repo as _ops
+
+        # só as revendas no seletor; Bahia e Grupo Lima ficam como visão nos acompanhamentos
+        ops = [o for o in operacoes_permitidas(usuario) if not _ops.e_consolidada(o["id"])] \
+            or operacoes_permitidas(usuario)
         if ops:
             ids = [o["id"] for o in ops]
             nomes = {o["id"]: o["nome"] for o in ops}
             atual_op = session.operacao_id() if session.operacao_id() in ids else ids[0]
-            escolhida = st.selectbox("🏢 Unidade / Operação", ids, index=ids.index(atual_op), format_func=nomes.get)
+            escolhida = st.selectbox("🏢 Revenda", ids, index=ids.index(atual_op), format_func=nomes.get)
             st.session_state.operacao_id = escolhida
             st.session_state.operacao_nome = nomes[escolhida]
 
         st.markdown('<div class="eco-menu-titulo">Visão geral</div>', unsafe_allow_html=True)
         _nav("🏠  Início", "inicio", atual)
+        from modules.bases.page import pode_ver as _pode_bases
+
+        if _pode_bases(usuario):
+            _nav("📥  Atualizar relatórios", "bases", atual)
         st.markdown('<div class="eco-menu-titulo">Departamentos</div>', unsafe_allow_html=True)
         for chave, m in MODULOS.items():
             if pode_acessar_modulo(usuario, chave):

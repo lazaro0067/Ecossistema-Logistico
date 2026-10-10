@@ -53,7 +53,6 @@ MODULOS = {
         "farol": "🚦 Farol de Produtividade",
     }},
     "ressuprimento": {"rotulo": "Ressuprimento", "icone": "🔄", "abas": {
-        "bases": "📁 Atualização de Bases",
         "estoque": "📊 Gestão de Estoque",
         "sugestao": "🛒 Sugestão & Marcação por Dia",
         "cestas": "📈 Acompanhamento (Cestas)",
@@ -68,7 +67,6 @@ MODULOS = {
         "comercial": "🛍️ Estoque do Dia (Portal RN)",
         "metas": "🎯 Metas de Vendas",
         "abc": "🔤 Curva ABC",
-        "importar": "📥 Importar Vendas",
     }},
     "armazem": {"rotulo": "Armazém & Estoque", "icone": "📦", "abas": {
         "saude": "🏥 Saúde & Ocupação",
@@ -84,7 +82,14 @@ MODULOS = {
         "book": "📘 Book DPO Entrega",
         **_ABAS_REGISTRO,
     }},
-    "frota": {"rotulo": "Frota & Manutenção", "icone": "🔧", "abas": dict(_ABAS_REGISTRO)},
+    "frota": {"rotulo": "Frota & Manutenção", "icone": "🔧", "abas": {
+        "gestao": "📊 Gestão da Frota",
+        "placas": "🚚 Cadastro de Placas",
+        "motoristas": "👤 Motoristas",
+        "transportadoras": "🏢 Transportadoras",
+        "locadoras": "🔑 Locadoras",
+        **_ABAS_REGISTRO,
+    }},
     "financeiro": {"rotulo": "Financeiro & OBZ", "icone": "💰", "abas": {
         "diario": "📂 Relatório Diário",
         "contas": "💳 Contas a Pagar",
@@ -114,7 +119,6 @@ GRUPOS_ABAS = {
         "⚙️ Cadastros": ["cadastros"],
     },
     "ressuprimento": {
-        "📁 Bases": ["bases"],
         "📦 Estoque": ["estoque", "ruptura", "politica"],
         "🛒 Marcação": ["sugestao", "puxada_pedidos", "diario"],
         "📈 Acompanhamento": ["cestas", "gestao_dia", "metas"],
@@ -122,7 +126,11 @@ GRUPOS_ABAS = {
     "vendas": {
         "🛍️ Comercial": ["comercial"],
         "🎯 Metas & ABC": ["metas", "abc"],
-        "📥 Importar": ["importar"],
+    },
+    "frota": {
+        "📊 Gestão": ["gestao"],
+        "⚙️ Cadastros": ["placas", "motoristas", "transportadoras", "locadoras"],
+        "🔧 Manutenção": ["painel", "lancamentos"],
     },
     "armazem": {
         "🏥 Saúde & Estoque": ["saude", "produtos"],
@@ -143,7 +151,8 @@ OPERACOES_PADRAO = [
     ("Lima São Félix", "45.678.912/0001-33", "São Félix do Coribe", "BA"),
 ]
 # Visões consolidadas (somente leitura): nome -> filiais que somam
-OPERACOES_CONSOLIDADAS = {"Bahia (Barreiras + São Félix)": ["Lima Barreiras", "Lima São Félix"]}
+OPERACOES_CONSOLIDADAS = {"Bahia (Barreiras + São Félix)": ["Lima Barreiras", "Lima São Félix"],
+                          "Grupo Lima (todas as revendas)": ["Lima Rio Verde", "Lima Barreiras", "Lima São Félix"]}
 # Como cada filial aparece escrita nos relatórios Ambev (para importar arquivos com várias filiais)
 APELIDOS_OPERACAO = {
     "Lima Rio Verde": ["rio verde"],
@@ -212,6 +221,10 @@ STATUS_PEDIDO_PUXADA = ["Aberto", "Finalizado", "Cancelado", "Reprogramado"]
 STATUS_PEDIDO_INATIVO = ("Cancelado", "Reprogramado")  # não contam mais (o reprogramado foi substituído)
 # Perfil do veículo (carreta): paletes que cabem
 PERFIS_VEICULO = {"9 eixos": 42, "LS": 28}
+TIPOS_VEICULO = ["Cavalo mecânico", "Carreta", "Bitrem / Rodotrem", "Truck", "Toco", "3/4", "VUC", "Utilitário",
+                 "Carro", "Moto", "Empilhadeira", "Outro"]
+STATUS_PLACA = ["Ativo", "Em manutenção", "Parado", "Inativo"]
+CATEGORIAS_CNH = ["A", "B", "C", "D", "E", "AB", "AC", "AD", "AE"]
 TIPOS_MANUTENCAO = ["Preventiva", "Corretiva", "Pneus", "Elétrica", "Freios", "Lavagem", "Documentação", "Outra"]
 STATUS_MANUTENCAO = ["Programada", "Em andamento", "Concluída", "Cancelada"]
 # Farol de produtividade: metas de tempo de cada atividade (horas) e tolerâncias

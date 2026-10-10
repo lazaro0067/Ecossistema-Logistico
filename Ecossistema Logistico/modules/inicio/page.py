@@ -34,6 +34,7 @@ def _ir(pagina: str):
 def render(usuario: dict, operacao_id: int) -> None:
     primeiro = usuario["nome"].split()[0]
     ui.cabecalho(f"Olá, {primeiro}!", "Resumo do dia das suas pastas", "👋")
+    operacao_id = ui.visao_acompanhamento(usuario, operacao_id, "inicio")
     _bloco_alertas(usuario, operacao_id)
     from repositories import motoristas_repo
 

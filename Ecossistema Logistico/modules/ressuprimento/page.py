@@ -4,7 +4,6 @@ from modules.puxada import pedidos_dia
 from modules.ressuprimento import bases, cestas, diario, estoque, gestao_dia, metas, politica, ruptura, sugestao
 
 ABAS = {
-    "bases": bases.render,
     "estoque": estoque.render,
     "sugestao": sugestao.render,
     "cestas": cestas.render,

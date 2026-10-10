@@ -5,6 +5,7 @@ adicione a chave em config.settings.MODULOS e registre aqui.
 """
 from modules.admin import page as admin
 from modules.armazem import page as armazem
+from modules.bases import page as bases
 from modules.compras import page as compras
 from modules.conta import page as conta
 from modules.distribuicao import page as distribuicao
@@ -20,6 +21,7 @@ from modules.vendas import page as vendas
 
 PAGINAS = {
     "inicio": inicio.render,
+    "bases": bases.render,
     "puxada": puxada.render,
     "ressuprimento": ressuprimento.render,
     "armazem": armazem.render,

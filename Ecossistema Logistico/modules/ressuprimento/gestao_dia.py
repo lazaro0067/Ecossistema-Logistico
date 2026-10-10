@@ -55,6 +55,7 @@ def _total(df: pd.DataFrame, colunas: list[str]) -> dict:
 
 
 def render(usuario: dict, operacao_id: int) -> None:
+    operacao_id = ui.visao_acompanhamento(usuario, operacao_id, "gestao_dia")
     hoje = tempo.hoje()
     meses = sorted(set(ressuprimento_repo.meses_disponiveis(operacao_id)) | {hoje.strftime("%Y-%m")}, reverse=True)
     c1, c2 = st.columns([1, 3])

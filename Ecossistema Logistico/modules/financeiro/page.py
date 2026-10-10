@@ -7,7 +7,6 @@ import streamlit as st
 
 from core import graficos, tema, tempo, ui
 from modules.componentes.autosave import editor_autosave
-from modules.componentes.bases import card_base
 from modules.componentes.registro_generico import Campo, Indicador, tela_registros
 from repositories import financeiro_repo
 from services import financeiro_service
@@ -48,8 +47,10 @@ INDICADORES = [
 def aba_diario(usuario: dict, operacao_id: int) -> None:
     c1, c2 = st.columns([1, 2])
     with c1:
-        card_base("financeiro", operacao_id, usuario, "Relatório diário de pagamentos",
-                  "Diário · substitui os dados da filial (fornecedor col. B, vencimento col. K, valor col. N)")
+        from modules.bases.page import botao_ir
+
+        st.info("O relatório diário de pagamentos é enviado na central **📥 Atualizar relatórios** (menu ao lado).")
+        botao_ir("fin")
     with c2:
         df = financeiro_repo.contas_df(operacao_id)
         if df.empty:

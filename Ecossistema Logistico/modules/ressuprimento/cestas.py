@@ -99,4 +99,4 @@ def acompanhamento(operacao_id: int, chave: str = "ces", com_graficos: bool = Tr
 
 def render(usuario: dict, operacao_id: int) -> None:
     links_estaticos()
-    acompanhamento(operacao_id)
+    acompanhamento(ui.visao_acompanhamento(usuario, operacao_id, "cestas"))

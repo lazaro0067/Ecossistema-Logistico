@@ -343,6 +343,34 @@ CREATE TABLE IF NOT EXISTS motoristas (
     telefone    TEXT
 );
 
+-- ============ FROTA ============
+CREATE TABLE IF NOT EXISTS locadoras (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    nome     TEXT UNIQUE NOT NULL,
+    cnpj     TEXT,
+    contato  TEXT,
+    telefone TEXT
+);
+
+-- Cadastro único de placas do Grupo Lima (todas as áreas e revendas)
+CREATE TABLE IF NOT EXISTS frota_placas (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    placa           TEXT UNIQUE NOT NULL,
+    operacao_id     INTEGER REFERENCES operacoes(id),
+    tipo            TEXT,
+    marca_modelo    TEXT,
+    ano             INTEGER,
+    proprietario_id INTEGER REFERENCES transportadoras(id),
+    aluguel         INTEGER DEFAULT 0,
+    locadora_id     INTEGER REFERENCES locadoras(id),
+    area            TEXT,
+    motorista_id    INTEGER REFERENCES motoristas(id),
+    status          TEXT DEFAULT 'Ativo',
+    observacao      TEXT,
+    atualizado_por  TEXT,
+    atualizado_em   TEXT
+);
+
 CREATE TABLE IF NOT EXISTS agendamentos_descarga (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     operacao_id INTEGER NOT NULL REFERENCES operacoes(id),
@@ -799,6 +827,11 @@ MIGRACOES: list[tuple[str, str]] = [
     """),
     ("028_paletes_puxada_marcada", """
         ALTER TABLE pedidos_marcados ADD COLUMN paletes REAL DEFAULT 0;
+    """),
+    ("029_frota_cadastros", """
+        ALTER TABLE motoristas ADD COLUMN categoria_cnh TEXT;
+        ALTER TABLE transportadoras ADD COLUMN telefone TEXT;
+        CREATE INDEX IF NOT EXISTS ix_frota_placas_op ON frota_placas(operacao_id);
     """),
 ]
 

@@ -161,17 +161,9 @@ def barra_atualizar(modulo: str, operacao_id: int, usuario: dict) -> None:
                 pass
             ui.avisar(f"Atualizado às {tempo.agora():%H:%M}.", "info")
             st.rerun()
-        aberto = st.session_state.get(f"barra_bases_{modulo}", False)
-        rot = f"📥 Atualizar bases{f' ({len(atrasadas)})' if atrasadas else ''}"
-        if c3.button(("✖ Fechar bases" if aberto else rot), key=f"atu_bases_{modulo}", type="primary" if atrasadas
-                     and not aberto else "secondary", **ui.LARGURA):
-            st.session_state[f"barra_bases_{modulo}"] = not aberto
-            st.rerun()
-    if st.session_state.get(f"barra_bases_{modulo}"):
-        with st.container(border=True, key=f"barra_bases_box_{modulo}"):
-            st.caption("Envie o arquivo aqui mesmo — a tela se atualiza sozinha depois de gravar. "
-                       "🟢 em dia · 🟡 atualizar hoje · 🔴 desatualizada.")
-            for ini in range(0, len(bases), 4):
-                for col, b in zip(st.columns(4), bases[ini:ini + 4]):
-                    with col:
-                        card_base(b, operacao_id, usuario, *BASES_TITULOS[b], prefixo=f"bar_{modulo}_")
+        rot = f"📥 Atualizar relatórios{f' ({len(atrasadas)})' if atrasadas else ''}"
+        if c3.button(rot, key=f"atu_bases_{modulo}", type="primary" if atrasadas else "secondary",
+                     help="Abre a central única de relatórios", **ui.LARGURA):
+            from modules.bases.page import ir
+
+            ir()

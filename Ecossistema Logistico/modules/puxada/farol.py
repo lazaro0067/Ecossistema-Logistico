@@ -42,6 +42,7 @@ def _periodo() -> tuple[dt.date, dt.date]:
 
 
 def render(usuario: dict, operacao_id: int) -> None:
+    operacao_id = ui.visao_acompanhamento(usuario, operacao_id, "farol")
     de, ate = _periodo()
     ativs = svc.atividades(operacao_id, de, ate)
     g = svc.geral(ativs)

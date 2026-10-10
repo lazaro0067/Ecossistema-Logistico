@@ -2,7 +2,6 @@
 import streamlit as st
 
 from core import graficos, tema, ui
-from modules.componentes.importador import importador
 from repositories import ressuprimento_repo
 
 
@@ -44,4 +43,7 @@ def render(usuario: dict, operacao_id: int) -> None:
             ui.download_csv(df, f"pedidos_marcados_{data}", key="dl_pm")
 
     with aba_i:
-        importador(["pedidos_marcados"], operacao_id, usuario, key="imp_pm")
+        from modules.bases.page import botao_ir
+
+        st.info("A Puxada Marcada agora é enviada na central única **📥 Atualizar relatórios** (menu ao lado).")
+        botao_ir("pm")

@@ -5,7 +5,6 @@ import streamlit as st
 from core import graficos, tema, ui
 from modules.componentes import estoque_dia
 from modules.componentes.autosave import editor_autosave
-from modules.componentes.importador import importador
 from repositories import estoque_repo, financeiro_repo
 from services import curva_abc_service
 from services.erros import RegraNegocioError
@@ -109,11 +108,7 @@ def aba_abc(usuario: dict, operacao_id: int) -> None:
     ui.downloads(vis, f"curva_abc_{mes}", key="dl_abc")
 
 
-def aba_importar(usuario: dict, operacao_id: int) -> None:
-    importador(["curva_abc", "linear"], operacao_id, usuario, key="imp_vd")
-
 
 def render(usuario: dict, operacao_id: int) -> None:
     ui.cabecalho_modulo("vendas")
-    ui.abas_modulo(usuario, "vendas", {"comercial": aba_comercial, "metas": aba_metas, "abc": aba_abc,
-                                       "importar": aba_importar}, usuario, operacao_id)
+    ui.abas_modulo(usuario, "vendas", {"comercial": aba_comercial, "metas": aba_metas, "abc": aba_abc}, usuario, operacao_id)

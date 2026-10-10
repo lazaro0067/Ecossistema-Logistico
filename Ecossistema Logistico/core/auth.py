@@ -66,7 +66,9 @@ _ABAS_IRMAS = {"armazem.pedidos": "armazem.patio", "puxada.pedidos_dia": "puxada
                "puxada.farol": "puxada.tmv_tma",
                "ressuprimento.puxada_pedidos": "ressuprimento.sugestao",
                "ressuprimento.ruptura": "ressuprimento.estoque",
-               "ressuprimento.gestao_dia": "ressuprimento.cestas"}
+               "ressuprimento.gestao_dia": "ressuprimento.cestas",
+               **{f"frota.{a}": "frota.painel" for a in ("gestao", "placas", "motoristas", "transportadoras",
+                                                          "locadoras")}}
 
 
 def pode_acessar_aba(usuario: dict, modulo: str, aba: str) -> bool:

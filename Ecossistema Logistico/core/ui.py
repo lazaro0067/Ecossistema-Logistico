@@ -277,3 +277,26 @@ def somente_leitura(operacao_id: int | None) -> bool:
         st.info("🔒 Visão consolidada (somente leitura). Para lançar ou editar, escolha uma filial no menu.")
         return True
     return False
+
+
+# --- Visão do acompanhamento: revenda escolhida, Bahia (Barreiras + São Félix) ou Grupo Lima ------------
+def visao_acompanhamento(usuario: dict, operacao_id: int, key: str) -> int:
+    """Pills para olhar os indicadores consolidados. Devolve a operação (filial ou consolidada) escolhida."""
+    from core.auth import operacoes_permitidas
+    from repositories import operacoes_repo
+
+    if not operacao_id:
+        return operacao_id
+    consol = [o for o in operacoes_permitidas(usuario) if operacoes_repo.e_consolidada(o["id"])]
+    if not consol:
+        return operacao_id
+    nomes = {operacao_id: f"🏢 {(operacoes_repo.buscar(operacao_id) or {}).get('nome', 'Revenda')}"}
+    for o in sorted(consol, key=lambda o: len(operacoes_repo.ids_efetivos(o["id"]))):
+        nomes[o["id"]] = ("🌐 " if "grupo" in o["nome"].lower() else "🔗 ") + o["nome"]
+    ids = list(nomes)
+    atual = st.session_state.get(f"visao_{key}")
+    if atual not in ids:
+        st.session_state[f"visao_{key}"] = operacao_id
+    esc = st.pills("Visão", ids, key=f"visao_{key}", selection_mode="single", format_func=nomes.get,
+                   label_visibility="collapsed")
+    return esc if esc in ids else operacao_id
