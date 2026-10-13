@@ -399,15 +399,75 @@ def _aba_links(usuario: dict) -> None:
                     st.rerun()
 
 
+def _aba_backup() -> None:
+    import datetime as dt
+
+    from services import backup_service as bk
+
+    if bk.banco_temporario():
+        st.error("⚠️ **O sistema está gravando num banco TEMPORÁRIO (SQLite na nuvem).** O Streamlit Cloud apaga "
+                 "esse arquivo sempre que o servidor reinicia ou o app é atualizado — usuários, permissões e "
+                 "cadastros somem. Configure o **DATABASE_URL** (Supabase) nos *Secrets* do Streamlit para guardar "
+                 "tudo de forma permanente. Até lá, baixe um backup sempre que criar acessos ou cadastros.")
+    else:
+        st.success("✅ Banco permanente (PostgreSQL). Mesmo assim, guarde um backup de tempos em tempos.")
+    tema.secao("⬇️ Baixar backup", "Um arquivo .zip com TODAS as tabelas: usuários, senhas (criptografadas), "
+               "permissões, operações, cadastros, frota, metas e bases.")
+    if st.button("Gerar backup agora", key="bk_gerar", type="primary"):
+        st.session_state["bk_zip"] = bk.exportar()
+    if st.session_state.get("bk_zip"):
+        st.download_button("💾 Baixar arquivo", st.session_state["bk_zip"], mime="application/zip",
+                           file_name=f"backup_ecossistema_{dt.datetime.now():%Y%m%d_%H%M}.zip", key="bk_baixar")
+    with st.expander("📊 O que tem no banco agora"):
+        ui.tabela(pd.DataFrame(bk.resumo()))
+
+    tema.secao("⬆️ Restaurar backup", "Substitui o conteúdo das tabelas escolhidas pelo do arquivo. "
+               "Tudo ou nada: se der erro, nada muda.")
+    arq = st.file_uploader("Arquivo .zip do backup", type=["zip"], key="bk_arquivo")
+    if arq is None:
+        return
+    dados = arq.getvalue()
+    try:
+        man = bk.ler_manifesto(dados)
+    except RegraNegocioError as e:
+        st.error(str(e))
+        return
+    st.caption(f"Backup gerado em {man.get('gerado_em', '?')} · {len(man['tabelas'])} tabelas")
+    nomes = list(man["tabelas"])
+    acessos = [t for t in ("operacoes", "usuarios", "usuario_modulos", "usuario_operacoes") if t in nomes]
+    modo = st.radio("O que restaurar", ["Tudo", "Só usuários e acessos", "Escolher tabelas"], horizontal=True,
+                    key="bk_modo")
+    if modo == "Tudo":
+        escolha = nomes
+    elif modo == "Só usuários e acessos":
+        escolha = acessos
+    else:
+        escolha = st.multiselect("Tabelas", nomes, format_func=lambda t: f"{t} ({man['tabelas'][t]})",
+                                 key="bk_tabs")
+    ok = st.checkbox("Entendo que os dados atuais dessas tabelas serão substituídos.", key="bk_ok")
+    if st.button("♻️ Restaurar", key="bk_restaurar", disabled=not (ok and escolha)):
+        try:
+            feito = bk.importar(dados, escolha)
+        except RegraNegocioError as e:
+            st.error(str(e))
+        except Exception as e:
+            st.error(f"Não foi possível restaurar (nada foi alterado): {e}")
+        else:
+            st.success(f"Restaurado: {len(feito)} tabelas · {sum(feito.values())} linhas. Entre de novo se o "
+                       "seu usuário mudou.")
+
+
 def render(usuario: dict, operacao_id: int | None) -> None:
     ui.cabecalho("Gestão de Acessos", "Usuários, senhas, permissões por pasta e operações", "🔑")
-    a1, a2, a4, a3 = st.tabs(["👤 Usuários & Permissões", "🏢 Operações", "🔗 Links do Portal Comercial",
-                              "📦 Importar sistema antigo"])
+    a1, a2, a4, a5, a3 = st.tabs(["👤 Usuários & Permissões", "🏢 Operações", "🔗 Links do Portal Comercial",
+                                  "💾 Backup", "📦 Importar sistema antigo"])
     with a1:
         _aba_usuarios(usuario)
     with a2:
         _aba_operacoes()
     with a4:
         _aba_links(usuario)
+    with a5:
+        _aba_backup()
     with a3:
         _aba_importar_antigo()

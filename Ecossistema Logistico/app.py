@@ -382,6 +382,13 @@ def main() -> None:
             st.warning("Você não está vinculado a nenhuma operação ativa. Fale com o administrador.")
         return
 
+    if e_master(usuario):
+        from services import backup_service
+
+        if backup_service.banco_temporario():
+            st.error("⚠️ Banco TEMPORÁRIO: na nuvem, usuários e cadastros são apagados a cada reinício do servidor. "
+                     "Configure o DATABASE_URL (Supabase) nos Secrets e baixe um backup em 🔑 Gestão de Acessos › "
+                     "💾 Backup.")
     PAGINAS[pagina](usuario, operacao_id)
     from core import versao
 
