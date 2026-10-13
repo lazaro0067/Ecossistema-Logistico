@@ -18,8 +18,14 @@ def render(usuario: dict, operacao_id: int | None) -> None:
             nova = st.text_input("Nova senha", type="password")
             conf = st.text_input("Confirme a nova senha", type="password")
             if st.form_submit_button("Alterar senha", type="primary"):
-                ui.acao(usuarios_service.trocar_propria_senha, usuario["id"], atual, nova, conf,
-                        sucesso="Senha alterada!")
+                def _trocar():
+                    usuarios_service.trocar_propria_senha(usuario["id"], atual, nova, conf)
+                    if "s" in st.query_params:  # o acesso lembrado antigo deixa de valer; gera um novo
+                        from core.auth import gerar_token
+
+                        st.query_params["s"] = gerar_token(usuario["id"])
+
+                ui.acao(_trocar, sucesso="Senha alterada!")
         tema.secao("Alterar e-mail de acesso", f"Hoje você entra com: {usuario.get('email') or usuario.get('login')}")
         with st.form("f_email", clear_on_submit=True):
             novo = st.text_input("Novo e-mail")

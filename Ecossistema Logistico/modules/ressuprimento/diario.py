@@ -14,7 +14,9 @@ def render(usuario: dict, operacao_id: int) -> None:
         st.info("Nenhum carregamento neste mês.")
         return
     indicadores = [c for c in piv.columns if c not in ("Dia", "Total do dia")]
-    principais = [c for c in ("Cerveja", "Nab") if c in indicadores] or indicadores[:2]
+    from config.settings import CESTAS_TOTAL
+
+    principais = [svc.nome_cesta(c) for c in CESTAS_TOTAL if svc.nome_cesta(c) in indicadores] or indicadores[:2]
     graficos.mostrar(graficos.barras(piv["Dia"], {c: piv[c].round(0) for c in principais}, empilhado=True,
                                      titulo="HL carregado por dia", sufixo=" HL"), key="g_dia")
     st.caption("HL do dia = soma da coluna C do relatório na data (coluna F), por indicador (coluna E) e filial (coluna A).")

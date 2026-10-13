@@ -271,3 +271,43 @@ def dia_a_dia(operacao_id: int, mes_ano: str) -> pd.DataFrame:
     piv["Total do dia"] = piv.sum(axis=1)
     piv.index = [dt.date.fromisoformat(x).strftime("%d/%m/%Y") for x in piv.index]
     return piv.reset_index(names="Dia")
+
+
+def acompanhamento_diario(operacao_id: int, mes_ano: str) -> pd.DataFrame:
+    """Cesta a cesta, dia a dia: real do dia × meta do dia e acumulado × meta acumulada.
+
+    Meta do dia = meta do mês ÷ dias de puxada do mês (os dias marcados “sem puxada” em 📅 Gestão do dia
+    ficam com meta zero). Inclui a linha TOTAL (Cerveja + Nab)."""
+    from config.settings import CESTAS, CESTAS_TOTAL
+    from services import gestao_metas_service as gm
+
+    colunas = ["data", "cesta", "indicador", "dia", "meta_dia", "ating_dia", "acum", "meta_acum", "ating_acum",
+               "dif_acum", "puxada"]
+    d = diario_normalizado(operacao_id, mes_ano)
+    if d.empty:
+        return pd.DataFrame(columns=colunas)
+    d = d[d["cesta"].isin(list(CESTAS))]
+    metas = ressuprimento_repo.metas_df(operacao_id, mes_ano)
+    meta = (metas.set_index("cesta")["meta_volume_hl"].astype(float).to_dict() if not metas.empty else {})
+    dp = gm.dias_puxada(operacao_id, mes_ano) or gm.dias_do_mes(mes_ano)
+    datas = sorted({dt.date.fromisoformat(str(x)[:10]) for x in d["data"]})
+    ate = max(datas)
+    dias = [x for x in gm.dias_do_mes(mes_ano) if x <= ate]
+    linhas = []
+    for c in list(CESTAS) + ["TOTAL"]:
+        sub = d[d["cesta"].isin(CESTAS_TOTAL)] if c == "TOTAL" else d[d["cesta"] == c]
+        por_dia = sub.groupby(sub["data"].map(lambda x: dt.date.fromisoformat(str(x)[:10])))["dia"].sum()
+        m = sum(meta.get(x, 0.0) for x in CESTAS_TOTAL) if c == "TOTAL" else float(meta.get(c, 0.0))
+        acum = 0.0
+        for i, x in enumerate(dias):
+            real = float(por_dia.get(x, 0.0))
+            acum += real
+            puxada = x in dp
+            md = m / len(dp) if puxada and dp else 0.0
+            ma = m * len([y for y in dp if y <= x]) / len(dp) if dp else 0.0
+            linhas.append({"data": x, "cesta": c,
+                           "indicador": "Total (Cerveja + Nab)" if c == "TOTAL" else nome_cesta(c),
+                           "dia": real, "meta_dia": md, "ating_dia": real / md * 100 if md else None,
+                           "acum": acum, "meta_acum": ma, "ating_acum": acum / ma * 100 if ma else None,
+                           "dif_acum": acum - ma if m else None, "puxada": puxada})
+    return pd.DataFrame(linhas, columns=colunas)

@@ -21,6 +21,9 @@ def logar(dados: dict) -> None:
 def sair() -> None:
     for k in list(st.session_state.keys()):
         del st.session_state[k]
+    for q in ("s", "p", "k"):  # acesso lembrado e página atual no endereço
+        if q in st.query_params:
+            del st.query_params[q]
 
 
 def operacao_id() -> int | None:
@@ -37,3 +40,5 @@ def pagina() -> str | None:
 
 def ir_para(pag: str) -> None:
     st.session_state.pagina = pag
+    if "s" in st.query_params:  # sistema com "manter conectado": volta na mesma página ao recarregar
+        st.query_params["p"] = pag

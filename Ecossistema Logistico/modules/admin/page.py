@@ -399,12 +399,57 @@ def _aba_links(usuario: dict) -> None:
                     st.rerun()
 
 
+def _bloco_backup_auto(backup_auto) -> None:
+    tema.secao("🔄 Backup automático", f"Salva sozinho a cada {backup_auto.AUTO_MINUTOS} min (só quando algo "
+               "muda) e ao desligar o servidor; ao ligar com o banco vazio, restaura sozinho.")
+    e = backup_auto.estado()
+    if not e["configurado"]:
+        st.warning("Ainda não configurado. Veja o passo a passo abaixo.")
+        with st.expander("📖 Como ligar o backup automático (5 minutos)", expanded=True):
+            st.markdown(
+                "1. No GitHub, crie um repositório **PRIVADO** (ex.: `eco-backup`).\n"
+                "2. GitHub › Settings › Developer settings › **Fine-grained tokens** › *Generate new token*: "
+                "em *Repository access* escolha **só** o `eco-backup`; em *Permissions › Contents* marque "
+                "**Read and write**. Copie o token.\n"
+                "3. No Streamlit Cloud › seu app › **Settings › Secrets**, acrescente:\n"
+                "```toml\nBACKUP_GITHUB_TOKEN = \"github_pat_...\"\nBACKUP_GITHUB_REPO = \"seu-usuario/eco-backup\"\n```\n"
+                "4. Salve. O app reinicia e o primeiro backup é gravado na hora.\n\n"
+                "⚠️ Nunca use o repositório público do sistema: o backup tem e-mails, CPF e senhas criptografadas.")
+        return
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Último backup enviado", f"{e['ultimo_envio']:%d/%m %H:%M}" if e["ultimo_envio"] else "—")
+    c2.metric("Última conferência", f"{e['ultima_verificacao']:%d/%m %H:%M}" if e["ultima_verificacao"] else "—")
+    c3.metric("Situação", "✅ Ligado" if e["pode_salvar"] and not e["erro"] else "⚠️ Atenção")
+    if e["restaurado"]:
+        st.success(f"♻️ {e['restaurado']}")
+    if e["erro"]:
+        st.error(f"Último erro: {e['erro']}")
+    b1, b2, _ = st.columns([1, 1, 2])
+    if b1.button("💾 Salvar backup agora", key="bk_auto_salvar"):
+        try:
+            backup_auto.salvar_agora("manual", forcar=True)
+        except Exception as ex:  # noqa: BLE001
+            st.error(str(ex))
+        else:
+            st.success("Backup enviado ao repositório privado.")
+    if not e["pode_salvar"] and b2.button("🔁 Tentar de novo", key="bk_auto_retry"):
+        backup_auto.tentar_de_novo()
+        st.rerun()
+
+
 def _aba_backup() -> None:
     import datetime as dt
 
     from services import backup_service as bk
 
-    if bk.banco_temporario():
+    from services import backup_auto
+
+    _bloco_backup_auto(backup_auto)
+    if bk.banco_temporario() and backup_auto.configurado():
+        st.info("ℹ️ Banco temporário (SQLite na nuvem), protegido pelo backup automático: se o servidor reiniciar, "
+                "os dados voltam sozinhos do último backup. Para ficar 100% seguro, configure o DATABASE_URL "
+                "(Supabase).")
+    elif bk.banco_temporario():
         st.error("⚠️ **O sistema está gravando num banco TEMPORÁRIO (SQLite na nuvem).** O Streamlit Cloud apaga "
                  "esse arquivo sempre que o servidor reinicia ou o app é atualizado — usuários, permissões e "
                  "cadastros somem. Configure o **DATABASE_URL** (Supabase) nos *Secrets* do Streamlit para guardar "

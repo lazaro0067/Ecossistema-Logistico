@@ -40,6 +40,9 @@ def _preparar_banco(destino: str) -> bool:
     """Cria/atualiza as tabelas. O `destino` (arquivo ou URL do banco) entra na chave do cache:
     se o banco mudar de lugar, as tabelas são criadas de novo no banco novo."""
     init_db()
+    from services import backup_auto
+
+    backup_auto.iniciar()  # restaura do backup se o banco nasceu vazio e liga o salvamento automático
     return True
 
 
@@ -65,6 +68,9 @@ def tela_login() -> None:
                                       autocomplete="username")
                 senha = st.text_input("Senha", type="password", placeholder="••••••••",
                                       autocomplete="current-password")
+                manter = st.checkbox("Manter conectado neste aparelho", value=True,
+                                     help="Ao recarregar a página ou quando o sistema for atualizado, você continua "
+                                          "dentro. Use “Sair” em computadores compartilhados.")
                 if st.form_submit_button("Entrar", type="primary", **ui.LARGURA):
                     usuario = autenticar(email, senha)
                     from modules.puxada.app_motorista import bloqueio
@@ -75,6 +81,12 @@ def tela_login() -> None:
                                  "(interjornada de 11 h depois de finalizar a viagem).")
                     elif usuario:
                         session.logar(usuario)
+                        if manter:
+                            from core.auth import gerar_token
+
+                            token = gerar_token(usuario["id"])
+                            if token:
+                                st.query_params["s"] = token
                         st.rerun()
                     else:
                         st.error("E-mail ou senha inválidos.")
@@ -148,6 +160,10 @@ def tela_troca_obrigatoria(usuario: dict) -> None:
                     st.error(str(e))
                 else:
                     usuario["trocar_senha"] = 0
+                    if "s" in st.query_params:
+                        from core.auth import gerar_token
+
+                        st.query_params["s"] = gerar_token(usuario["id"])
                     ui.avisar("Senha criada! Bem-vindo(a).")
                     st.rerun()
         if st.button("Sair"):
@@ -301,6 +317,28 @@ def app_carreteiro() -> None:
         app_motorista.render(usuario)
 
 
+def _entrar_lembrado() -> dict | None:
+    """“Manter conectado”: o token (?s=...) no endereço refaz o login depois de recarregar a página ou de o
+    servidor reiniciar (nova versão). Trocar a senha ou clicar em Sair invalida/remove o token."""
+    token = st.query_params.get("s")
+    if not token:
+        return None
+    from core.auth import entrar_por_token
+    from modules.puxada.app_motorista import bloqueio
+
+    usuario = entrar_por_token(token)
+    if not usuario or bloqueio(usuario):
+        for q in ("s", "p"):
+            if q in st.query_params:
+                del st.query_params[q]
+        return None
+    session.logar(usuario)
+    pagina = st.query_params.get("p")
+    if pagina:
+        st.session_state.pagina = pagina
+    return usuario
+
+
 def _alertas(usuario: dict) -> None:
     """Gera os avisos semanais (CNH vencendo) e lembra o usuário das notificações não lidas."""
     try:
@@ -341,7 +379,7 @@ def main() -> None:
         return
     session.iniciar()
 
-    usuario = session.usuario()
+    usuario = session.usuario() or _entrar_lembrado()
     if not usuario:
         ui.mostrar_avisos()
         tela_login()
@@ -357,6 +395,8 @@ def main() -> None:
         return
 
     pagina = session.pagina() or "inicio"
+    if pagina not in PAGINAS:
+        pagina = "inicio"
     if pagina == MODULO_ADMIN and not e_master(usuario):
         pagina = "inicio"
     if pagina in MODULOS and not pode_acessar_modulo(usuario, pagina):
@@ -385,10 +425,15 @@ def main() -> None:
     if e_master(usuario):
         from services import backup_service
 
-        if backup_service.banco_temporario():
+        from services import backup_auto
+
+        if backup_service.banco_temporario() and not backup_auto.configurado():
             st.error("⚠️ Banco TEMPORÁRIO: na nuvem, usuários e cadastros são apagados a cada reinício do servidor. "
                      "Configure o DATABASE_URL (Supabase) nos Secrets e baixe um backup em 🔑 Gestão de Acessos › "
                      "💾 Backup.")
+        elif backup_auto.estado().get("erro"):
+            st.warning(f"⚠️ Backup automático com problema: {backup_auto.estado()['erro']} — veja em 🔑 Gestão de "
+                       "Acessos › 💾 Backup.")
     PAGINAS[pagina](usuario, operacao_id)
     from core import versao
 
