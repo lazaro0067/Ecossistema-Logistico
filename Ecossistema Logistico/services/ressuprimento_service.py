@@ -229,7 +229,7 @@ def acompanhamento(operacao_id: int, ano: int, meses: list[int]) -> pd.DataFrame
     tend = pd.concat(tends).groupby(level=0).sum() if tends else pd.Series(dtype=float)
     meta = (pd.concat(metas).groupby("cesta")["meta_volume_hl"].sum() if metas else pd.Series(dtype=float))
 
-    cestas = list(CESTAS) + sorted((set(real.index) | set(meta.index)) - set(CESTAS))
+    cestas = list(CESTAS)  # só as cestas acompanhadas (as demais do relatório ficam fora)
     df = pd.DataFrame({"cesta": cestas})
     df["indicador"] = df["cesta"].map(nome_cesta)
     df["meta"] = df["cesta"].map(meta).fillna(0.0)
@@ -259,6 +259,11 @@ def acompanhamento(operacao_id: int, ano: int, meses: list[int]) -> pd.DataFrame
 
 def dia_a_dia(operacao_id: int, mes_ano: str) -> pd.DataFrame:
     d = diario_normalizado(operacao_id, mes_ano)
+    if d.empty:
+        return d
+    from config.settings import CESTAS
+
+    d = d[d["cesta"].isin(list(CESTAS))]
     if d.empty:
         return d
     d["indicador"] = d["cesta"].map(nome_cesta)

@@ -160,15 +160,17 @@ APELIDOS_OPERACAO = {
     "Lima São Félix": ["lima bahia samavi", "samavi", "sao felix", "são félix"],
 }
 
-# --- Ressuprimento: nomes amigáveis das cestas (ordem de exibição) --------
+# --- Ressuprimento: cestas acompanhadas (ordem de exibição) ----------------
+# O nome mostrado é o mesmo do relatório. Cestas que não estão aqui (ex.: "RETORNAVEL - RGB",
+# "NAB_SINGLE_REFRI_ZERO - …") ficam fora do acompanhamento.
 CESTAS = {
-    "CATEGORIA_AGRUPADO - CERVEJA": "Cerveja",
-    "CATEGORIA_AGRUPADO - NAB": "Nab",
-    "CATEGORIA - MATCH": "Match",
-    "CATEGORIA_RETORNAVEL - CERVEJA RGB": "Cerveja RGB",
-    "REFRIGERANTE_REGULAR_NAB - ZERO": "Nab Zero",
-    "CERV_2 - Zero Alcool": "Cerveja Zero Álcool",
-    "SEGMENTO - HIGH END": "High End",
+    "CATEGORIA_AGRUPADO - CERVEJA": "CATEGORIA_AGRUPADO - CERVEJA",
+    "CATEGORIA_AGRUPADO - NAB": "CATEGORIA_AGRUPADO - NAB",
+    "CATEGORIA - MATCH": "CATEGORIA - MATCH",
+    "CATEGORIA_RETORNAVEL - CERVEJA RGB": "CATEGORIA_RETORNAVEL - CERVEJA RGB",
+    "REFRIGERANTE_REGULAR_NAB - ZERO": "REFRIGERANTE_REGULAR_NAB - ZERO",
+    "CERV_2 - Zero Alcool": "CERV_2 - Zero Alcool",
+    "SEGMENTO - HIGH END": "SEGMENTO - HIGH END",
 }
 CESTAS_TOTAL = ["CATEGORIA_AGRUPADO - CERVEJA", "CATEGORIA_AGRUPADO - NAB"]  # linha "Total (Cerveja + Nab)"
 

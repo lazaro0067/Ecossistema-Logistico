@@ -133,7 +133,9 @@ def plano(operacao_id: int, mes_ano: str, cestas: list[str] | None = None) -> di
     meta = (metas.set_index("cesta")["meta_volume_hl"].astype(float) if not metas.empty
             else pd.Series(dtype=float))
     real = _real_por_dia(operacao_id, mes_ano)
-    todas = sorted(set(meta.index) | set(real["cesta"]))
+    from config.settings import CESTAS
+
+    todas = [c for c in CESTAS if c in set(meta.index) | set(real["cesta"])]
     if cestas:
         todas = [c for c in todas if c in cestas]
     ref = referencia(operacao_id, mes_ano, real)

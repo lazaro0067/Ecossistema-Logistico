@@ -28,7 +28,6 @@ def render(usuario: dict, operacao_id: int) -> None:
 
     existentes = svc.cestas_para_metas(operacao_id, mes_ano)
     base = pd.DataFrame({"cesta": list(CESTAS)}).merge(existentes, on="cesta", how="left")
-    base = pd.concat([base, existentes[~existentes["cesta"].isin(list(CESTAS))]], ignore_index=True)
     base["meta_volume_hl"] = pd.to_numeric(base["meta_volume_hl"], errors="coerce").fillna(0.0)
     base["indicador"] = base["cesta"].map(svc.nome_cesta)
     base = base[["indicador", "meta_volume_hl", "cesta"]]
