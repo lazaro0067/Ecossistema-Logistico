@@ -274,8 +274,10 @@ def sugerir_mapeamento(layout_key: str, colunas: list[str]) -> dict[str, str | N
                 usar(k, achou)
                 break
     # Ressuprimento: a coluna D ("Volume (hl) Real") é o HL vendido — só quando o cabeçalho é de volume
+    # (é a coluna logo depois da C, que é o HL do Ressuprimento)
+    nao_volume = ("cod", "indicador", "cesta", "data", "regional", "operacao", "filial", "mes")
     if layout_key == "ressuprimento" and "volume_venda_hl" in mapa and not mapa["volume_venda_hl"] \
-            and len(colunas) > 3 and colunas[3] not in usadas and ("vol" in norm[3] or "hl" in norm[3]):
+            and len(colunas) > 3 and colunas[3] not in usadas and not any(k in norm[3] for k in nao_volume):
         usar("volume_venda_hl", colunas[3])
     # 3) posição como último recurso
     for k, c in campos.items():

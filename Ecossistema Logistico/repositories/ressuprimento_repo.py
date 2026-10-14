@@ -26,12 +26,12 @@ def fonte_atual() -> str:
 
 
 def _so_vendas() -> str:
-    return ""
+    # Vendas só enxerga as linhas que têm o HL vendido (coluna D) — nunca repete o número do Ressuprimento (coluna C)
+    return " AND volume_venda_hl IS NOT NULL" if _FONTE.get() == "vendas" else ""
 
 
 def _col() -> str:
-    # Vendas: coluna D (HL vendido); onde o relatório ainda não foi subido de novo com a D, usa a C do mesmo relatório
-    return "COALESCE(volume_venda_hl, volume_real_hl)" if _FONTE.get() == "vendas" else "volume_real_hl"
+    return "volume_venda_hl" if _FONTE.get() == "vendas" else "volume_real_hl"
 
 
 def sem_coluna_d(operacao_id: int, mes_ano: str) -> int:
