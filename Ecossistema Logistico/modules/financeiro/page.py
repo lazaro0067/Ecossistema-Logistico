@@ -280,4 +280,13 @@ def render(usuario: dict, operacao_id: int) -> None:
                        "vencimentos": lambda: aba_vencimentos(usuario, operacao_id),
                        "fluxo": lambda: aba_fluxo(usuario, operacao_id),
                        "analise": lambda: aba_analise(usuario, operacao_id),
+                       **{k: (lambda f=f: f(usuario, operacao_id)) for k, f in _obz_abas().items()},
                    })
+
+
+def _obz_abas() -> dict:
+    from modules.financeiro import obz
+
+    return {"obz_gestao": obz.render_gestao, "obz_tend": obz.render_tend, "obz_aprov": obz.render_aprovacao,
+            "obz_reuniao": obz.render_reuniao, "obz_plan": obz.render_plan, "obz_real": obz.render_real,
+            "obz_cad": obz.render_cadastros}

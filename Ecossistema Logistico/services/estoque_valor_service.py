@@ -205,6 +205,12 @@ def cmv_real(operacao_id: int, mes: str) -> dict:
 
 # --- DRE ---------------------------------------------------------------------------------------------
 def obz(operacao_id: int, mes: str) -> pd.DataFrame:
+    """Despesas do mês por pacote: 🎯 Gestão OBZ (16.03.01); sem ele, o OBZ manual antigo."""
+    from services import obz_service
+
+    novo = obz_service.despesas_dre(operacao_id, mes)
+    if novo is not None:
+        return novo
     trecho, p = operacoes_repo.filtro("operacao_id", operacao_id)
     df = query_df(f"SELECT pacote, SUM(orcado) AS orcado, SUM(realizado) AS realizado FROM financeiro_obz "
                   f"WHERE {trecho} AND mes_ano = ? GROUP BY pacote ORDER BY pacote", (*p, mes))

@@ -98,8 +98,15 @@ MODULOS = {
         "vencimentos": "⏳ Vencimentos",
         "fluxo": "📊 Fluxo de Caixa",
         "analise": "🩺 Saúde Financeira",
-        "painel": "📒 OBZ por Pacote",
-        "lancamentos": "➕ Lançar OBZ",
+        "obz_gestao": "📊 OBZ — Plan × Tend × Real",
+        "obz_tend": "📝 Lançar Tendências",
+        "obz_aprov": "✔️ Justificativas & Aprovação",
+        "obz_reuniao": "🗓️ Reunião & Ações",
+        "obz_plan": "🎯 Plan (metas)",
+        "obz_real": "📥 Realizado (16.03.01)",
+        "obz_cad": "⚙️ Cadastros OBZ",
+        "painel": "📒 OBZ por Pacote (manual)",
+        "lancamentos": "➕ Lançar OBZ (manual)",
     }},
     "compras": {"rotulo": "Compras & Insumos", "icone": "🛒", "abas": dict(_ABAS_REGISTRO)},
     "gente": {"rotulo": "Gente & SSMA", "icone": "👥", "abas": dict(_ABAS_REGISTRO)},
@@ -169,7 +176,9 @@ GRUPOS_ABAS = {
     "financeiro": {
         "💳 Contas": ["diario", "contas", "vencimentos"],
         "📊 Caixa & Saúde": ["fluxo", "analise"],
-        "📒 OBZ": ["painel", "lancamentos"],
+        "🎯 Gestão OBZ": ["obz_gestao", "obz_tend", "obz_aprov", "obz_reuniao"],
+        "⚙️ OBZ: bases & cadastros": ["obz_plan", "obz_real", "obz_cad"],
+        "📒 OBZ manual": ["painel", "lancamentos"],
     },
 }
 

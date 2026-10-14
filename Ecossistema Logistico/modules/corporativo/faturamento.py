@@ -331,10 +331,8 @@ def top_bottom(mg: pd.DataFrame, chave: str) -> None:
     col = "margem" if ordem == "Margem (R$)" else "margem_pct"
     base = com if col == "margem" else com[com["hl_venda"] >= com["hl_venda"].quantile(.25)]  # % sem itens mínimos
     top, bot = base.nlargest(10, col), base.nsmallest(10, col)
-    c1, c2 = st.columns(2)
-    for cx, titulo, d, cor in ((c1, "🏆 Top 10", top, graficos.CATEGORICAS[0]),
-                               (c2, "🔻 Bottom 10", bot, "#c0392b")):
-        with cx:
+    for titulo, d, cor in (("🏆 Top 10", top, graficos.CATEGORICAS[0]), ("🔻 Bottom 10", bot, "#c0392b")):
+        with st.container():  # um abaixo do outro: tabela inteira visível
             st.markdown(f"**{titulo}** — {ordem.lower()}")
             graficos.mostrar(graficos.barras_h([f"{str(x)[:28]}" for x in d["descricao"].fillna(d["produto"])],
                                                d[col].round(1 if col == "margem_pct" else 0), cores=cor,

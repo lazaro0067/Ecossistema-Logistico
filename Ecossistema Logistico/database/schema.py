@@ -529,6 +529,113 @@ CREATE TABLE IF NOT EXISTS depositos_nomes (
     PRIMARY KEY (armazem, deposito)
 );
 
+CREATE TABLE IF NOT EXISTS obz_departamentos (
+    codigo TEXT PRIMARY KEY,
+    nome   TEXT,
+    ativo  INTEGER DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS obz_contas (
+    codigo     TEXT PRIMARY KEY,
+    nome       TEXT,
+    pacote     TEXT,
+    natureza   TEXT DEFAULT 'despesa',
+    no_obz     INTEGER DEFAULT 1,
+    limite_pct REAL,
+    dono_id    INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS obz_subdonos (
+    conta      TEXT NOT NULL,
+    depto      TEXT NOT NULL,
+    usuario_id INTEGER NOT NULL,
+    PRIMARY KEY (conta, depto)
+);
+
+CREATE TABLE IF NOT EXISTS obz_papeis (
+    usuario_id INTEGER NOT NULL,
+    papel      TEXT NOT NULL,
+    PRIMARY KEY (usuario_id, papel)
+);
+
+CREATE TABLE IF NOT EXISTS obz_real (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id  INTEGER NOT NULL REFERENCES operacoes(id),
+    mes          TEXT NOT NULL,
+    conta        TEXT NOT NULL,
+    depto        TEXT NOT NULL,
+    debito       REAL,
+    credito      REAL,
+    valor        REAL,
+    lancamentos  INTEGER,
+    importado_em TEXT
+);
+
+CREATE TABLE IF NOT EXISTS obz_real_lanc (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id INTEGER NOT NULL REFERENCES operacoes(id),
+    mes         TEXT NOT NULL,
+    data        TEXT,
+    conta       TEXT,
+    depto       TEXT,
+    historico   TEXT,
+    debito      REAL,
+    credito     REAL
+);
+
+CREATE TABLE IF NOT EXISTS obz_plan (
+    operacao_id INTEGER NOT NULL REFERENCES operacoes(id),
+    mes         TEXT NOT NULL,
+    conta       TEXT NOT NULL,
+    depto       TEXT NOT NULL,
+    valor       REAL DEFAULT 0,
+    PRIMARY KEY (operacao_id, mes, conta, depto)
+);
+
+CREATE TABLE IF NOT EXISTS obz_tend (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id      INTEGER NOT NULL REFERENCES operacoes(id),
+    mes              TEXT NOT NULL,
+    conta            TEXT NOT NULL,
+    depto            TEXT NOT NULL,
+    valor            REAL,
+    sugerido         REAL,
+    lancado_por      TEXT,
+    lancado_em       TEXT,
+    justificativa    TEXT,
+    criticado_por    TEXT,
+    criticado_em     TEXT,
+    status           TEXT DEFAULT 'lancada',
+    aprovador        TEXT,
+    aprovado_em      TEXT,
+    comentario_aprov TEXT,
+    UNIQUE (operacao_id, mes, conta, depto)
+);
+
+CREATE TABLE IF NOT EXISTS obz_acoes (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id INTEGER NOT NULL REFERENCES operacoes(id),
+    mes         TEXT NOT NULL,
+    conta       TEXT,
+    depto       TEXT,
+    acao        TEXT,
+    responsavel TEXT,
+    prazo       TEXT,
+    status      TEXT DEFAULT 'Aberta',
+    criado_por  TEXT,
+    criado_em   TEXT
+);
+
+CREATE TABLE IF NOT EXISTS obz_reunioes (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id   INTEGER NOT NULL REFERENCES operacoes(id),
+    mes           TEXT NOT NULL,
+    data          TEXT,
+    participantes TEXT,
+    ata           TEXT,
+    criado_por    TEXT
+);
+
 CREATE TABLE IF NOT EXISTS agendamentos_descarga (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     operacao_id INTEGER NOT NULL REFERENCES operacoes(id),
@@ -1012,6 +1119,11 @@ MIGRACOES: list[tuple[str, str]] = [
         ALTER TABLE ressuprimento_diario ADD COLUMN volume_venda_hl REAL;
     """),
     ("033_estoque_saldos", "CREATE INDEX IF NOT EXISTS ix_est_saldos ON estoque_saldos(operacao_id, mes, tipo_saldo);"),
+    ("034_obz", """
+        CREATE INDEX IF NOT EXISTS ix_obz_real ON obz_real(operacao_id, mes);
+        CREATE INDEX IF NOT EXISTS ix_obz_lanc ON obz_real_lanc(operacao_id, mes, conta);
+        CREATE INDEX IF NOT EXISTS ix_obz_tend ON obz_tend(operacao_id, mes);
+    """),
 ]
 
 
