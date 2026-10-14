@@ -119,4 +119,29 @@ def aba_abc(usuario: dict, operacao_id: int) -> None:
 
 def render(usuario: dict, operacao_id: int) -> None:
     ui.cabecalho_modulo("vendas")
-    ui.abas_modulo(usuario, "vendas", {"comercial": aba_comercial, "metas": aba_metas, "abc": aba_abc}, usuario, operacao_id)
+    ui.abas_modulo(usuario, "vendas", {"acompanhamento": aba_acompanhamento, "metas_cestas": aba_metas_cestas,
+                                       "comercial": aba_comercial, "metas": aba_metas, "abc": aba_abc},
+                   usuario, operacao_id)
+
+
+def aba_acompanhamento(usuario: dict, operacao_id: int) -> None:
+    """Mesma análise do Ressuprimento (cestas × meta × tendência + diário), com o HL VENDIDO (coluna D)."""
+    from modules.ressuprimento import cestas
+    from repositories import ressuprimento_repo
+
+    st.caption("HL vendido = coluna D do relatório de ressuprimento (“Volume (hl) Real”). Metas em 🎯 Metas por Cesta.")
+    op = ui.visao_acompanhamento(usuario, operacao_id, "vendas_cestas")
+    with ressuprimento_repo.fonte("vendas"):
+        if not ressuprimento_repo.meses_disponiveis(op):
+            st.info("Ainda não há HL vendido (coluna D). Suba de novo o relatório de ressuprimento diário em "
+                    "📥 Atualizar relatórios — a coluna D passa a ser gravada.")
+            return
+        cestas.acompanhamento(op, chave="vces")
+
+
+def aba_metas_cestas(usuario: dict, operacao_id: int) -> None:
+    from modules.ressuprimento import metas
+    from repositories import ressuprimento_repo
+
+    with ressuprimento_repo.fonte("vendas"):
+        metas.render(usuario, operacao_id)

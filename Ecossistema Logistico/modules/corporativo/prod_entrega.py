@@ -1,6 +1,6 @@
 """Gestão Corporativa › 🚚 Logística › 📦 Produtividade › Produtividade Entrega.
 
-Bases: PCD (mapas) + 03.02.37 (notas — HL pela coluna T × fator HL da 01.11).
+Bases: PCD (mapas) + 03.02.37 vendas (notas — HL pela coluna T × fator HL da 01.11).
 Telas: 📊 Visão geral · 🚚 Por placa · 📅 Gestão anual · 🔮 Previsão de modais · ⬆️ Atualizar dados.
 """
 import datetime as dt
@@ -17,7 +17,7 @@ from services.erros import RegraNegocioError
 _SEMANA = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
 _MESES = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
 _TELAS = {"geral": "📊 Visão geral", "placa": "🚚 Por placa", "anual": "📅 Gestão anual",
-          "modais": "🔮 Previsão de modais", "dados": "⬆️ Atualizar dados"}
+          "modais": "🔮 Previsão de modais"}
 _OPER = {"1": "1 · Venda", "2": "2 · Bonificação", "5": "5 · Troca", "9": "9 · Comodato"}
 _STATUS = {"A": "A · Ativa", "C": "C · Cancelada", "D": "D · Devolvida", "E": "E · Estornada"}
 
@@ -62,6 +62,23 @@ def _tabela_kpi(g: pd.DataFrame, primeira: dict[str, str]) -> pd.DataFrame:
     return df[[""] + [c for c in df.columns if c != ""]].reset_index(drop=True)
 
 
+def _total(df: pd.DataFrame, primeira: dict[str, str], rotulo: str = "TOTAL") -> pd.DataFrame:
+    """Linha de total (das viagens filtradas) no mesmo formato da tabela."""
+    g = svc._agrupar(df.assign(_t=rotulo), ["_t"])
+    linha = _tabela_kpi(g, {"_t": list(primeira.values())[0]})
+    for rot in list(primeira.values())[1:]:
+        linha[rot] = ""
+    linha[""] = "Σ"
+    return linha
+
+
+def _com_total(vis: pd.DataFrame, df: pd.DataFrame, primeira: dict[str, str], extras: dict | None = None) -> pd.DataFrame:
+    tot = _total(df, primeira)
+    for k, v in (extras or {}).items():
+        tot[k] = v
+    return pd.concat([vis, tot[[c for c in vis.columns if c in tot.columns]]], ignore_index=True).fillna("")
+
+
 # --- Filtros ---------------------------------------------------------------------------------------
 def _periodo(operacao_id: int, chave: str) -> tuple[str, str, str] | None:
     meses = svc.meses_disponiveis(operacao_id)
@@ -95,7 +112,7 @@ def _filtro_notas(operacao_id: int, chave: str) -> dict:
     resumo = " · ".join(f"{k}: {', '.join(v)}" for k, v in (("Operação", padrao["operacao"]),
                                                              ("Tipo movto", padrao["tipo_movto"]),
                                                              ("Status", padrao["status"])))
-    with st.expander(f"🧾 Filtro das notas (03.02.37) — padrão: {resumo}"):
+    with st.expander(f"🧾 Filtro das notas (03.02.37 vendas) — padrão: {resumo}"):
         c1, c2, c3 = st.columns(3)
         f = {"operacao": c1.multiselect("Operação", opc["operacao"], default=padrao["operacao"],
                                         format_func=lambda x: _OPER.get(x, x), key=f"{chave}_fo"),
@@ -145,7 +162,7 @@ def _cards(r: dict, chave: str, df: pd.DataFrame) -> None:
          "status": _st_ocup(r["eficiencia"]), "detalhe": "média do relatório de mapas"},
     ], key=f"kp_{chave}")
     if r.get("sem_hl"):
-        st.caption(f"⚠️ {r['sem_hl']} viagem(ns) sem nota na 03.02.37 (HL zerado) — suba a 03.02.37 do mesmo "
+        st.caption(f"⚠️ {r['sem_hl']} viagem(ns) sem nota na 03.02.37 (HL zerado) — suba a 03.02.37 vendas do mesmo "
                    "período ou revise o filtro das notas.")
 
 
@@ -163,16 +180,19 @@ def _visao_geral(df: pd.DataFrame, chave: str) -> None:
                                           "Ocupação peso": d["ocup_peso"].round(1)},
                                          titulo="Ocupação média por dia", sufixo="%"), key=f"g_{chave}_oc")
     tema.secao("🚛 Por tipo de veículo")
-    ui.tabela(_tabela_kpi(svc.por_veiculo(df), {"veiculo": "Veículo"}).assign(
-        Placas=svc.por_veiculo(df)["placas"].values), baixar="produtividade_por_veiculo")
+    pv = svc.por_veiculo(df)
+    vis = _tabela_kpi(pv, {"veiculo": "Veículo"}).assign(Placas=pv["placas"].map(_n).values)
+    ui.tabela(_com_total(vis, df, {"veiculo": "Veículo"}, {"Placas": _n(df["placa"].nunique())}),
+              baixar="produtividade_por_veiculo")
     tema.secao("🗺️ Por classificação da rota")
-    ui.tabela(_tabela_kpi(svc.por_classificacao(df), {"classificacao": "Classificação"}),
-              baixar="produtividade_por_classificacao")
+    ui.tabela(_com_total(_tabela_kpi(svc.por_classificacao(df), {"classificacao": "Classificação"}), df,
+                         {"classificacao": "Classificação"}), baixar="produtividade_por_classificacao")
     tema.secao("📅 Dia a dia")
     dd = _tabela_kpi(d, {"data": "Dia"})
     dd["Dia"] = d["data"].map(lambda x: f"{x:%d/%m} ({_SEMANA[x.weekday()]})").values
-    dd.insert(2, "Placas", d["placas"].values)
-    ui.tabela(dd, baixar="produtividade_dia_a_dia")
+    dd.insert(2, "Placas", d["placas"].map(_n).values)
+    ui.tabela(_com_total(dd, df, {"data": "Dia"}, {"Placas": _n(df["placa"].nunique())}),
+              baixar="produtividade_dia_a_dia")
 
 
 def _por_placa(df: pd.DataFrame, chave: str) -> None:
@@ -184,17 +204,41 @@ def _por_placa(df: pd.DataFrame, chave: str) -> None:
     if not tem_cad:
         st.caption("💡 Cadastre as placas em 🔧 Frota › ⚙️ Cadastros › 🚚 Placas para trazer proprietário, aluguel, "
                    "locadora e área de cada placa aqui.")
-    vis = _tabela_kpi(pp, {"placa": "Placa", "veiculo": "Veículo"})
-    extras = {"Revenda": pp["revenda"], "Proprietário": pp["proprietario"],
-              "Aluguel": pp["aluguel"].map(lambda v: "—" if v is None or pd.isna(v) else ("Sim" if v else "Não")),
-              "Locadora": pp["locadora"], "Área": pp["area"], "Dias rodados": pp["dias"].map(_n)}
+    # filtros da tabela — o total embaixo soma só o que ficou visível
+    f1, f2, f3, f4 = st.columns([1, 1, 1, 1.3])
+    veic = f1.multiselect("Veículo", sorted(pp["veiculo"].dropna().unique()), key=f"{chave}_tv", placeholder="Todos")
+    far = f2.multiselect("Farol", ["🟢", "🟡", "🔴"], key=f"{chave}_tf", placeholder="Todos")
+    props = sorted(pp["proprietario"].dropna().unique()) + sorted(pp["area"].dropna().map(lambda a: f"Área: {a}")
+                                                                  .unique())
+    prop = f3.multiselect("Proprietário / área", props, key=f"{chave}_tp", placeholder="Todos")
+    busca = f4.text_input("Buscar placa", key=f"{chave}_tb", placeholder="ex.: SCM").strip().upper()
+    sel = pp.copy()
+    if veic:
+        sel = sel[sel["veiculo"].isin(veic)]
+    if far:
+        sel = sel[sel["ocup_efetiva"].map(_farol).isin(far)]
+    if prop:
+        sel = sel[sel["proprietario"].isin(prop) | sel["area"].map(lambda a: f"Área: {a}").isin(prop)]
+    if busca:
+        sel = sel[sel["placa"].str.upper().str.contains(busca, regex=False)]
+    if sel.empty:
+        st.info("Nenhuma placa com esses filtros.")
+        return
+    vis = _tabela_kpi(sel, {"placa": "Placa", "veiculo": "Veículo"})
+    extras = {"Revenda": sel["revenda"], "Proprietário": sel["proprietario"],
+              "Aluguel": sel["aluguel"].map(lambda v: "—" if v is None or pd.isna(v) else ("Sim" if v else "Não")),
+              "Locadora": sel["locadora"], "Área": sel["area"], "Dias rodados": sel["dias"].map(_n)}
     for i, (k, v) in enumerate(extras.items()):
         vis.insert(3 + i, k, v.fillna("—").values)
-    st.caption("🟢 ocupação média ≥ 85% · 🟡 70–84% · 🔴 abaixo de 70% (ocupação = maior entre caixas e peso)")
+    viagens_sel = df[df["placa"].isin(sel["placa"])]
+    vis = _com_total(vis, viagens_sel, {"placa": "Placa", "veiculo": "Veículo"},
+                     {"Revenda": f"{len(sel)} placas", "Dias rodados": _n(viagens_sel["data"].nunique())})
+    st.caption(f"🟢 ocupação média ≥ 85% · 🟡 70–84% · 🔴 abaixo de 70% (ocupação = maior entre caixas e peso) · "
+               f"Σ = total das {len(sel)} placas filtradas")
     ui.tabela(vis, baixar="produtividade_por_placa")
 
     tema.secao("🔎 Detalhe da placa")
-    placa = st.selectbox("Placa", pp["placa"].tolist(), key=f"{chave}_placa_det")
+    placa = st.selectbox("Placa", sel["placa"].tolist(), key=f"{chave}_placa_det")
     v = df[df["placa"] == placa].sort_values("data")
     r = svc.resumo(v)
     _cards(r, f"{chave}_pl", v)
@@ -349,47 +393,10 @@ def _leitura(m: dict, base: pd.DataFrame) -> list[str]:
     return out
 
 
-def _dados(usuario: dict, operacao_id: int) -> None:
-    tema.secao("⬆️ Atualizar dados", "Suba os dois relatórios — os dados vão se acumulando. Subir de novo um período "
-               "substitui só as datas que vierem no arquivo.")
-    ult = svc.ultimas_cargas(operacao_id)
-    fmt = lambda v: dt.datetime.fromisoformat(v).strftime("%d/%m/%Y %H:%M") if v else "nunca"  # noqa: E731
-    consolidada = operacoes_repo.e_consolidada(operacao_id)
-    if consolidada:
-        st.info("Escolha uma revenda (não a visão consolidada) para subir os relatórios.")
-        return
-    c1, c2 = st.columns(2)
-    with c1, st.container(border=True):
-        st.markdown(f"**1. Relatório de mapas (PCD)**  \nÚltima carga: {fmt(ult['entregas_pcd'])}")
-        st.caption("Uma linha por mapa: placa, veículo, entregas, caixas, % ocupação, peso, KM previsto.")
-        arq = st.file_uploader("PCD (.csv)", type=["csv", "zip"], key="pe_up_pcd")
-        if arq is not None and st.button("Gravar mapas", key="pe_gravar_pcd", type="primary"):
-            try:
-                with st.spinner("Gravando mapas..."):
-                    r = svc.importar_pcd(arq.getvalue(), arq.name, operacao_id, usuario.get("nome", ""))
-            except RegraNegocioError as e:
-                st.error(str(e))
-            else:
-                ui.avisar(f"{r['linhas']} mapas gravados ({_d(r['de'])} a {_d(r['ate'])}).")
-                st.rerun()
-    with c2, st.container(border=True):
-        st.markdown(f"**2. Relatório 03.02.37 (notas)**  \nÚltima carga: {fmt(ult['entregas_notas'])}")
-        st.caption("HL = coluna T (quantidade) × fator HL da 01.11 · ligado ao mapa pela coluna AA. "
-                   "Arquivo grande? Compacte em .zip antes de subir — fica bem mais rápido.")
-        arq = st.file_uploader("03.02.37 (.csv ou .zip)", type=["csv", "zip"], key="pe_up_37")
-        if arq is not None and st.button("Gravar notas", key="pe_gravar_37", type="primary"):
-            try:
-                with st.spinner("Lendo as notas e calculando o HL..."):
-                    r = svc.importar_notas(arq.getvalue(), arq.name, operacao_id, usuario.get("nome", ""))
-            except RegraNegocioError as e:
-                st.error(str(e))
-            else:
-                msg = (f"{_n(r['itens'])} itens · {r['mapas']} mapas · {_n(r['hl'])} HL "
-                       f"({_d(r['de'])} a {_d(r['ate'])}).")
-                if r["sem_fator"]:
-                    msg += f" {r['sem_fator']} produto(s) sem fator HL na 01.11 (ficaram com HL 0)."
-                ui.avisar(msg)
-                st.rerun()
+def ir_relatorios(chave: str) -> None:
+    if st.button("📥 Abrir Relatórios", key=f"ir_rel_{chave}", type="primary"):
+        st.session_state["nav_corporativo_grupo"] = st.session_state["nav_corporativo_grupo__ultima"] = "📥 Relatórios"
+        st.rerun()
 
 
 def _d(iso: str) -> str:
@@ -400,13 +407,12 @@ def render(usuario: dict, operacao_id: int) -> None:
     st.markdown("##### 🚚 Logística › 📦 Produtividade › **Produtividade Entrega**")
     operacao_id = ui.visao_acompanhamento(usuario, operacao_id, "prod_entrega")
     meses = svc.meses_disponiveis(operacao_id)
-    telas = list(_TELAS) if meses else ["dados"]
-    tela = ui._escolha("pe_tela", telas, telas[0], formatar=_TELAS.get, pills=True)
-    if tela == "dados":
-        if not meses:
-            st.info("Ainda não há dados de entrega para esta revenda. Suba o PCD e a 03.02.37 abaixo.")
-        _dados(usuario, operacao_id)
+    if not meses:
+        st.info("Ainda não há dados de entrega para esta revenda. Suba o PCD e a 03.02.37 vendas em 📥 Relatórios.")
+        ir_relatorios("pe")
         return
+    telas = list(_TELAS)
+    tela = ui._escolha("pe_tela", telas, telas[0], formatar=_TELAS.get, pills=True)
     filtro = _filtro_notas(operacao_id, "pe")
     if tela == "anual":
         _anual(operacao_id, filtro, "pe")

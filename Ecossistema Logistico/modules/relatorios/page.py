@@ -17,8 +17,12 @@ TABELAS = {
     "financeiro_obz": "OBZ por pacote", "metas_vendas": "Metas de vendas", "padroes_dpo": "Padrões DPO",
     "distribuicao_rotas": "Rotas", "frota_manutencao": "Manutenção da frota", "gente_ssma": "Gente & SSMA",
     "compras_pedidos": "Pedidos de compra", "armazens": "Armazéns", "operacoes": "Operações",
+    "entregas_mapas": "Mapas de entrega (PCD)", "entregas_notas": "03.02.37 vendas por mapa",
+    "notas_dia": "03.02.37 vendas/compra por dia", "notas_produto_mes": "03.02.37 vendas/compra por produto (mês)",
+    "notas_cliente_mes": "03.02.37 vendas/compra por cliente (mês)", "operacoes_fiscais": "Operações fiscais (cadastro)",
+    "metas_vendas_cestas": "Metas de vendas por cesta",
 }
-SEM_OPERACAO = {"produtos", "transportadoras", "fabricas", "operacoes"}
+SEM_OPERACAO = {"produtos", "transportadoras", "fabricas", "operacoes", "operacoes_fiscais"}
 
 
 def aba_tabelas(usuario: dict, operacao_id: int) -> None:

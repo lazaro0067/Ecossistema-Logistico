@@ -4,11 +4,11 @@ Duas bases, que vão se acumulando (subir de novo um período substitui só as d
 
 • PCD (relatório de mapas/roteirização): uma linha por mapa — data de entrega, placa, veículo, entregas,
   total de caixas, % ocupação caixas, total peso, % ocupação peso, KM previsto, classificação…
-• 03.02.37 (notas por item): coluna T = quantidade (caixas/unidades) de cada produto, coluna AA = mapa.
+• 03.02.37 vendas (notas por item): coluna T = quantidade (caixas/unidades) de cada produto, coluna AA = mapa.
   HL = quantidade × fator HL do produto (base 01.11); produtos em litros (chopp, bag in box) = litros ÷ 100.
   Filtro padrão: operação 1, tipo de movimento 51, status A (venda ativa) — dá para mudar na tela.
 
-O HL de cada mapa vem da 03.02.37 e é ligado ao PCD pelo número do mapa.
+O HL de cada mapa vem da 03.02.37 vendas e é ligado ao PCD pelo número do mapa.
 """
 import datetime as dt
 import io
@@ -161,49 +161,25 @@ def _classificacao(t: str) -> str:
     return str(t).strip().title() if str(t).strip().isupper() else str(t).strip()
 
 
-# --- Importação: 03.02.37 ---------------------------------------------------------------------------
-# posições (A = 0): C operação, D tipo movto, G emissão, H nota, J status, M cliente, P produto,
-# Q unidade, T quantidade, Z total (R$), AA mapa
-_POS_NOTAS = {2: "operacao_cod", 3: "tipo_movto", 6: "data", 7: "nota", 9: "status", 12: "cliente", 15: "produto",
-              16: "unidade", 19: "qtde", 25: "valor", 26: "mapa"}
-
-
+# --- Importação: 03.02.37 vendas ------------------------------------------------------------------
 def importar_notas(conteudo: bytes, nome: str, operacao_id: int, usuario: str = "") -> dict:
+    """03.02.37 vendas: alimenta a Produtividade Entrega (HL por mapa) e o Faturamento (R$ e HL por dia)."""
+    from services import faturamento_service as fs
+
     if operacoes_repo.e_consolidada(operacao_id):
-        raise RegraNegocioError("Escolha uma revenda (não a visão consolidada) para subir a 03.02.37.")
-    bruto = _abrir(conteudo, nome)
-    cab = _ler_csv(bruto, nrows=0)
-    if len(cab.columns) < 27 or "qtde" not in _n(cab.columns[19]) or "mapa" not in _n(cab.columns[26]):
-        raise RegraNegocioError("Este arquivo não parece a 03.02.37: esperava “Qtde” na coluna T e “Mapa” na "
-                                "coluna AA.")
-    df = _ler_csv(bruto, usecols=list(_POS_NOTAS))
-    df.columns = [_POS_NOTAS[i] for i in sorted(_POS_NOTAS)]
-    for c in df.columns:
-        df[c] = df[c].astype(str).str.strip()
-    df["data"] = _data(df["data"])
+        raise RegraNegocioError("Escolha uma revenda (não a visão consolidada) para subir a 03.02.37 vendas.")
+    df = fs.ler_0302037(_abrir(conteudo, nome))
     df["mapa"] = df["mapa"].map(_mapa)
-    df = df[df["data"].notna() & (df["mapa"] != "")].copy()
-    if df.empty:
-        raise RegraNegocioError("Nenhuma nota com mapa e data de emissão válidos.")
-    for c in ("operacao_cod", "tipo_movto"):
-        df[c] = df[c].map(_cod)
-    df["status"] = df["status"].str.upper().replace("", "?")
-    df["qtde"] = _num(df["qtde"]).fillna(0.0)
-    df["valor"] = _num(df["valor"]).fillna(0.0)
-    df["cod"] = pd.to_numeric(df["produto"].str.replace(r"\D", "", regex=True), errors="coerce")
-    fat = query_df("SELECT cod, fator_hl FROM produtos")
-    fat["cod"] = pd.to_numeric(fat["cod"], errors="coerce")
-    df = df.merge(fat.dropna().drop_duplicates("cod"), on="cod", how="left")
-    litros = df["unidade"].str.lower().isin(["l", "lt", "lts", "litro", "litros"])
-    df["hl"] = (df["qtde"] * df["fator_hl"].fillna(0.0)).where(~litros, df["qtde"] / 100)
-    sem_fator = df.loc[~litros & df["fator_hl"].isna(), "produto"].nunique()
-    agg = (df.groupby(["data", "mapa", "operacao_cod", "tipo_movto", "status"], as_index=False)
-             .agg(hl=("hl", "sum"), qtde=("qtde", "sum"), notas=("nota", "nunique"), clientes=("cliente", "nunique"),
-                  valor=("valor", "sum")))
-    _gravar("entregas_notas", pd.Series([operacao_id] * len(agg)), agg)
+    ent = df[df["emissao"].notna() & (df["mapa"] != "")].rename(columns={"emissao": "data"})
+    if not ent.empty:
+        agg = (ent.groupby(["data", "mapa", "operacao_cod", "tipo_movto", "status"], as_index=False)
+                  .agg(hl=("hl", "sum"), qtde=("qtde", "sum"), notas=("nota", "nunique"),
+                       clientes=("cliente", "nunique"), valor=("valor", "sum")))
+        _gravar("entregas_notas", pd.Series([operacao_id] * len(agg)), agg)
+    r = fs.gravar_resumo(df, operacao_id, "venda", "emissao")
     _log(operacao_id, "entregas_notas", len(df), nome, usuario)
-    return {"itens": len(df), "mapas": agg["mapa"].nunique(), "de": agg["data"].min(), "ate": agg["data"].max(),
-            "hl": float(agg["hl"].sum()), "sem_fator": int(sem_fator), "sem_cadastro": fat.empty}
+    return {"itens": len(df), "mapas": int(ent["mapa"].nunique()) if not ent.empty else 0, "de": r["de"],
+            "ate": r["ate"], "hl": r["hl"], "valor": r["valor"], "sem_fator": r["sem_fator"]}
 
 
 # --- Consulta --------------------------------------------------------------------------------------
@@ -228,7 +204,11 @@ def opcoes_filtro(operacao_id: int) -> dict[str, list[str]]:
 
 
 def filtro_padrao(opcoes: dict[str, list[str]]) -> dict[str, list[str]]:
-    return {k: [v for v in FILTRO_PADRAO_NOTAS[k] if v in opcoes.get(k, [])] or opcoes.get(k, []) for k in opcoes}
+    """Operações = as marcadas para 🚚 Produtividade Entrega em ⚙️ Cadastros; tipo 51 e status A."""
+    from services import faturamento_service as fs
+
+    padrao = dict(FILTRO_PADRAO_NOTAS, operacao=fs.operacoes_do_setor("entrega"))
+    return {k: [v for v in padrao[k] if v in opcoes.get(k, [])] or opcoes.get(k, []) for k in opcoes}
 
 
 def _placas() -> pd.DataFrame:
@@ -246,7 +226,7 @@ def _placas() -> pd.DataFrame:
 
 
 def base(operacao_id: int, de: str, ate: str, filtro: dict[str, list[str]] | None = None) -> pd.DataFrame:
-    """Uma linha por mapa (viagem) no período, com o HL da 03.02.37 (filtrado) e o cadastro da placa."""
+    """Uma linha por mapa (viagem) no período, com o HL da 03.02.37 vendas (filtrado) e o cadastro da placa."""
     trecho, p = operacoes_repo.filtro("m.operacao_id", operacao_id)
     m = query_df(f"""SELECT m.*, o.nome AS revenda FROM entregas_mapas m JOIN operacoes o ON o.id = m.operacao_id
                      WHERE {trecho} AND m.data BETWEEN ? AND ? ORDER BY m.data, m.mapa""", [*p, de, ate])

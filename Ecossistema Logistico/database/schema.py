@@ -430,6 +430,77 @@ CREATE TABLE IF NOT EXISTS entregas_notas (
     importado_em  TEXT
 );
 
+CREATE TABLE IF NOT EXISTS operacoes_fiscais (
+    codigo     TEXT PRIMARY KEY,
+    tipo_movto TEXT,
+    nome       TEXT
+);
+
+CREATE TABLE IF NOT EXISTS setor_operacoes (
+    setor  TEXT NOT NULL,
+    codigo TEXT NOT NULL,
+    PRIMARY KEY (setor, codigo)
+);
+
+CREATE TABLE IF NOT EXISTS notas_dia (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id  INTEGER NOT NULL REFERENCES operacoes(id),
+    origem       TEXT NOT NULL,
+    data         TEXT NOT NULL,
+    operacao_cod TEXT,
+    tipo_movto   TEXT,
+    status       TEXT,
+    valor        REAL,
+    valor_bruto  REAL,
+    desconto     REAL,
+    hl           REAL,
+    qtde         REAL,
+    notas        INTEGER,
+    clientes     INTEGER,
+    itens        INTEGER,
+    importado_em TEXT
+);
+
+CREATE TABLE IF NOT EXISTS notas_produto_mes (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id  INTEGER NOT NULL REFERENCES operacoes(id),
+    origem       TEXT NOT NULL,
+    mes          TEXT NOT NULL,
+    operacao_cod TEXT,
+    status       TEXT,
+    produto      TEXT,
+    descricao    TEXT,
+    valor        REAL,
+    hl           REAL,
+    qtde         REAL,
+    clientes     INTEGER,
+    importado_em TEXT
+);
+
+CREATE TABLE IF NOT EXISTS notas_cliente_mes (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id  INTEGER NOT NULL REFERENCES operacoes(id),
+    origem       TEXT NOT NULL,
+    mes          TEXT NOT NULL,
+    operacao_cod TEXT,
+    status       TEXT,
+    cliente      TEXT,
+    nome         TEXT,
+    valor        REAL,
+    hl           REAL,
+    notas        INTEGER,
+    importado_em TEXT
+);
+
+CREATE TABLE IF NOT EXISTS metas_vendas_cestas (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id    INTEGER NOT NULL REFERENCES operacoes(id),
+    mes_ano        TEXT NOT NULL,
+    cesta          TEXT NOT NULL,
+    meta_volume_hl REAL DEFAULT 0,
+    UNIQUE (operacao_id, mes_ano, cesta)
+);
+
 CREATE TABLE IF NOT EXISTS agendamentos_descarga (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     operacao_id INTEGER NOT NULL REFERENCES operacoes(id),
@@ -905,6 +976,12 @@ MIGRACOES: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS ix_ent_mapas ON entregas_mapas(operacao_id, data);
         CREATE INDEX IF NOT EXISTS ix_ent_notas ON entregas_notas(operacao_id, data);
         CREATE INDEX IF NOT EXISTS ix_ent_notas_mapa ON entregas_notas(operacao_id, mapa);
+    """),
+    ("032_faturamento", """
+        CREATE INDEX IF NOT EXISTS ix_notas_dia ON notas_dia(operacao_id, origem, data);
+        CREATE INDEX IF NOT EXISTS ix_notas_prod ON notas_produto_mes(operacao_id, origem, mes);
+        CREATE INDEX IF NOT EXISTS ix_notas_cli ON notas_cliente_mes(operacao_id, origem, mes);
+        ALTER TABLE ressuprimento_diario ADD COLUMN volume_venda_hl REAL;
     """),
 ]
 

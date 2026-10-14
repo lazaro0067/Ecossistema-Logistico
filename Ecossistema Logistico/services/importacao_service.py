@@ -109,6 +109,7 @@ LAYOUTS: dict[str, dict] = {
                           prioriza_posicao=True),
             "volume_real_hl": C("HL puxado (coluna C)", "float", True, ["hl_puxado", "volume", "sellin"], posicao=2,
                                 prioriza_posicao=True),
+            "volume_venda_hl": C("HL vendido (coluna D) — usado em Vendas", "float"),
             "cesta": C("Indicador / cesta (coluna E)", obrigatorio=True, apelidos=["indicador", "cesta"], posicao=4,
                        prioriza_posicao=True),
             "data": C("Data (coluna F)", "date", True, ["data"], posicao=5, prioriza_posicao=True),
@@ -272,6 +273,10 @@ def sugerir_mapeamento(layout_key: str, colunas: list[str]) -> dict[str, str | N
             if achou:
                 usar(k, achou)
                 break
+    # Ressuprimento: a coluna D ("Volume (hl) Real") é o HL vendido — só quando o cabeçalho é de volume
+    if layout_key == "ressuprimento" and "volume_venda_hl" in mapa and not mapa["volume_venda_hl"] \
+            and len(colunas) > 3 and colunas[3] not in usadas and ("vol" in norm[3] or "hl" in norm[3]):
+        usar("volume_venda_hl", colunas[3])
     # 3) posição como último recurso
     for k, c in campos.items():
         if not mapa[k] and c.posicao is not None and c.posicao < len(colunas) and colunas[c.posicao] not in usadas:
@@ -541,7 +546,8 @@ def _gravar_multi_operacao(df: pd.DataFrame, operacao_padrao: int | None, agora:
     df["cesta"] = df["cesta"].astype(str).str.strip()
     df = df[df["cesta"].ne("") & df["data"].notna()]
     chaves = ["operacao_id", "data", "cesta"]
-    soma = df.groupby(chaves, as_index=False)[["volume_real_hl", "volume_sellin_hl"]].sum()
+    somar = ["volume_real_hl", "volume_sellin_hl"] + (["volume_venda_hl"] if "volume_venda_hl" in df else [])
+    soma = df.groupby(chaves, as_index=False)[somar].sum(min_count=1)
     if "volume_txt" in df:
         # texto do relatório só vale quando o indicador tem uma linha no dia (senão o número é a soma)
         cont = df.groupby(chaves)["volume_txt"].agg(lambda s: s.iloc[0] if len(s) == 1 else None).reset_index()

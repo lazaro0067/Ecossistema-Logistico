@@ -1,16 +1,48 @@
 """Acesso a dados: ressuprimento diário, metas mensais e pedidos marcados."""
+import contextlib
+import contextvars
+
 import pandas as pd
 
 from database.connection import execute, query_df
 from repositories import operacoes_repo
 
+# A mesma análise de cestas serve ao Ressuprimento (HL puxado, coluna C do relatório) e a Vendas (HL vendido,
+# coluna D). `with fonte("vendas"):` troca a coluna e a tabela de metas para tudo o que roda dentro do bloco.
+_FONTE = contextvars.ContextVar("ressup_fonte", default="ressup")
+
+
+@contextlib.contextmanager
+def fonte(nome: str):
+    tok = _FONTE.set(nome)
+    try:
+        yield
+    finally:
+        _FONTE.reset(tok)
+
+
+def fonte_atual() -> str:
+    return _FONTE.get()
+
+
+def _so_vendas() -> str:
+    return " AND volume_venda_hl IS NOT NULL" if _FONTE.get() == "vendas" else ""
+
+
+def _col() -> str:
+    return "volume_venda_hl" if _FONTE.get() == "vendas" else "volume_real_hl"
+
+
+def tabela_metas() -> str:
+    return "metas_vendas_cestas" if _FONTE.get() == "vendas" else "metas_ressuprimento"
+
 
 def diario_df(operacao_id: int, mes_ano: str) -> pd.DataFrame:
     f_sql, ids = operacoes_repo.filtro("operacao_id", operacao_id)
     return query_df(f"""
-        SELECT data, cesta, SUM(volume_sellin_hl) AS volume_sellin_hl, SUM(volume_real_hl) AS volume_real_hl
+        SELECT data, cesta, SUM(volume_sellin_hl) AS volume_sellin_hl, SUM({_col()}) AS volume_real_hl
         FROM ressuprimento_diario
-        WHERE {f_sql} AND substr(data, 1, 7) = ?
+        WHERE {f_sql} AND substr(data, 1, 7) = ?{_so_vendas()}
         GROUP BY data, cesta ORDER BY data, cesta
     """, (*ids, mes_ano))
 
@@ -18,8 +50,10 @@ def diario_df(operacao_id: int, mes_ano: str) -> pd.DataFrame:
 def diario_ops_df(operacao_id: int, de: str | None = None, ate: str | None = None) -> pd.DataFrame:
     """Linhas por filial (sem somar) — base do cálculo do real do mês."""
     f_sql, ids = operacoes_repo.filtro("operacao_id", operacao_id)
-    sql, p = (f"""SELECT operacao_id, data, cesta, volume_sellin_hl, volume_real_hl, volume_txt FROM ressuprimento_diario
-                  WHERE {f_sql}""", list(ids))
+    txt = "NULL" if _FONTE.get() == "vendas" else "volume_txt"
+    sql, p = (f"""SELECT operacao_id, data, cesta, volume_sellin_hl, {_col()} AS volume_real_hl,
+                         {txt} AS volume_txt FROM ressuprimento_diario
+                  WHERE {f_sql}{_so_vendas()}""", list(ids))
     if de:
         sql += " AND data >= ?"
         p.append(de)
@@ -31,19 +65,20 @@ def diario_ops_df(operacao_id: int, de: str | None = None, ate: str | None = Non
 
 def meses_disponiveis(operacao_id: int) -> list[str]:
     f_sql, ids = operacoes_repo.filtro("operacao_id", operacao_id)
-    df = query_df(f"SELECT DISTINCT substr(data,1,7) AS m FROM ressuprimento_diario WHERE {f_sql} ORDER BY m DESC", ids)
+    df = query_df(f"SELECT DISTINCT substr(data,1,7) AS m FROM ressuprimento_diario WHERE {f_sql}{_so_vendas()} "
+                  "ORDER BY m DESC", ids)
     return df["m"].tolist()
 
 
 def metas_df(operacao_id: int, mes_ano: str) -> pd.DataFrame:
     f_sql, ids = operacoes_repo.filtro("operacao_id", operacao_id)
-    return query_df(f"SELECT cesta, SUM(meta_volume_hl) AS meta_volume_hl FROM metas_ressuprimento "
+    return query_df(f"SELECT cesta, SUM(meta_volume_hl) AS meta_volume_hl FROM {tabela_metas()} "
                     f"WHERE {f_sql} AND mes_ano = ? GROUP BY cesta", (*ids, mes_ano))
 
 
 def salvar_meta(operacao_id: int, mes_ano: str, cesta: str, meta: float) -> None:
-    execute("""
-        INSERT INTO metas_ressuprimento (operacao_id, mes_ano, cesta, meta_volume_hl) VALUES (?, ?, ?, ?)
+    execute(f"""
+        INSERT INTO {tabela_metas()} (operacao_id, mes_ano, cesta, meta_volume_hl) VALUES (?, ?, ?, ?)
         ON CONFLICT(operacao_id, mes_ano, cesta) DO UPDATE SET meta_volume_hl = excluded.meta_volume_hl
     """, (operacao_id, mes_ano, cesta, meta))
 

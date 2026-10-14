@@ -64,6 +64,8 @@ MODULOS = {
         "ruptura": "⚠️ Projeção de Falta",
     }},
     "vendas": {"rotulo": "Vendas", "icone": "📈", "abas": {
+        "acompanhamento": "📈 Acompanhamento de Vendas (Cestas)",
+        "metas_cestas": "🎯 Metas por Cesta",
         "comercial": "🛍️ Estoque do Dia (Portal RN)",
         "metas": "🎯 Metas de Vendas",
         "abc": "🔤 Curva ABC",
@@ -102,13 +104,15 @@ MODULOS = {
     "compras": {"rotulo": "Compras & Insumos", "icone": "🛒", "abas": dict(_ABAS_REGISTRO)},
     "gente": {"rotulo": "Gente & SSMA", "icone": "👥", "abas": dict(_ABAS_REGISTRO)},
     "corporativo": {"rotulo": "Gestão Corporativa", "icone": "🏛️", "abas": {
-        "financeiro": "💰 Financeiro",
+        "compras": "🛒 Compras de Mercadoria",
         "gente": "👥 Gente",
         "seguranca": "🦺 Segurança",
         "prod_entrega": "🚚 Produtividade Entrega",
-        "vendas": "📈 Vendas",
+        "faturamento": "💵 Faturamento",
         "gestao": "📊 Gestão",
         "planejamento": "🗓️ Planejamento",
+        "relatorios": "📥 Relatórios",
+        "cadastros": "⚙️ Cadastros",
     }},
     "relatorios": {"rotulo": "Relatórios & Bases", "icone": "📁", "abas": {
         "tabelas": "🗃️ Bases para Download",
@@ -121,13 +125,15 @@ MODULO_ADMIN = "admin"
 # Pasta sem grupo definido (ou com poucas abas) mostra as telas direto.
 GRUPOS_ABAS = {
     "corporativo": {
-        "💰 Financeiro": ["financeiro"],
+        "💰 Financeiro": ["compras"],
         "👥 Gente": ["gente"],
         "🦺 Segurança": ["seguranca"],
         "🚚 Logística": ["prod_entrega"],
-        "📈 Vendas": ["vendas"],
+        "📈 Vendas": ["faturamento"],
         "📊 Gestão": ["gestao"],
         "🗓️ Planejamento": ["planejamento"],
+        "📥 Relatórios": ["relatorios"],
+        "⚙️ Cadastros": ["cadastros"],
     },
     "puxada": {
         "🚛 Frota própria": ["carreteiro", "disponibilidade", "disp_motoristas", "pedidos_dia", "manutencao", "farol",
@@ -142,6 +148,7 @@ GRUPOS_ABAS = {
         "📈 Acompanhamento": ["cestas", "gestao_dia", "metas"],
     },
     "vendas": {
+        "📈 Acompanhamento": ["acompanhamento", "metas_cestas"],
         "🛍️ Comercial": ["comercial"],
         "🎯 Metas & ABC": ["metas", "abc"],
     },

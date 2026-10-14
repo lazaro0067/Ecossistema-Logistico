@@ -163,8 +163,8 @@ def cestas_para_metas(operacao_id: int, mes_ano: str) -> pd.DataFrame:
     from database.connection import query_df
 
     cestas = query_df(
-        """SELECT DISTINCT cesta FROM ressuprimento_diario WHERE operacao_id = ?
-           UNION SELECT DISTINCT cesta FROM metas_ressuprimento WHERE operacao_id = ?""",
+        f"""SELECT DISTINCT cesta FROM ressuprimento_diario WHERE operacao_id = ?
+           UNION SELECT DISTINCT cesta FROM {ressuprimento_repo.tabela_metas()} WHERE operacao_id = ?""",
         (operacao_id, operacao_id))
     metas = ressuprimento_repo.metas_df(operacao_id, mes_ano)
     df = cestas.merge(metas, on="cesta", how="left")
@@ -179,7 +179,7 @@ def salvar_meta(operacao_id: int, mes_ano: str, cesta: str, meta: float) -> None
 
 
 def excluir_meta(operacao_id: int, mes_ano: str, cesta: str) -> None:
-    execute("DELETE FROM metas_ressuprimento WHERE operacao_id = ? AND mes_ano = ? AND cesta = ?",
+    execute(f"DELETE FROM {ressuprimento_repo.tabela_metas()} WHERE operacao_id = ? AND mes_ano = ? AND cesta = ?",
             (operacao_id, mes_ano, cesta))
 
 

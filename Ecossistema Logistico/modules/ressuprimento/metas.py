@@ -44,14 +44,24 @@ def render(usuario: dict, operacao_id: int) -> None:
             raise RegraNegocioError("Informe o nome da cesta (coluna Código da cesta).")
         svc.salvar_meta(operacao_id, mes_ano, nome, nova.get("meta_volume_hl") or 0)
 
-    editor_autosave(base, f"ed_metas_{operacao_id}_{mes_ano}", ["meta_volume_hl", "cesta"], alterar, incluir,
+    editor_autosave(base, f"ed_metas_{ressuprimento_repo.fonte_atual()}_{operacao_id}_{mes_ano}", ["meta_volume_hl", "cesta"], alterar, incluir,
                     lambda l: svc.excluir_meta(operacao_id, mes_ano, l["cesta"]), column_config={
                         "indicador": "Indicador",
                         "meta_volume_hl": st.column_config.NumberColumn("Meta do mês (HL) ✏️", min_value=0, format="%.0f",
                                                                         step=100),
                         "cesta": st.column_config.TextColumn("Código da cesta (relatório)")})
     anterior = svc.mes_anterior(mes_ano)
-    if st.button(f"📋 Copiar metas de {ui.nome_mes(anterior)}", key="meta_copiar"):
+    b1, b2, _ = st.columns([1, 1, 1])
+    if b1.button(f"📋 Copiar metas de {ui.nome_mes(anterior)}", key="meta_copiar"):
         n = svc.copiar_metas(operacao_id, anterior, mes_ano)
         ui.avisar(f"{n} metas copiadas." if n else "O mês anterior não tem metas.", "success" if n else "warning")
+        st.rerun()
+    if ressuprimento_repo.fonte_atual() == "vendas" and b2.button("📋 Copiar metas do Ressuprimento",
+                                                                  key="meta_copiar_ress"):
+        with ressuprimento_repo.fonte("ressup"):
+            origem = ressuprimento_repo.metas_df(operacao_id, mes_ano)
+        for r in origem.itertuples():
+            ressuprimento_repo.salvar_meta(operacao_id, mes_ano, r.cesta, r.meta_volume_hl)
+        ui.avisar(f"{len(origem)} metas copiadas do Ressuprimento." if len(origem) else
+                  "O Ressuprimento não tem metas neste mês.", "success" if len(origem) else "warning")
         st.rerun()
