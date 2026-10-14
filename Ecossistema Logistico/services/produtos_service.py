@@ -40,9 +40,9 @@ def categoria_detalhada(desc, categoria=None) -> str:
     if emb in EMBALAGENS:
         return emb
     d = str(desc or "").upper()
-    if "CHOPP" in d or "KEG" in d or "BARRIL" in d:
+    if "KEG" in d or "BARRIL" in d or ("CHOPP" in d and not any(k in d for k in (" LT", "LATA", "ML", " 1L", "LONG"))):
         return "Chopp"
-    if "RET" in d or "RGB" in d:
+    if "RET" in d or "RGB" in d or (any(k in d for k in ("600", "300ML", "1L RET", "GFA")) and "PET" not in d):
         return "Retornável"
     if any(k in d for k in ("DESC", "LATA", " LT", "LONG", "PET")):
         return "Descartável"

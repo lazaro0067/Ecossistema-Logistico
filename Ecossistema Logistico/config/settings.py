@@ -104,7 +104,9 @@ MODULOS = {
     "compras": {"rotulo": "Compras & Insumos", "icone": "🛒", "abas": dict(_ABAS_REGISTRO)},
     "gente": {"rotulo": "Gente & SSMA", "icone": "👥", "abas": dict(_ABAS_REGISTRO)},
     "corporativo": {"rotulo": "Gestão Corporativa", "icone": "🏛️", "abas": {
-        "compras": "🛒 Compras de Mercadoria",
+        "compras": "🛒 Compras",
+        "vendas_fin": "💵 Vendas",
+        "margem": "📊 Resumo & Lucro Bruto",
         "gente": "👥 Gente",
         "seguranca": "🦺 Segurança",
         "prod_entrega": "🚚 Produtividade Entrega",
@@ -125,7 +127,7 @@ MODULO_ADMIN = "admin"
 # Pasta sem grupo definido (ou com poucas abas) mostra as telas direto.
 GRUPOS_ABAS = {
     "corporativo": {
-        "💰 Financeiro": ["compras"],
+        "💰 Financeiro": ["compras", "vendas_fin", "margem"],
         "👥 Gente": ["gente"],
         "🦺 Segurança": ["seguranca"],
         "🚚 Logística": ["prod_entrega"],

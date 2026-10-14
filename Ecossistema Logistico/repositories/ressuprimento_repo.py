@@ -26,11 +26,20 @@ def fonte_atual() -> str:
 
 
 def _so_vendas() -> str:
-    return " AND volume_venda_hl IS NOT NULL" if _FONTE.get() == "vendas" else ""
+    return ""
 
 
 def _col() -> str:
-    return "volume_venda_hl" if _FONTE.get() == "vendas" else "volume_real_hl"
+    # Vendas: coluna D (HL vendido); onde o relatório ainda não foi subido de novo com a D, usa a C do mesmo relatório
+    return "COALESCE(volume_venda_hl, volume_real_hl)" if _FONTE.get() == "vendas" else "volume_real_hl"
+
+
+def sem_coluna_d(operacao_id: int, mes_ano: str) -> int:
+    """Linhas do mês sem o HL vendido (coluna D) — relatório subido antes desta versão."""
+    f_sql, ids = operacoes_repo.filtro("operacao_id", operacao_id)
+    r = query_df(f"SELECT COUNT(*) AS n FROM ressuprimento_diario WHERE {f_sql} AND substr(data, 1, 7) = ? "
+                 "AND volume_venda_hl IS NULL", (*ids, mes_ano))
+    return int(r.iloc[0]["n"]) if not r.empty else 0
 
 
 def tabela_metas() -> str:
@@ -72,8 +81,13 @@ def meses_disponiveis(operacao_id: int) -> list[str]:
 
 def metas_df(operacao_id: int, mes_ano: str) -> pd.DataFrame:
     f_sql, ids = operacoes_repo.filtro("operacao_id", operacao_id)
-    return query_df(f"SELECT cesta, SUM(meta_volume_hl) AS meta_volume_hl FROM {tabela_metas()} "
-                    f"WHERE {f_sql} AND mes_ano = ? GROUP BY cesta", (*ids, mes_ano))
+    df = query_df(f"SELECT cesta, SUM(meta_volume_hl) AS meta_volume_hl FROM {tabela_metas()} "
+                  f"WHERE {f_sql} AND mes_ano = ? GROUP BY cesta", (*ids, mes_ano))
+    if df.empty and _FONTE.get() == "vendas":  # sem metas de vendas no mês: usa as do Ressuprimento
+        df = query_df(f"SELECT cesta, SUM(meta_volume_hl) AS meta_volume_hl FROM metas_ressuprimento "
+                      f"WHERE {f_sql} AND mes_ano = ? GROUP BY cesta", (*ids, mes_ano))
+        df.attrs["metas_do_ressuprimento"] = True
+    return df
 
 
 def salvar_meta(operacao_id: int, mes_ano: str, cesta: str, meta: float) -> None:

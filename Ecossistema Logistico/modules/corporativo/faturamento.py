@@ -1,7 +1,8 @@
 """Gestão Corporativa › 📈 Vendas › 💵 Faturamento  e  💰 Financeiro › 🛒 Compras de Mercadoria.
 
-Faturamento (03.02.37 vendas): total faturado (coluna Z) separado por operação (coluna C) — venda e bonificação
-conforme ⚙️ Cadastros —, HL vendido (coluna T × fator HL da 01.11) e R$/HL (faturamento das operações de venda ÷ HL).
+Faturamento (03.02.37 vendas): total faturado (coluna Z) separado por operação (coluna C). R$ e HL têm filtros
+próprios em ⚙️ Cadastros: R$ = operações de venda; HL = venda + bonificação (a bonificação ajuda a vender).
+R$/HL = R$ de venda ÷ HL (venda + bonificação). Compras: a mesma regra (HL = compra + bonificação recebida).
 Compras (03.02.37 compra): o mesmo para o que foi investido em mercadoria, com o comparativo compra × venda
 (R$/HL comprado × R$/HL vendido = margem por HL).
 Cada tela tem as visões 📅 Dia, 🗓️ Mês e 📆 Ano.
@@ -76,10 +77,11 @@ def _filtro_status(operacao_id: int, origem: str, chave: str) -> list[str]:
 
 # --- Tabelas -------------------------------------------------------------------------------------
 def _serie_fat(df: pd.DataFrame, grupos: dict, chave: str) -> pd.DataFrame:
-    """Uma linha por dia/mês: venda R$, HL, R$/HL, bonificação R$ e HL, notas."""
-    partes = fs.separar(df, grupos)
-    v, b = fs.serie(partes["venda"], chave), fs.serie(partes["bonif"], chave)
-    out = v.merge(b[[chave, "valor", "hl"]].rename(columns={"valor": "bonif", "hl": "hl_bonif"}), on=chave, how="outer")
+    """Uma linha por dia/mês: venda R$, HL (venda + bonificação), R$/HL, bonificação R$ e HL, notas."""
+    out = fs.serie_combinada(df, grupos["venda"], grupos["hl"], chave)
+    b = fs.serie(fs.separar(df, {"b": grupos["bonif"]})["b"], chave)
+    out = out.merge(b[[chave, "valor", "hl"]].rename(columns={"valor": "bonif", "hl": "hl_bonif"}), on=chave,
+                    how="outer")
     for c in ("valor", "hl", "notas", "qtde", "desconto", "bonif", "hl_bonif"):
         out[c] = pd.to_numeric(out.get(c), errors="coerce").fillna(0.0)
     out["rs_hl"] = out["valor"] / out["hl"].where(out["hl"] > 0)
@@ -91,7 +93,7 @@ def _vis_fat(s: pd.DataFrame, chave: str) -> pd.DataFrame:
     rot = (s[chave].map(lambda x: f"{dt.date.fromisoformat(x):%d/%m} ({_SEMANA[dt.date.fromisoformat(x).weekday()]})")
            if chave == "data" else s[chave].map(lambda x: f"{_MESES[int(x[5:]) - 1]}/{x[:4]}"))
     vis = pd.DataFrame({"Dia" if chave == "data" else "Mês": rot, "Faturado venda": s["valor"].map(_m),
-                        "HL vendido": s["hl"].map(_n), "R$/HL": s["rs_hl"].map(_m),
+                        "HL vendido (c/ bonif.)": s["hl"].map(_n), "R$/HL": s["rs_hl"].map(_m),
                         "Bonificação": s["bonif"].map(_m), "HL bonificado": s["hl_bonif"].map(_n),
                         "% bonif.": s["pct_bonif"].map(_p), "Desconto": s["desconto"].map(_m),
                         "Notas": s["notas"].map(_n)})
@@ -106,11 +108,15 @@ def _vis_operacoes(df: pd.DataFrame, grupos: dict) -> pd.DataFrame:
     po = fs.por_operacao(df)
     if po.empty:
         return po
-    marca = {c: "💵 venda" for c in grupos.get("venda", [])}
-    marca.update({c: "🎁 bonificação" for c in grupos.get("bonif", [])})
-    marca.update({c: "🛒 compra" for c in grupos.get("compra", [])})
+    def marca(c) -> str:
+        c = str(c)
+        r = ("R$ venda" if c in grupos.get("venda", []) else "R$ bonif." if c in grupos.get("bonif", [])
+             else "R$ compra" if c in grupos.get("compra", []) else "")
+        h = "HL" if c in grupos.get("hl", []) else ""
+        return " + ".join(x for x in (r, h) if x) or "—"
+
     vis = pd.DataFrame({"Operação": po["operacao"], "Tipo movto": po["tipo_movto"],
-                        "Conta em": po["operacao_cod"].map(lambda c: marca.get(str(c), "—")),
+                        "Conta em": po["operacao_cod"].map(marca),
                         "Valor (coluna Z)": po["valor"].map(_m), "HL": po["hl"].map(_n), "R$/HL": po["rs_hl"].map(_m),
                         "Notas": po["notas"].map(_n)})
     t = po[["valor", "hl", "notas"]].sum()
@@ -123,39 +129,42 @@ def _top(df: pd.DataFrame, rotulo: str, n: int = 30) -> pd.DataFrame:
         return df
     tot = df["valor"].sum()
     d = df.head(n)
-    return pd.DataFrame({rotulo: d.iloc[:, 0].astype(str) + " · " + d.iloc[:, 1].fillna("").astype(str),
+    cod_, nome_ = ("produto", "descricao") if "produto" in d else ("cliente", "nome")
+    return pd.DataFrame({rotulo: d[cod_].astype(str) + " · " + d[nome_].fillna("").astype(str),
                          "Valor": d["valor"].map(_m), "% do total": (d["valor"] / tot * 100).map(_p),
-                         "HL": d["hl"].map(lambda v: _n(v, 1)), "R$/HL": d["rs_hl"].map(_m)})
+                         "HL (c/ bonif.)": d["hl"].map(lambda v: _n(v, 1)), "R$/HL": d["rs_hl"].map(_m)})
 
 
 # --- Faturamento (vendas) ----------------------------------------------------------------------------
-def render_faturamento(usuario: dict, operacao_id: int) -> None:
-    st.markdown("##### 📈 Vendas › **💵 Faturamento** (03.02.37 vendas)")
+def render_faturamento(usuario: dict, operacao_id: int, titulo: str = "📈 Vendas › **💵 Faturamento**") -> None:
+    st.markdown(f"##### {titulo} (03.02.37 vendas)")
     op = ui.visao_acompanhamento(usuario, operacao_id, "faturamento")
     meses = fs.meses(op, "venda")
     if not meses:
         st.info("Ainda não há notas de venda. Suba a 03.02.37 vendas em 📥 Relatórios.")
         _ir_relatorios("fat")
         return
-    grupos = {"venda": fs.operacoes_do_setor("fat_venda"), "bonif": fs.operacoes_do_setor("fat_bonif")}
+    grupos = {"venda": fs.operacoes_do_setor("fat_venda"), "bonif": fs.operacoes_do_setor("fat_bonif"),
+              "hl": fs.operacoes_do_setor("hl_venda")}
     nomes = fs.nomes_operacoes()
-    st.caption("Venda: " + ", ".join(fs.rotulo_op(c, nomes) for c in grupos["venda"]) + " · Bonificação: "
-               + ", ".join(fs.rotulo_op(c, nomes) for c in grupos["bonif"]) + " — ajuste em ⚙️ Cadastros.")
+    lista = lambda cs: ", ".join(fs.rotulo_op(c, nomes) for c in cs)  # noqa: E731
+    st.caption(f"R$: {lista(grupos['venda'])} · HL: {lista(grupos['hl'])} (a bonificação soma no HL) · "
+               f"Bonificação à parte: {lista(grupos['bonif'])} — ajuste em ⚙️ Cadastros.")
     status = _filtro_status(op, "venda", "fat")
     visao, de, ate, rotulo, dia = _escolher_periodo(meses, "fat", op, "venda")
     df = fs.dia_df(op, "venda", de if visao != "dia" else dia, ate if visao != "dia" else dia, status)
     if df.empty:
         st.info(f"Sem notas em {rotulo}.")
         return
-    partes = fs.separar(df, grupos)
-    v, b = fs.totais(partes["venda"]), fs.totais(partes["bonif"])
+    v = fs.combinar(df, grupos["venda"], grupos["hl"])
+    b = fs.totais(fs.separar(df, {"b": grupos["bonif"]})["b"])
     tema.kpis([
         {"titulo": f"Faturado venda · {rotulo}", "valor": _m(v["valor"]), "icone": "💵", "status": "info",
          "detalhe": f"{_n(v['notas'])} notas · ticket {_m(_div(v['valor'], v['notas']))}"},
-        {"titulo": "HL vendido", "valor": f"{_n(v['hl'])} HL", "icone": "🍺", "status": "info",
-         "detalhe": f"{_n(v['qtde'])} caixas/unidades"},
-        {"titulo": "R$ por HL (venda)", "valor": _m(v["rs_hl"]), "icone": "📐", "status": "info",
-         "detalhe": "faturado das operações de venda ÷ HL"},
+        {"titulo": "HL vendido (venda + bonif.)", "valor": f"{_n(v['hl'])} HL", "icone": "🍺", "status": "info",
+         "detalhe": f"{_n(v['hl_rs'])} HL de venda + {_n(v['hl'] - v['hl_rs'])} HL de bonificação"},
+        {"titulo": "R$ por HL", "valor": _m(v["rs_hl"]), "icone": "📐", "status": "info",
+         "detalhe": "faturado de venda ÷ HL (venda + bonificação)"},
         {"titulo": "Bonificação", "valor": _m(b["valor"]), "icone": "🎁",
          "status": "atencao" if v["valor"] and b["valor"] / v["valor"] > .05 else "info",
          "detalhe": f"{_n(b['hl'])} HL · {_p(_div(b['valor'], v['valor']) * 100 if v['valor'] else None)} da venda"},
@@ -195,41 +204,44 @@ def render_faturamento(usuario: dict, operacao_id: int) -> None:
     c1, c2 = st.columns(2)
     with c1:
         tema.secao("🏆 Produtos (venda)")
-        ui.tabela(_top(fs.produto_df(op, "venda", m_de, m_ate, status, grupos["venda"]), "Produto"),
+        ui.tabela(_top(fs.produto_combinado(op, "venda", m_de, m_ate, status, grupos["venda"], grupos["hl"]),
+                       "Produto"),
                   baixar="faturamento_produtos")
     with c2:
         tema.secao("👥 Clientes (venda)")
-        ui.tabela(_top(fs.cliente_df(op, "venda", m_de, m_ate, status, grupos["venda"]), "Cliente"),
+        ui.tabela(_top(fs.cliente_combinado(op, "venda", m_de, m_ate, status, grupos["venda"], grupos["hl"]),
+                       "Cliente"),
                   baixar="faturamento_clientes")
 
 
 # --- Compras (investimento em mercadoria) -----------------------------------------------------------------
 def render_compras(usuario: dict, operacao_id: int) -> None:
-    st.markdown("##### 💰 Financeiro › **🛒 Compras de Mercadoria** (03.02.37 compra)")
+    st.markdown("##### 💰 Financeiro › **🛒 Compras** (03.02.37 compra)")
     op = ui.visao_acompanhamento(usuario, operacao_id, "compras")
     meses = fs.meses(op, "compra")
     if not meses:
         st.info("Ainda não há notas de compra. Suba a 03.02.37 compra em 📥 Relatórios.")
         _ir_relatorios("cmp")
         return
-    g_compra = fs.operacoes_do_setor("compra")
-    g_venda = fs.operacoes_do_setor("fat_venda")
+    g_compra, gh_compra = fs.operacoes_do_setor("compra"), fs.operacoes_do_setor("hl_compra")
+    g_venda, gh_venda = fs.operacoes_do_setor("fat_venda"), fs.operacoes_do_setor("hl_venda")
     nomes = fs.nomes_operacoes()
-    st.caption("Compra: " + ", ".join(fs.rotulo_op(c, nomes) for c in g_compra) + " · comparado com a venda ("
-               + ", ".join(fs.rotulo_op(c, nomes) for c in g_venda) + ") — ajuste em ⚙️ Cadastros.")
+    lista = lambda cs: ", ".join(fs.rotulo_op(c, nomes) for c in cs)  # noqa: E731
+    st.caption(f"Compra — R$: {lista(g_compra)} · HL: {lista(gh_compra)} │ Venda — R$: {lista(g_venda)} · HL: "
+               f"{lista(gh_venda)} (a bonificação soma no HL) — ajuste em ⚙️ Cadastros.")
     status = _filtro_status(op, "compra", "cmp")
     visao, de, ate, rotulo, dia = _escolher_periodo(meses, "cmp", op, "compra")
     a, b_ = (dia, dia) if visao == "dia" else (de, ate)
     dc = fs.dia_df(op, "compra", a, b_, status)
     dv = fs.dia_df(op, "venda", a, b_, fs.STATUS_PADRAO["venda"])
-    c = fs.totais(dc[dc["operacao_cod"].astype(str).isin(g_compra)])
-    v = fs.totais(dv[dv["operacao_cod"].astype(str).isin(g_venda)]) if not dv.empty else fs.totais(dv)
+    c = fs.combinar(dc, g_compra, gh_compra)
+    v = fs.combinar(dv, g_venda, gh_venda)
     margem_hl = (v["rs_hl"] - c["rs_hl"]) if v["rs_hl"] and c["rs_hl"] else None
     margem_pct = margem_hl / v["rs_hl"] * 100 if margem_hl is not None else None
     tema.kpis([
         {"titulo": f"Investido em mercadoria · {rotulo}", "valor": _m(c["valor"]), "icone": "🛒", "status": "info",
          "detalhe": f"{_n(c['notas'])} notas de compra"},
-        {"titulo": "HL comprado", "valor": f"{_n(c['hl'])} HL", "icone": "🍺", "status": "info",
+        {"titulo": "HL comprado (compra + bonif.)", "valor": f"{_n(c['hl'])} HL", "icone": "🍺", "status": "info",
          "detalhe": f"cobre {_p(_div(c['hl'], v['hl']) * 100 if v['hl'] else None)} do HL vendido"},
         {"titulo": "R$ por HL (compra)", "valor": _m(c["rs_hl"]), "icone": "📐", "status": "info",
          "detalhe": f"venda: {_m(v['rs_hl'])} por HL"},
@@ -244,8 +256,8 @@ def render_compras(usuario: dict, operacao_id: int) -> None:
 
     if visao != "dia":
         chave = "data" if visao == "mes" else "mes"
-        sc = fs.serie(dc[dc["operacao_cod"].astype(str).isin(g_compra)], chave)
-        sv = fs.serie(dv[dv["operacao_cod"].astype(str).isin(g_venda)], chave) if not dv.empty else fs.serie(dv, chave)
+        sc = fs.serie_combinada(dc, g_compra, gh_compra, chave)
+        sv = fs.serie_combinada(dv, g_venda, gh_venda, chave)
         s = sc.merge(sv[[chave, "valor", "hl", "rs_hl"]].rename(columns={"valor": "v_valor", "hl": "v_hl",
                                                                           "rs_hl": "v_rs_hl"}), on=chave, how="outer")
         s = s.sort_values(chave).reset_index(drop=True)
@@ -274,23 +286,182 @@ def render_compras(usuario: dict, operacao_id: int) -> None:
         ui.tabela(vis, baixar=f"compras_{rotulo}")
     tema.secao("🧾 Por operação de entrada", "Todas as operações das notas de entrada — “Conta em” mostra o que "
                "entra como compra de mercadoria.")
-    ui.tabela(_vis_operacoes(dc, {"compra": g_compra}), baixar="compras_por_operacao")
+    ui.tabela(_vis_operacoes(dc, {"compra": g_compra, "hl": gh_compra}), baixar="compras_por_operacao")
     if visao != "dia":
-        tema.secao("🏷️ Produtos: custo × preço de venda", "R$/HL de compra e de venda de cada produto no período.")
-        pc = fs.produto_df(op, "compra", de[:7], ate[:7], status, g_compra)
-        pv = fs.produto_df(op, "venda", de[:7], ate[:7], fs.STATUS_PADRAO["venda"], g_venda)
-        if pc.empty:
-            st.info("Sem produtos comprados no período.")
+        mg = fs.margem(op, de[:7], ate[:7], fs.STATUS_PADRAO["venda"], status)
+        if mg.empty:
             return
-        mg = pc.merge(pv[["produto", "valor", "hl", "rs_hl"]].rename(columns={"valor": "v_valor", "hl": "v_hl",
-                                                                              "rs_hl": "v_rs_hl"}),
-                      on="produto", how="left")
-        mg["margem"] = mg["v_rs_hl"] - mg["rs_hl"]
-        mg["margem_pct"] = mg["margem"] / mg["v_rs_hl"] * 100
-        ui.tabela(pd.DataFrame({
-            "Produto": mg["produto"].astype(str) + " · " + mg["descricao"].fillna(""),
-            "Compra (R$)": mg["valor"].map(_m), "HL comprado": mg["hl"].map(lambda x_: _n(x_, 1)),
-            "R$/HL compra": mg["rs_hl"].map(_m), "Venda (R$)": mg["v_valor"].map(_m),
-            "HL vendido": mg["v_hl"].map(lambda x_: _n(x_, 1)), "R$/HL venda": mg["v_rs_hl"].map(_m),
-            "Margem/HL": mg["margem"].map(_m), "Margem %": mg["margem_pct"].map(_p)}).head(60),
-            baixar="compras_custo_x_venda_produtos")
+        tema.secao("🏆 Top 10 e 🔻 Bottom 10 — margem bruta por produto",
+                   "Venda − custo (HL vendido × R$/HL de compra). Abertura completa em 💰 Financeiro › 📊 Resumo & Lucro Bruto.")
+        top_bottom(mg, "cmp")
+
+
+# --- Margem bruta -------------------------------------------------------------------------------------
+_ABERTURAS = {"tipo": "🍺 Tipo", "embalagem": "📦 Embalagem", "marca": "🏷️ Marca", "produto": "🔎 Produto"}
+
+
+def _vis_margem(d: pd.DataFrame, rotulo: str, col: str) -> pd.DataFrame:
+    nome = (d["produto"].astype(str) + " · " + d["descricao"].fillna("")) if col == "produto" else d[col]
+    return pd.DataFrame({
+        "": d["margem_pct"].map(lambda p: "⚪" if p is None or pd.isna(p) else "🟢" if p >= 20 else "🟡" if p >= 10
+                                else "🟠" if p >= 0 else "🔴"),
+        rotulo: nome, "Venda (R$)": d["venda"].map(_m), "HL vendido": d["hl_venda"].map(lambda v: _n(v, 1)),
+        "Preço/HL": (d["venda"] / d["hl_venda"].where(d["hl_venda"] > 0)).map(_m),
+        "Custo/HL": (d["cmv"] / d["hl_venda"].where(d["hl_venda"] > 0)).map(_m), "CMV (R$)": d["cmv"].map(_m),
+        "Margem (R$)": d["margem"].map(_m), "Margem %": d["margem_pct"].map(_p), "Margem/HL": d["margem_hl"].map(_m),
+    }).reset_index(drop=True)
+
+
+def _linha_total(d: pd.DataFrame, rotulo: str) -> pd.DataFrame:
+    t = d[["venda", "hl_venda", "cmv", "margem"]].sum()
+    return pd.DataFrame([{"": "Σ", rotulo: "TOTAL", "Venda (R$)": _m(t["venda"]), "HL vendido": _n(t["hl_venda"], 1),
+                          "Preço/HL": _m(_div(t["venda"], t["hl_venda"])), "Custo/HL": _m(_div(t["cmv"], t["hl_venda"])),
+                          "CMV (R$)": _m(t["cmv"]), "Margem (R$)": _m(t["margem"]),
+                          "Margem %": _p(_div(t["margem"], t["venda"]) * 100 if t["venda"] else None),
+                          "Margem/HL": _m(_div(t["margem"], t["hl_venda"]))}])
+
+
+def top_bottom(mg: pd.DataFrame, chave: str) -> None:
+    com = mg[mg["cmv"].notna() & (mg["venda"] > 0)]
+    if com.empty:
+        st.info("Sem produtos com custo para calcular a margem.")
+        return
+    ordem = st.segmented_control("Ordenar por", ["Margem (R$)", "Margem %"], default="Margem (R$)",
+                                 key=f"{chave}_tb_ordem") or "Margem (R$)"
+    col = "margem" if ordem == "Margem (R$)" else "margem_pct"
+    base = com if col == "margem" else com[com["hl_venda"] >= com["hl_venda"].quantile(.25)]  # % sem itens mínimos
+    top, bot = base.nlargest(10, col), base.nsmallest(10, col)
+    c1, c2 = st.columns(2)
+    for cx, titulo, d, cor in ((c1, "🏆 Top 10", top, graficos.CATEGORICAS[0]),
+                               (c2, "🔻 Bottom 10", bot, "#c0392b")):
+        with cx:
+            st.markdown(f"**{titulo}** — {ordem.lower()}")
+            graficos.mostrar(graficos.barras_h([f"{str(x)[:28]}" for x in d["descricao"].fillna(d["produto"])],
+                                               d[col].round(1 if col == "margem_pct" else 0), cores=cor,
+                                               sufixo="%" if col == "margem_pct" else "",
+                                               textos=[_p(v) if col == "margem_pct" else _m(v) for v in d[col]]),
+                             key=f"g_{chave}_{titulo[:3]}")
+            ui.tabela(_vis_margem(d, "Produto", "produto"), baixar=f"margem_{titulo[2:].strip().lower()}")
+
+
+def render_margem(usuario: dict, operacao_id: int) -> None:
+    st.markdown("##### 💰 Financeiro › **📊 Resumo & Lucro Bruto** (03.02.37 vendas × 03.02.37 compra)")
+    op = ui.visao_acompanhamento(usuario, operacao_id, "margem")
+    meses = fs.meses(op, "venda")
+    if not meses or not fs.meses(op, "compra"):
+        st.info("Para a margem é preciso ter a 03.02.37 vendas e a 03.02.37 compra carregadas.")
+        _ir_relatorios("mg")
+        return
+    c1, c2, c3 = st.columns([1.3, 1, 1])
+    with c1:
+        modo = ui._escolha("mg_modo", ["mes", "ano", "per"], "mes", pills=True,
+                           formatar={"mes": "🗓️ Mês", "ano": "📆 Ano", "per": "↔️ Meses"}.get)
+    if modo == "mes":
+        m = ui.seletor_mes("Mês", meses, key="mg_mes", container=c2)
+        de, ate, rotulo = m, m, ui.nome_mes(m)
+    elif modo == "ano":
+        a = c2.selectbox("Ano", sorted({x[:4] for x in meses}, reverse=True), key="mg_ano")
+        de, ate, rotulo = f"{a}-01", f"{a}-12", f"ano {a}"
+    else:
+        de = ui.seletor_mes("De", sorted(meses), key="mg_de", container=c2)
+        ate = ui.seletor_mes("Até", meses, key="mg_ate", container=c3)
+        de, ate = min(de, ate), max(de, ate)
+        rotulo = f"{ui.nome_mes(de)} a {ui.nome_mes(ate)}"
+    mg = fs.margem(op, de, ate)
+    if mg.empty:
+        st.info(f"Sem vendas em {rotulo}.")
+        return
+    com = mg[mg["cmv"].notna()]
+    t = com[["venda", "hl_venda", "cmv", "margem"]].sum()
+    sem = mg[mg["cmv"].isna()]
+    pct = _div(t["margem"], t["venda"]) * 100 if t["venda"] else None
+    # resumo total: venda, bonificação, compra (investido), CMV e lucro bruto
+    m_de, m_ate = fs.periodo_mes(de)[0], fs.periodo_mes(ate)[1]
+    dv = fs.dia_df(op, "venda", m_de, m_ate, fs.STATUS_PADRAO["venda"])
+    dc = fs.dia_df(op, "compra", m_de, m_ate, fs.STATUS_PADRAO["compra"])
+    bonif = fs.totais(fs.separar(dv, {"b": fs.operacoes_do_setor("fat_bonif")})["b"])
+    compra = fs.combinar(dc, fs.operacoes_do_setor("compra"), fs.operacoes_do_setor("hl_compra"))
+    tema.secao(f"🧾 Resumo · {rotulo}")
+    tema.kpis([
+        {"titulo": "Vendas (R$)", "valor": _m(mg["venda"].sum()), "icone": "💵", "status": "info",
+         "detalhe": f"{_n(mg['hl_venda'].sum())} HL (venda + bonificação)"},
+        {"titulo": "Bonificação concedida", "valor": _m(bonif["valor"]), "icone": "🎁", "status": "info",
+         "detalhe": f"{_n(bonif['hl'])} HL · entra no HL, não no R$"},
+        {"titulo": "Compras (investido)", "valor": _m(compra["valor"]), "icone": "🛒", "status": "info",
+         "detalhe": f"{_n(compra['hl'])} HL · {_m(compra['rs_hl'])} por HL"},
+        {"titulo": "Custo da mercadoria vendida", "valor": _m(t["cmv"]), "icone": "📦", "status": "info",
+         "detalhe": f"{_m(_div(t['cmv'], t['hl_venda']))} por HL vendido"},
+        {"titulo": "Lucro bruto", "valor": _m(t["margem"]), "icone": "💰",
+         "status": "neutro" if pct is None else "bom" if pct >= 20 else "atencao" if pct >= 10 else "critico",
+         "detalhe": f"margem {_p(pct)} · {_m(_div(t['margem'], t['hl_venda']))} por HL"},
+        {"titulo": "Produtos com margem negativa", "valor": _n((com["margem"] < 0).sum()), "icone": "🔻",
+         "status": "critico" if (com["margem"] < 0).any() else "bom",
+         "detalhe": f"{_m(com.loc[com['margem'] < 0, 'margem'].sum())} de margem negativa",
+         "dados": _vis_margem(com[com["margem"] < 0].sort_values("margem"), "Produto", "produto")},
+        {"titulo": "Sem custo de compra", "valor": _n(len(sem)), "icone": "❔",
+         "status": "atencao" if len(sem) else "bom", "detalhe": f"{_m(sem['venda'].sum())} de venda fora da conta",
+         "dados": pd.DataFrame({"Produto": sem["produto"].astype(str) + " · " + sem["descricao"].fillna(""),
+                                "Venda": sem["venda"].map(_m), "HL": sem["hl_venda"].map(lambda v: _n(v, 1))})
+         if len(sem) else None},
+    ], key="kp_margem")
+    if de != ate:  # mais de um mês: lucro bruto mês a mês
+        linhas = []
+        for m in sorted(x for x in meses if de <= x <= ate):
+            mm = fs.margem(op, m, m)
+            c_ = mm[mm["cmv"].notna()] if not mm.empty else mm
+            if c_.empty:
+                continue
+            linhas.append({"Mês": f"{ui.nome_mes(m)}", "venda": c_["venda"].sum(), "cmv": c_["cmv"].sum(),
+                           "margem": c_["margem"].sum(), "hl": c_["hl_venda"].sum()})
+        if linhas:
+            lm = pd.DataFrame(linhas)
+            graficos.mostrar(graficos.barras(lm["Mês"], {"Vendas (R$ mil)": (lm["venda"] / 1000).round(1),
+                                                         "CMV (R$ mil)": (lm["cmv"] / 1000).round(1),
+                                                         "Lucro bruto (R$ mil)": (lm["margem"] / 1000).round(1)},
+                                             titulo="Vendas, custo e lucro bruto por mês"), key="g_mg_meses")
+            vis = pd.DataFrame({"Mês": lm["Mês"], "Vendas": lm["venda"].map(_m), "CMV": lm["cmv"].map(_m),
+                                "Lucro bruto": lm["margem"].map(_m),
+                                "Margem %": (lm["margem"] / lm["venda"] * 100).map(_p),
+                                "Lucro/HL": (lm["margem"] / lm["hl"]).map(_m)})
+            vis.loc[len(vis)] = ["TOTAL", _m(lm["venda"].sum()), _m(lm["cmv"].sum()), _m(lm["margem"].sum()),
+                                 _p(_div(lm["margem"].sum(), lm["venda"].sum()) * 100),
+                                 _m(_div(lm["margem"].sum(), lm["hl"].sum()))]
+            ui.tabela(vis, baixar="lucro_bruto_mensal")
+    origem = com["origem_custo"].value_counts()
+    st.caption("Custo/HL: " + " · ".join(f"{k}: {v} produtos" for k, v in origem.items())
+               + ". Venda = operações de R$ de venda; HL = venda + bonificação (⚙️ Cadastros).")
+
+    tema.secao("🏆 Top 10 e 🔻 Bottom 10 por produto")
+    top_bottom(mg, "mg")
+
+    tema.secao("🧩 Abertura da margem")
+    ab = ui._escolha("mg_abertura", list(_ABERTURAS), "tipo", formatar=_ABERTURAS.get, pills=True)
+    f1, f2, f3 = st.columns(3)
+    ft = f1.multiselect("Tipo", sorted(com["tipo"].unique()), key="mg_ft", placeholder="Todos")
+    fe = f2.multiselect("Embalagem", sorted(com["embalagem"].unique()), key="mg_fe", placeholder="Todas")
+    fm = f3.multiselect("Marca", sorted(com["marca"].unique()), key="mg_fm", placeholder="Todas")
+    d = com
+    if ft:
+        d = d[d["tipo"].isin(ft)]
+    if fe:
+        d = d[d["embalagem"].isin(fe)]
+    if fm:
+        d = d[d["marca"].isin(fm)]
+    if d.empty:
+        st.info("Nada com esses filtros.")
+        return
+    rot = _ABERTURAS[ab].split(" ", 1)[1]
+    g = d.sort_values("margem", ascending=False) if ab == "produto" else fs.margem_por(d, ab)
+    if ab != "produto":
+        graficos.mostrar(graficos.barras_h(g[ab], g["margem"].round(0), textos=[
+            f"{_m(m)} · {_p(p)}" for m, p in zip(g["margem"], g["margem_pct"])], cores=[
+            graficos.CATEGORICAS[0] if m >= 0 else "#c0392b" for m in g["margem"]], titulo=f"Margem bruta por {rot.lower()}"),
+            key=f"g_mg_{ab}")
+    vis = _vis_margem(g, rot, ab)
+    if ab != "produto":
+        vis.insert(2, "Produtos", g["produtos"].map(_n).values)
+        vis["Part. na margem"] = g["part"].map(_p).values
+    ui.tabela(pd.concat([vis, _linha_total(d, rot)], ignore_index=True).fillna(""), baixar=f"margem_por_{ab}")
+    if ab == "produto":
+        st.caption("Custo de cada produto: " + "compra do período, custo médio histórico ou média da categoria "
+                   "(ver coluna no Excel).")

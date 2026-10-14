@@ -19,11 +19,14 @@ from database.connection import execute, get_conn, query_df
 from repositories import operacoes_repo
 from services.erros import RegraNegocioError
 
+# R$ e HL têm filtros separados: a bonificação ajuda a vender, então entra no HL (e no R$/HL), mas não no R$.
 SETORES = {
-    "fat_venda": ("💵 Faturamento — Venda", ["1"]),
-    "fat_bonif": ("🎁 Faturamento — Bonificação", ["2"]),
+    "fat_venda": ("💵 Faturamento (R$) — operações de venda", ["1"]),
+    "fat_bonif": ("🎁 Bonificação (R$) — mostrada à parte", ["2"]),
+    "hl_venda": ("🍺 HL vendido — venda + bonificação", ["1", "2"]),
     "entrega": ("🚚 Produtividade Entrega", ["1"]),
-    "compra": ("🛒 Compras de mercadoria", ["251"]),
+    "compra": ("🛒 Compras (R$) — operações de compra de mercadoria", ["251"]),
+    "hl_compra": ("🍺 HL comprado — compra + bonificação recebida", ["251", "314"]),
 }
 STATUS_PADRAO = {"venda": ["A"], "compra": ["A", "E"]}
 _STATUS_NOME = {"A": "A · Ativa", "C": "C · Cancelada", "D": "D · Devolvida", "E": "E · Entrada/Estorno"}
@@ -268,6 +271,56 @@ def separar(df: pd.DataFrame, grupos: dict[str, list[str]]) -> dict[str, pd.Data
     return {k: df[df["operacao_cod"].astype(str).isin(v)] for k, v in grupos.items()}
 
 
+def combinar(df: pd.DataFrame, ops_rs: list[str], ops_hl: list[str]) -> dict:
+    """R$ das operações de R$ ÷ HL das operações de HL (que somam a bonificação)."""
+    cods = df["operacao_cod"].astype(str) if not df.empty else pd.Series(dtype=str)
+    rs = df[cods.isin(ops_rs)] if not df.empty else df
+    hl = df[cods.isin(ops_hl)] if not df.empty else df
+    t = totais(rs)
+    t_hl = totais(hl)
+    t["hl"], t["qtde"] = t_hl["hl"], t_hl["qtde"]
+    t["hl_rs"] = totais(rs)["hl"]  # HL só das operações de R$ (ex.: só venda)
+    t["rs_hl"] = t["valor"] / t["hl"] if t["hl"] else None
+    return t
+
+
+def serie_combinada(df: pd.DataFrame, ops_rs: list[str], ops_hl: list[str], chave: str) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame(columns=[chave, "valor", "hl", "rs_hl", "notas", "qtde", "desconto"])
+    cods = df["operacao_cod"].astype(str)
+    r = serie(df[cods.isin(ops_rs)], chave)
+    h = serie(df[cods.isin(ops_hl)], chave)
+    out = r.drop(columns=["hl", "rs_hl", "qtde"]).merge(h[[chave, "hl", "qtde"]], on=chave, how="outer")
+    for c in ("valor", "hl", "notas", "qtde", "desconto"):
+        out[c] = pd.to_numeric(out[c], errors="coerce").fillna(0.0)
+    out["rs_hl"] = out["valor"] / out["hl"].where(out["hl"] > 0)
+    return out.sort_values(chave).reset_index(drop=True)
+
+
+def produto_combinado(operacao_id: int, origem: str, mes_de: str, mes_ate: str, status, ops_rs, ops_hl) -> pd.DataFrame:
+    r = produto_df(operacao_id, origem, mes_de, mes_ate, status, ops_rs)
+    h = produto_df(operacao_id, origem, mes_de, mes_ate, status, ops_hl)
+    out = r.drop(columns=["hl", "rs_hl", "qtde"]).merge(h[["produto", "descricao", "hl", "qtde"]],
+                                                       on="produto", how="outer", suffixes=("", "_h"))
+    out["descricao"] = out["descricao"].fillna(out.pop("descricao_h"))
+    for c in ("valor", "hl", "qtde"):
+        out[c] = pd.to_numeric(out[c], errors="coerce").fillna(0.0)
+    out["rs_hl"] = out["valor"] / out["hl"].where(out["hl"] > 0)
+    return out.sort_values("valor", ascending=False).reset_index(drop=True)
+
+
+def cliente_combinado(operacao_id: int, origem: str, mes_de: str, mes_ate: str, status, ops_rs, ops_hl) -> pd.DataFrame:
+    r = cliente_df(operacao_id, origem, mes_de, mes_ate, status, ops_rs)
+    h = cliente_df(operacao_id, origem, mes_de, mes_ate, status, ops_hl)
+    out = r.drop(columns=["hl", "rs_hl"]).merge(h[["cliente", "nome", "hl"]], on="cliente", how="outer",
+                                                suffixes=("", "_h"))
+    out["nome"] = out["nome"].fillna(out.pop("nome_h"))
+    for c in ("valor", "hl", "notas"):
+        out[c] = pd.to_numeric(out[c], errors="coerce").fillna(0.0)
+    out["rs_hl"] = out["valor"] / out["hl"].where(out["hl"] > 0)
+    return out.sort_values("valor", ascending=False).reset_index(drop=True)
+
+
 def totais(df: pd.DataFrame) -> dict:
     v, h = float(df["valor"].sum()), float(df["hl"].sum())
     return {"valor": v, "hl": h, "rs_hl": v / h if h else None, "notas": float(df["notas"].sum()),
@@ -315,3 +368,76 @@ def hoje() -> dt.date:
 
 def ler_bytes(arquivo) -> bytes:
     return arquivo.getvalue() if hasattr(arquivo, "getvalue") else io.BytesIO(arquivo).getvalue()
+
+
+# --- Margem bruta -------------------------------------------------------------------------------------
+def margem(operacao_id: int, mes_de: str, mes_ate: str, status_venda=None, status_compra=None) -> pd.DataFrame:
+    """Margem bruta por produto no período.
+
+    Venda R$ = operações de R$ de venda · HL vendido = venda + bonificação.
+    Custo/HL = R$ de compra ÷ HL comprado (compra + bonificação recebida) do próprio produto no período;
+    sem compra no período, usa o custo médio de todo o histórico carregado; sem nenhum, a média da categoria.
+    CMV = HL vendido × custo/HL · Margem = venda − CMV.
+    """
+    from services import produtos_service as ps
+
+    sv = status_venda if status_venda is not None else STATUS_PADRAO["venda"]
+    sc = status_compra if status_compra is not None else STATUS_PADRAO["compra"]
+    ov, ohv = operacoes_do_setor("fat_venda"), operacoes_do_setor("hl_venda")
+    oc, ohc = operacoes_do_setor("compra"), operacoes_do_setor("hl_compra")
+    v = produto_combinado(operacao_id, "venda", mes_de, mes_ate, sv, ov, ohv)
+    if v.empty:
+        return v
+    c = produto_combinado(operacao_id, "compra", mes_de, mes_ate, sc, oc, ohc)
+    hist = produto_combinado(operacao_id, "compra", "0000-00", "9999-99", sc, oc, ohc)
+    df = v.rename(columns={"valor": "venda", "hl": "hl_venda", "qtde": "qtde_venda", "rs_hl": "preco_hl"})
+    df = df.merge(c[["produto", "valor", "hl"]].rename(columns={"valor": "compra", "hl": "hl_compra"}),
+                  on="produto", how="left")
+    df = df.merge(hist[["produto", "rs_hl"]].rename(columns={"rs_hl": "custo_hist"}), on="produto", how="left")
+    df["custo_periodo"] = df["compra"] / df["hl_compra"].where(df["hl_compra"] > 0)
+    cad = query_df("SELECT cod, descricao, tipo, categoria FROM produtos")
+    cad["produto"] = pd.to_numeric(cad["cod"], errors="coerce").astype("Int64").astype(str)
+    df["produto"] = df["produto"].astype(str).str.strip().str.lstrip("0")
+    df = df.merge(cad[["produto", "tipo", "categoria"]].drop_duplicates("produto"), on="produto", how="left")
+    df["tipo"] = df["tipo"].fillna("").map(lambda t: {"CERVEJA": "Cerveja", "NAB": "NAB", "MKTPLACE": "Marketplace"}
+                                             .get(str(t).upper().strip(), "Sem tipo"))
+    df["embalagem"] = [ps.categoria_detalhada(d, c_) for d, c_ in zip(df["descricao"], df["categoria"])]
+    df["marca"] = df["descricao"].map(ps.marca)
+    df["custo_hl"] = df["custo_periodo"]
+    df["origem_custo"] = "compra do período"
+    sem = df["custo_hl"].isna() & df["custo_hist"].notna()
+    df.loc[sem, "custo_hl"] = df.loc[sem, "custo_hist"]
+    df.loc[sem, "origem_custo"] = "custo médio histórico"
+    # sem custo nenhum: estima pela relação custo ÷ preço da mesma categoria (tipo + embalagem) — evita aplicar o
+    # custo/HL de cerveja numa água, por exemplo
+    base = df[df["custo_hl"].notna() & (df["hl_venda"] > 0) & (df["venda"] > 0)]
+    base = base.assign(cmv=base["custo_hl"] * base["hl_venda"])
+    soma = base.groupby(["tipo", "embalagem"])[["cmv", "venda"]].sum()
+    razao = (soma["cmv"] / soma["venda"]).to_dict()
+    geral = float(base["cmv"].sum() / base["venda"].sum()) if base["venda"].sum() else float("nan")
+    falta = df["custo_hl"].isna() & (df["hl_venda"] > 0)
+    df.loc[falta, "custo_hl"] = [float(pr * razao.get((t, e), geral)) if pd.notna(pr) else float("nan")
+                                 for pr, t, e in zip(df.loc[falta, "preco_hl"], df.loc[falta, "tipo"],
+                                                     df.loc[falta, "embalagem"])]
+    df.loc[falta & df["custo_hl"].notna(), "origem_custo"] = "estimado (margem média da categoria)"
+    df.loc[df["custo_hl"].isna(), "origem_custo"] = "sem custo"
+    df["cmv"] = df["hl_venda"] * df["custo_hl"]
+    df["margem"] = df["venda"] - df["cmv"]
+    df["margem_pct"] = df["margem"] / df["venda"].where(df["venda"] > 0) * 100
+    df["margem_hl"] = df["margem"] / df["hl_venda"].where(df["hl_venda"] > 0)
+    return df.sort_values("margem", ascending=False).reset_index(drop=True)
+
+
+def margem_por(df: pd.DataFrame, chave: str) -> pd.DataFrame:
+    """Abertura da margem (tipo, embalagem, marca…) — só produtos com custo."""
+    d = df[df["cmv"].notna()]
+    if d.empty:
+        return d
+    g = d.groupby(chave, as_index=False)[["venda", "hl_venda", "cmv", "margem"]].sum()
+    g["produtos"] = g[chave].map(d.groupby(chave)["produto"].nunique())
+    g["margem_pct"] = g["margem"] / g["venda"].where(g["venda"] > 0) * 100
+    g["margem_hl"] = g["margem"] / g["hl_venda"].where(g["hl_venda"] > 0)
+    g["preco_hl"] = g["venda"] / g["hl_venda"].where(g["hl_venda"] > 0)
+    g["custo_hl"] = g["cmv"] / g["hl_venda"].where(g["hl_venda"] > 0)
+    g["part"] = g["margem"] / g["margem"].sum() * 100 if g["margem"].sum() else None
+    return g.sort_values("margem", ascending=False).reset_index(drop=True)

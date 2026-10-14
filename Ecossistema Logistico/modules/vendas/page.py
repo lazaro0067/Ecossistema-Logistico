@@ -125,18 +125,26 @@ def render(usuario: dict, operacao_id: int) -> None:
 
 
 def aba_acompanhamento(usuario: dict, operacao_id: int) -> None:
-    """Mesma análise do Ressuprimento (cestas × meta × tendência + diário), com o HL VENDIDO (coluna D)."""
+    """Mesma análise e mesmo relatório do Ressuprimento (cestas × meta × tendência + diário), com o HL VENDIDO."""
     from modules.ressuprimento import cestas
     from repositories import ressuprimento_repo
 
-    st.caption("HL vendido = coluna D do relatório de ressuprimento (“Volume (hl) Real”). Metas em 🎯 Metas por Cesta.")
     op = ui.visao_acompanhamento(usuario, operacao_id, "vendas_cestas")
     with ressuprimento_repo.fonte("vendas"):
-        if not ressuprimento_repo.meses_disponiveis(op):
-            st.info("Ainda não há HL vendido (coluna D). Suba de novo o relatório de ressuprimento diário em "
-                    "📥 Atualizar relatórios — a coluna D passa a ser gravada.")
+        meses = ressuprimento_repo.meses_disponiveis(op)
+        if not meses:
+            st.info("Ainda não há o relatório de ressuprimento diário carregado. Suba em 📥 Atualizar relatórios.")
             return
-        cestas.acompanhamento(op, chave="vces")
+        mes = meses[0]
+        avisos = []
+        if ressuprimento_repo.sem_coluna_d(op, mes):
+            avisos.append("parte do mês está com o HL **puxado (coluna C)** — suba de novo o relatório de ressuprimento "
+                          "diário para gravar o HL **vendido (coluna D)**")
+        if ressuprimento_repo.metas_df(op, mes).attrs.get("metas_do_ressuprimento"):
+            avisos.append("metas: usando as do **Ressuprimento** (cadastre metas próprias em 🎯 Metas por Cesta)")
+        st.caption("📊 Mesmo relatório do Acompanhamento do Ressuprimento · HL vendido = coluna D."
+                   + ("  \n⚠️ " + " · ".join(avisos) if avisos else ""))
+        cestas.acompanhamento(op, chave="vces", grade=True)
 
 
 def aba_metas_cestas(usuario: dict, operacao_id: int) -> None:

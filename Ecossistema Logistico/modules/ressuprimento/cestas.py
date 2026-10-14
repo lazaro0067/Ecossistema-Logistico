@@ -111,7 +111,42 @@ def acompanhamento_dia(operacao_id: int, mes_ano: str, chave: str = "ces") -> No
     ui.downloads(d.drop(columns=["cesta"]), f"cesta_diaria_{mes_ano}", key=f"dl_{chave}_dia")
 
 
-def acompanhamento(operacao_id: int, chave: str = "ces", com_graficos: bool = True) -> None:
+_CSS_GRADE = """
+<style>
+.vc-grade { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:.7rem; margin:.4rem 0 1rem; }
+.vc-card { background:#fff; border:1px solid #dfe5ee; border-radius:14px; padding:.75rem .9rem; border-top:5px solid var(--c); }
+.vc-card .t { font-size:.74rem; color:#52514e; font-weight:700; text-transform:uppercase; letter-spacing:.02em;
+    min-height:2.1em; }
+.vc-card .v { font-size:1.45rem; font-weight:900; color:#0B1F3A; line-height:1.1; margin-top:.2rem; }
+.vc-card .v small { font-size:.8rem; color:#6b6a65; font-weight:600; }
+.vc-card .m { font-size:.8rem; color:#52514e; margin-top:.15rem; }
+.vc-bar { height:9px; background:#eef1f6; border-radius:6px; margin:.5rem 0 .25rem; overflow:hidden; }
+.vc-bar span { display:block; height:100%; background:var(--c); border-radius:6px; }
+.vc-card .p { display:flex; justify-content:space-between; font-size:.78rem; font-weight:700; color:var(--c); }
+</style>
+"""
+
+
+def grade_cestas(df: pd.DataFrame) -> None:
+    """Um cartão por cesta: real, meta, barra da tendência e pendência — leitura rápida."""
+    import html
+
+    cards = []
+    for _, r in df.iterrows():
+        tem = r["meta"] > 0
+        p = float(r["ating_tend"]) if tem and pd.notna(r["ating_tend"]) else None
+        cor = tema.STATUS[tema.status_atingimento(p)][0] if p is not None else "#9aa3b2"
+        cards.append(
+            f'<div class="vc-card" style="--c:{cor}"><div class="t">{html.escape(str(r["indicador"]))}</div>'
+            f'<div class="v">{ui.numero(r["real"])} <small>HL</small></div>'
+            f'<div class="m">meta {ui.numero(r["meta"]) if tem else "—"} · tendência {ui.numero(r["tendencia"])}</div>'
+            f'<div class="vc-bar"><span style="width:{min(p or 0, 100):.0f}%"></span></div>'
+            f'<div class="p"><span>{ui.pct(p) if p is not None else "sem meta"}</span>'
+            f'<span>{(ui.numero(r["pendencia"]) + " HL") if tem else ""}</span></div></div>')
+    st.markdown(_CSS_GRADE + '<div class="vc-grade">' + "".join(cards) + "</div>", unsafe_allow_html=True)
+
+
+def acompanhamento(operacao_id: int, chave: str = "ces", com_graficos: bool = True, grade: bool = False) -> None:
     hoje = tempo.hoje()
     c1, c2 = st.columns([1, 3])
     ano = c1.number_input("Ano", min_value=2024, max_value=2035, value=hoje.year, key=f"{chave}_ano")
@@ -135,6 +170,8 @@ def acompanhamento(operacao_id: int, chave: str = "ces", com_graficos: bool = Tr
          "status": ("bom" if tot["pendencia"] >= 0 else "critico") if tot["meta"] else "neutro",
          "detalhe": "cestas abaixo da meta: clique" if len(neg) else "", "dados": neg},
     ], key=f"kp_{chave}")
+    if grade:
+        grade_cestas(df)
     ui.tabela(_legivel(df), column_config={
         "": st.column_config.TextColumn("", width="small"),
         "Ating. tendência": st.column_config.ProgressColumn("Ating. tendência", format="%.0f%%", min_value=0,

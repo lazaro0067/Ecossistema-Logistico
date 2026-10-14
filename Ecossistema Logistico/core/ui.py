@@ -71,6 +71,9 @@ def tabela(df: pd.DataFrame, vazio: str = "Nenhum registro encontrado.", baixar:
     if df is None or df.empty:
         st.info(vazio)
         return
+    if "height" not in kwargs:
+        # altura certa para as linhas + espaço da barra de rolagem horizontal (não cobre a última linha)
+        kwargs["height"] = (min(len(df), 15) + 1) * 35 + 3 + 18
     st.dataframe(df, hide_index=True, **LARGURA, **kwargs)
     if baixar:
         _baixar_tabela(df, baixar if isinstance(baixar, str) else "relatorio")

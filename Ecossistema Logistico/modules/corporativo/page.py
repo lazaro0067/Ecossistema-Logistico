@@ -36,5 +36,6 @@ def render(usuario: dict, operacao_id: int) -> None:
     ui.cabecalho_modulo("corporativo")
     abas = {a: (lambda u, o, a=a: _em_construcao(u, a)) for a in _PLANO}
     abas.update({"prod_entrega": prod_entrega.render, "faturamento": faturamento.render_faturamento,
-                 "compras": faturamento.render_compras, "relatorios": relatorios.render, "cadastros": cadastros.render})
+                 "compras": faturamento.render_compras, "margem": faturamento.render_margem,
+                 "vendas_fin": lambda u, o: faturamento.render_faturamento(u, o, "💰 Financeiro › **💵 Vendas**"), "relatorios": relatorios.render, "cadastros": cadastros.render})
     ui.abas_modulo(usuario, "corporativo", abas, usuario, operacao_id)

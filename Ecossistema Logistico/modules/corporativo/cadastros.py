@@ -20,7 +20,7 @@ def render(usuario: dict, operacao_id: int) -> None:
     rot = lambda c: fs.rotulo_op(c, nomes)  # noqa: E731
 
     for setor, (titulo, padrao) in fs.SETORES.items():
-        origem = "compra" if setor == "compra" else "venda"
+        origem = "compra" if setor in ("compra", "hl_compra") else "venda"
         vistos = set(bases.loc[bases["origem"] == origem, "codigo"].astype(str)) if not bases.empty else set()
         lista = sorted(set(opcoes) if not vistos else vistos | set(fs.operacoes_do_setor(setor)),
                        key=lambda c: (len(c), c))
