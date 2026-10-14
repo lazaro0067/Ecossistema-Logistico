@@ -4,6 +4,7 @@
 2. 03.02.37 vendas ...................... Produtividade Entrega (HL por mapa) + 💵 Faturamento
 3. 03.02.37 compra ...................... 🛒 Compras de Mercadoria (Financeiro)
 4. Relatório de operações ............... nomes das operações (para os filtros e o ⚙️ Cadastro por setor)
+5. 02.05.02 (saldo inicial e final) ..... 🏬 Estoque, lucro bruto real e 📑 DRE
 """
 import datetime as dt
 
@@ -11,6 +12,7 @@ import streamlit as st
 
 from core import tema, ui
 from repositories import operacoes_repo
+from services import estoque_valor_service as ev
 from services import faturamento_service as fs
 from services import produtividade_entrega_service as pe
 from services.erros import RegraNegocioError
@@ -87,3 +89,32 @@ def render(usuario: dict, operacao_id: int) -> None:
         _card("4. Relatório de operações", f"{ult['operacoes']} operações cadastradas",
               "Código; Tipo Movimento; Nome da Operação — dá nome às operações nos filtros e no ⚙️ Cadastro.",
               "operacoes", ["csv", "zip"], operacoes, usuario)
+    _card_estoque(usuario, operacao_id)
+
+
+def _card_estoque(usuario: dict, operacao_id: int) -> None:
+    ult = ev.ultimo_saldo(operacao_id)
+    with st.container(border=True):
+        st.markdown(f"**5. 02.05.02 — saldo de estoque (inicial e final do mês)**  \nÚltimo saldo inicial: "
+                    f"{_quando(ult['inicial'])} · último saldo final: {_quando(ult['final'])}")
+        st.caption("Coluna AD = valor do estoque (custo médio) · AB = quantidade em unidades ÷ fator (X) = unidade de "
+                   "venda → HL pela 01.11 · B = depósito. → 🏬 Estoque, 📊 Lucro bruto real e 📑 DRE.")
+        c1, c2, c3 = st.columns([1, 1, 2])
+        meses = [ev.mes_atual()]
+        for _ in range(12):
+            meses.append(ev.mes_anterior(meses[-1]))
+        mes = c1.selectbox("Mês", meses, format_func=ui.nome_mes, key="rel_ev_mes")
+        tipo = c2.radio("Saldo", list(ev.TIPOS_SALDO), format_func=ev.TIPOS_SALDO.get, key="rel_ev_tipo",
+                        horizontal=True)
+        arq = c3.file_uploader("02.05.02", type=["csv", "zip"], key="rel_up_estoque", label_visibility="collapsed")
+        if arq is not None and st.button("Gravar saldo", key="rel_gravar_estoque", type="primary"):
+            try:
+                with st.spinner("Lendo o estoque..."):
+                    r = ev.importar(arq.getvalue(), arq.name, operacao_id, mes, tipo, usuario.get("nome", ""))
+            except RegraNegocioError as e:
+                st.error(str(e))
+            else:
+                ui.avisar(f"{ev.TIPOS_SALDO[tipo]} de {ui.nome_mes(mes)}: {r['itens']} itens · {r['depositos']} "
+                          f"depósitos · {ui.moeda(r['valor'])} · {ui.numero(r['hl'])} HL."
+                          + (f" {r['sem_fator']} item(ns) sem fator HL na 01.11." if r["sem_fator"] else ""))
+                st.rerun()

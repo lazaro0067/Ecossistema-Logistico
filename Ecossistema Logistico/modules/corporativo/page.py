@@ -8,7 +8,7 @@ import streamlit as st
 
 from core import session, tema, ui
 from core.auth import pode_acessar_modulo
-from modules.corporativo import cadastros, faturamento, prod_entrega, relatorios
+from modules.corporativo import cadastros, estoque_dre, faturamento, prod_entrega, relatorios
 
 _PLANO = {
     "gente": ("👥 Gente", "Quadro, absenteísmo, turnover, horas extras e treinamentos por revenda.", "gente"),
@@ -37,5 +37,6 @@ def render(usuario: dict, operacao_id: int) -> None:
     abas = {a: (lambda u, o, a=a: _em_construcao(u, a)) for a in _PLANO}
     abas.update({"prod_entrega": prod_entrega.render, "faturamento": faturamento.render_faturamento,
                  "compras": faturamento.render_compras, "margem": faturamento.render_margem,
-                 "vendas_fin": lambda u, o: faturamento.render_faturamento(u, o, "💰 Financeiro › **💵 Vendas**"), "relatorios": relatorios.render, "cadastros": cadastros.render})
+                 "vendas_fin": lambda u, o: faturamento.render_faturamento(u, o, "💰 Financeiro › **💵 Vendas**"), "relatorios": relatorios.render, "cadastros": cadastros.render,
+                 "estoque_valor": estoque_dre.render_estoque, "dre": estoque_dre.render_dre})
     ui.abas_modulo(usuario, "corporativo", abas, usuario, operacao_id)

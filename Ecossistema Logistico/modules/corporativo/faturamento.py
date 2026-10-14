@@ -404,6 +404,18 @@ def render_margem(usuario: dict, operacao_id: int) -> None:
                                 "Venda": sem["venda"].map(_m), "HL": sem["hl_venda"].map(lambda v: _n(v, 1))})
          if len(sem) else None},
     ], key="kp_margem")
+    if de == ate:  # um mês: lucro bruto real pelo estoque (02.05.02)
+        from services import estoque_valor_service as ev
+
+        c = ev.cmv_real(op, de)
+        if c["ok"]:
+            lb_real = mg["venda"].sum() - c["cmv"]
+            st.success(f"📦 **Lucro bruto real (pelo estoque): {_m(lb_real)}** — margem "
+                       f"{_p(_div(lb_real, mg['venda'].sum()) * 100)} · CMV real {_m(c['cmv'])} = estoque inicial "
+                       f"{_m(c['ei'])} + compras {_m(c['compras'])} − estoque final {_m(c['ef'])}. "
+                       f"(O lucro bruto acima é pelo custo de compra de cada produto.)")
+        else:
+            st.caption("📦 Suba o 02.05.02 (saldo inicial e final) para ver o lucro bruto real pelo estoque.")
     if de != ate:  # mais de um mês: lucro bruto mês a mês
         linhas = []
         for m in sorted(x for x in meses if de <= x <= ate):

@@ -20,7 +20,7 @@ import pandas as pd
 from config.settings import DB_PATH
 
 # Tabelas que NÃO têm coluna "id" (o INSERT no Postgres não pode pedir RETURNING id)
-_SEM_ID = {"operacoes_fiscais", "setor_operacoes", "usuario_modulos", "usuario_operacoes", "produtos", "estoque", "linear_vendas", "metas_doi", "fluxo_caixa",
+_SEM_ID = {"depositos_nomes", "operacoes_fiscais", "setor_operacoes", "usuario_modulos", "usuario_operacoes", "produtos", "estoque", "linear_vendas", "metas_doi", "fluxo_caixa",
            "_migracoes", "fabrica_deslocamento"}
 
 

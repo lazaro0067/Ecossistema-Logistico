@@ -501,6 +501,34 @@ CREATE TABLE IF NOT EXISTS metas_vendas_cestas (
     UNIQUE (operacao_id, mes_ano, cesta)
 );
 
+CREATE TABLE IF NOT EXISTS estoque_saldos (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id  INTEGER NOT NULL REFERENCES operacoes(id),
+    mes          TEXT NOT NULL,
+    tipo_saldo   TEXT NOT NULL,
+    armazem      TEXT,
+    deposito     TEXT,
+    produto      TEXT,
+    descricao    TEXT,
+    unidade      TEXT,
+    tipo         TEXT,
+    fator        REAL,
+    qtd_unid     REAL,
+    qtd_venda    REAL,
+    custo_medio  REAL,
+    valor        REAL,
+    valor_ur     REAL,
+    hl           REAL,
+    importado_em TEXT
+);
+
+CREATE TABLE IF NOT EXISTS depositos_nomes (
+    armazem  TEXT NOT NULL,
+    deposito TEXT NOT NULL,
+    nome     TEXT,
+    PRIMARY KEY (armazem, deposito)
+);
+
 CREATE TABLE IF NOT EXISTS agendamentos_descarga (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     operacao_id INTEGER NOT NULL REFERENCES operacoes(id),
@@ -983,6 +1011,7 @@ MIGRACOES: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS ix_notas_cli ON notas_cliente_mes(operacao_id, origem, mes);
         ALTER TABLE ressuprimento_diario ADD COLUMN volume_venda_hl REAL;
     """),
+    ("033_estoque_saldos", "CREATE INDEX IF NOT EXISTS ix_est_saldos ON estoque_saldos(operacao_id, mes, tipo_saldo);"),
 ]
 
 

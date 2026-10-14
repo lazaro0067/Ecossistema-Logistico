@@ -106,7 +106,9 @@ MODULOS = {
     "corporativo": {"rotulo": "Gestão Corporativa", "icone": "🏛️", "abas": {
         "compras": "🛒 Compras",
         "vendas_fin": "💵 Vendas",
+        "estoque_valor": "🏬 Estoque",
         "margem": "📊 Resumo & Lucro Bruto",
+        "dre": "📑 DRE",
         "gente": "👥 Gente",
         "seguranca": "🦺 Segurança",
         "prod_entrega": "🚚 Produtividade Entrega",
@@ -127,7 +129,7 @@ MODULO_ADMIN = "admin"
 # Pasta sem grupo definido (ou com poucas abas) mostra as telas direto.
 GRUPOS_ABAS = {
     "corporativo": {
-        "💰 Financeiro": ["compras", "vendas_fin", "margem"],
+        "💰 Financeiro": ["compras", "vendas_fin", "estoque_valor", "margem", "dre"],
         "👥 Gente": ["gente"],
         "🦺 Segurança": ["seguranca"],
         "🚚 Logística": ["prod_entrega"],
