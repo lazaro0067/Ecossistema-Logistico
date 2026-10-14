@@ -226,6 +226,7 @@ _DESCRICOES = {
     "vendas": "Estoque do dia para o comercial, metas e curva ABC",
     "financeiro": "Contas a pagar, vencimentos, fluxo de caixa e OBZ",
     "compras": "Pedidos de compra e acompanhamento",
+    "corporativo": "Gestão por área: financeiro, gente, segurança, logística, vendas, gestão e planejamento",
     "relatorios": "Todas as bases do sistema para download e histórico de atualizações",
 }
 

@@ -24,6 +24,7 @@ import urllib.error
 import urllib.request
 import zipfile
 
+from core import tempo
 from core.segredos import segredo
 from database.connection import query_one
 
@@ -132,11 +133,11 @@ def salvar_agora(motivo: str = "automático", forcar: bool = False) -> bool:
                              "Use “Tentar de novo”.")
         arquivo = backup_service.exportar()
         h = _hash_conteudo(arquivo)
-        _estado["ultima_verificacao"] = dt.datetime.now()
+        _estado["ultima_verificacao"] = tempo.agora()
         if h == _estado["ultimo_hash"] and not forcar:
             return False
-        enviar(arquivo, f"Backup {motivo} · {dt.datetime.now():%d/%m/%Y %H:%M}")
-        _estado.update(ultimo_hash=h, ultimo_envio=dt.datetime.now(), erro=None, pode_salvar=True)
+        enviar(arquivo, f"Backup {motivo} · {tempo.agora():%d/%m/%Y %H:%M}")
+        _estado.update(ultimo_hash=h, ultimo_envio=tempo.agora(), erro=None, pode_salvar=True)
         return True
 
 
@@ -163,7 +164,7 @@ def _ciclo() -> None:
         try:
             salvar_agora()
         except Exception as e:  # noqa: BLE001 — nunca derruba o app
-            _estado["erro"] = f"{dt.datetime.now():%d/%m %H:%M} · {e}"
+            _estado["erro"] = f"{tempo.agora():%d/%m %H:%M} · {e}"
 
 
 def _ao_desligar() -> None:
@@ -184,7 +185,7 @@ def iniciar() -> None:
         _estado["restaurado"] = restaurar_se_vazio()
         _estado["pode_salvar"] = True  # só salva depois de conferir/restaurar (não sobrescreve o backup bom)
     except Exception as e:  # noqa: BLE001
-        _estado["erro"] = f"{dt.datetime.now():%d/%m %H:%M} · {e}"
+        _estado["erro"] = f"{tempo.agora():%d/%m %H:%M} · {e}"
         return
     if not any(t.name == "backup-auto" and t.is_alive() for t in threading.enumerate()):
         threading.Thread(target=_ciclo, name="backup-auto", daemon=True).start()
@@ -192,7 +193,7 @@ def iniciar() -> None:
     try:
         salvar_agora("ao iniciar")
     except Exception as e:  # noqa: BLE001
-        _estado["erro"] = f"{dt.datetime.now():%d/%m %H:%M} · {e}"
+        _estado["erro"] = f"{tempo.agora():%d/%m %H:%M} · {e}"
 
 
 def tentar_de_novo() -> None:

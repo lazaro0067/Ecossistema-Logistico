@@ -366,6 +366,9 @@ def main() -> None:
         # atualizado na hora — mesmo com o app e a sessão já abertos
         versao = MIGRACOES[-1][0]
         _preparar_banco(f"{_destino_banco()}|{versao}")
+        from services import backup_auto
+
+        backup_auto.iniciar()  # barato: só age na 1ª vez (ou quando os Secrets do backup acabaram de ser colocados)
         if st.session_state.get("_banco_ok") != versao:
             init_db()  # garante as tabelas uma vez por sessão e por versão (barato e idempotente)
             st.session_state["_banco_ok"] = versao

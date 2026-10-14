@@ -101,6 +101,15 @@ MODULOS = {
     }},
     "compras": {"rotulo": "Compras & Insumos", "icone": "🛒", "abas": dict(_ABAS_REGISTRO)},
     "gente": {"rotulo": "Gente & SSMA", "icone": "👥", "abas": dict(_ABAS_REGISTRO)},
+    "corporativo": {"rotulo": "Gestão Corporativa", "icone": "🏛️", "abas": {
+        "financeiro": "💰 Financeiro",
+        "gente": "👥 Gente",
+        "seguranca": "🦺 Segurança",
+        "prod_entrega": "🚚 Produtividade Entrega",
+        "vendas": "📈 Vendas",
+        "gestao": "📊 Gestão",
+        "planejamento": "🗓️ Planejamento",
+    }},
     "relatorios": {"rotulo": "Relatórios & Bases", "icone": "📁", "abas": {
         "tabelas": "🗃️ Bases para Download",
         "historico": "🕒 Histórico de Atualizações",
@@ -111,6 +120,15 @@ MODULO_ADMIN = "admin"
 # Navegação: as abas de cada pasta ficam agrupadas por estrutura (clica no grupo e depois na tela).
 # Pasta sem grupo definido (ou com poucas abas) mostra as telas direto.
 GRUPOS_ABAS = {
+    "corporativo": {
+        "💰 Financeiro": ["financeiro"],
+        "👥 Gente": ["gente"],
+        "🦺 Segurança": ["seguranca"],
+        "🚚 Logística": ["prod_entrega"],
+        "📈 Vendas": ["vendas"],
+        "📊 Gestão": ["gestao"],
+        "🗓️ Planejamento": ["planejamento"],
+    },
     "puxada": {
         "🚛 Frota própria": ["carreteiro", "disponibilidade", "disp_motoristas", "pedidos_dia", "manutencao", "farol",
                             "remuneracao", "tmv_tma"],
@@ -255,3 +273,11 @@ CURVA_ABC_LIMITES = {"A": 80.0, "B": 95.0}  # % acumulado; acima de B = C
 ADMIN_LOGIN = "admin"            # login antigo (o acesso agora é por e-mail)
 ADMIN_EMAIL_PADRAO = "admin@grupolima.com.br"  # troque pelo segredo ADMIN_EMAIL
 ADMIN_SENHA_INICIAL = "admin123"
+
+
+# --- Gestão Corporativa › Logística › Produtividade Entrega ---------------------------------------
+# Capacidade padrão de cada modal (caixas do roteirizador, kg). Usada na previsão de modais quando a
+# base ainda não tem viagens daquele tipo; com dados, vale a mediana real da frota.
+MODAIS = {"VUC": (210, 3500), "Toco": (336, 7900), "Truck": (420, 12650), "Carreta": (1176, 38000)}
+# Filtro padrão do relatório 03.02.37 (notas): venda (operação 1, tipo de movimento 51), nota ativa (A)
+FILTRO_PADRAO_NOTAS = {"operacao": ["1"], "tipo_movto": ["51"], "status": ["A"]}

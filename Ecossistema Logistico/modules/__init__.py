@@ -8,6 +8,7 @@ from modules.armazem import page as armazem
 from modules.bases import page as bases
 from modules.compras import page as compras
 from modules.conta import page as conta
+from modules.corporativo import page as corporativo
 from modules.distribuicao import page as distribuicao
 from modules.financeiro import page as financeiro
 from modules.frota import page as frota
@@ -31,6 +32,7 @@ PAGINAS = {
     "vendas": vendas.render,
     "financeiro": financeiro.render,
     "compras": compras.render,
+    "corporativo": corporativo.render,
     "relatorios": relatorios.render,
     "admin": admin.render,
     "conta": conta.render,

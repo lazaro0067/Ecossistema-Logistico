@@ -419,7 +419,8 @@ def _bloco_backup_auto(backup_auto) -> None:
     c1, c2, c3 = st.columns(3)
     c1.metric("Último backup enviado", f"{e['ultimo_envio']:%d/%m %H:%M}" if e["ultimo_envio"] else "—")
     c2.metric("Última conferência", f"{e['ultima_verificacao']:%d/%m %H:%M}" if e["ultima_verificacao"] else "—")
-    c3.metric("Situação", "✅ Ligado" if e["pode_salvar"] and not e["erro"] else "⚠️ Atenção")
+    c3.metric("Situação", "✅ Ligado" if e["pode_salvar"] and not e["erro"] else
+              "⚠️ Atenção" if e["erro"] else "⏳ Iniciando")
     if e["restaurado"]:
         st.success(f"♻️ {e['restaurado']}")
     if e["erro"]:

@@ -15,6 +15,7 @@ import os
 import re
 import zipfile
 
+from core import tempo
 from database import schema
 from database.connection import get_conn, is_postgres
 from services.erros import RegraNegocioError
@@ -91,7 +92,7 @@ def resumo() -> list[dict]:
 
 def exportar() -> bytes:
     buf = io.BytesIO()
-    manifesto = {"gerado_em": dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    manifesto = {"gerado_em": tempo.agora().strftime("%Y-%m-%d %H:%M:%S"),
                  "banco": "postgres" if is_postgres() else "sqlite", "tabelas": {}}
     with get_conn() as conn, zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for t in _tabelas_do_banco(conn):

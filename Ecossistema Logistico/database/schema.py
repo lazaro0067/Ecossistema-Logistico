@@ -385,6 +385,51 @@ CREATE TABLE IF NOT EXISTS frota_placas (
     atualizado_em   TEXT
 );
 
+CREATE TABLE IF NOT EXISTS entregas_mapas (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id   INTEGER NOT NULL REFERENCES operacoes(id),
+    data          TEXT NOT NULL,
+    mapa          TEXT NOT NULL,
+    roadshow      TEXT,
+    placa         TEXT,
+    veiculo       TEXT,
+    transportadora TEXT,
+    motorista     TEXT,
+    carga         TEXT,
+    classificacao TEXT,
+    km_prev       REAL,
+    tempo_prev    TEXT,
+    entregas      INTEGER,
+    caixas        REAL,
+    ocup_cx       REAL,
+    peso          REAL,
+    ocup_peso     REAL,
+    pct_tempo     REAL,
+    eficiencia    REAL,
+    roteirizado   TEXT,
+    carga_atual   TEXT,
+    cidades       TEXT,
+    regiao        TEXT,
+    importado_em  TEXT,
+    UNIQUE (operacao_id, data, mapa)
+);
+
+CREATE TABLE IF NOT EXISTS entregas_notas (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id   INTEGER NOT NULL REFERENCES operacoes(id),
+    data          TEXT NOT NULL,
+    mapa          TEXT NOT NULL,
+    operacao_cod  TEXT,
+    tipo_movto    TEXT,
+    status        TEXT,
+    hl            REAL,
+    qtde          REAL,
+    notas         INTEGER,
+    clientes      INTEGER,
+    valor         REAL,
+    importado_em  TEXT
+);
+
 CREATE TABLE IF NOT EXISTS agendamentos_descarga (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     operacao_id INTEGER NOT NULL REFERENCES operacoes(id),
@@ -855,6 +900,11 @@ MIGRACOES: list[tuple[str, str]] = [
         ALTER TABLE viagens_carreteiro ADD COLUMN cotacao_id INTEGER;
         ALTER TABLE viagens_carreteiro ADD COLUMN terceiro_codigo TEXT;
         ALTER TABLE motoristas ADD COLUMN terceiro INTEGER DEFAULT 0;
+    """),
+    ("031_produtividade_entrega", """
+        CREATE INDEX IF NOT EXISTS ix_ent_mapas ON entregas_mapas(operacao_id, data);
+        CREATE INDEX IF NOT EXISTS ix_ent_notas ON entregas_notas(operacao_id, data);
+        CREATE INDEX IF NOT EXISTS ix_ent_notas_mapa ON entregas_notas(operacao_id, mapa);
     """),
 ]
 
