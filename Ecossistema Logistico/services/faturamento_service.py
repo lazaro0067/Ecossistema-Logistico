@@ -142,6 +142,7 @@ def ler_0302037_meses(arquivo, nome: str, coluna_data: str, progresso=None):
     fluxo = abrir()
     with tempfile.TemporaryDirectory(prefix="0302037_") as pasta:
         partes: dict[str, list[str]] = {}
+        contagem: dict[str, int] = {}
         lidas = 0
         try:
             leitor = pd.read_csv(fluxo, sep=";", dtype=str, usecols=list(POS), chunksize=LINHAS_LOTE, encoding=enc,
@@ -155,6 +156,7 @@ def ler_0302037_meses(arquivo, nome: str, coluna_data: str, progresso=None):
                     with open(caminho, "wb") as fh:
                         pickle.dump(g, fh, protocol=pickle.HIGHEST_PROTOCOL)
                     partes.setdefault(mes, []).append(caminho)
+                    contagem[mes] = contagem.get(mes, 0) + len(g)
                 pos = fluxo.tell() if hasattr(fluxo, "tell") else 0
                 avisar(.5 * (pos / tamanho if tamanho else 0),
                        f"Lendo o arquivo… {lidas:,} linhas".replace(",", "."))
@@ -176,7 +178,11 @@ def ler_0302037_meses(arquivo, nome: str, coluna_data: str, progresso=None):
             for caminho in partes[mes]:
                 with open(caminho, "rb") as fh:
                     dfs.append(pickle.load(fh))
-            yield mes, pd.concat(dfs, ignore_index=True)
+            df_mes = pd.concat(dfs, ignore_index=True)
+            # mês "principal" do arquivo substitui o mês inteiro; poucas notas soltas de outro mês (lançamento
+            # atrasado) não apagam um mês que já foi carregado
+            df_mes.attrs["principal"] = contagem[mes] >= 0.2 * max(contagem.values())
+            yield mes, df_mes
             del dfs
         avisar(1.0, f"Pronto: {lidas:,} linhas em {len(meses_)} mês(es).".replace(",", "."))
 
@@ -188,9 +194,21 @@ def ler_0302037(bruto: bytes) -> pd.DataFrame:
 
 
 def somar_resultados(rs: list[dict], sem_fator: set) -> dict:
-    return {"de": min(r["de"] for r in rs), "ate": max(r["ate"] for r in rs), "valor": sum(r["valor"] for r in rs),
-            "hl": sum(r["hl"] for r in rs), "itens": sum(r["itens"] for r in rs), "sem_fator": len(sem_fator),
-            "meses": len(rs)}
+    ok = [r for r in rs if not r.get("ignorado")] or rs
+    return {"de": min(r["de"] for r in ok), "ate": max(r["ate"] for r in ok), "valor": sum(r["valor"] for r in ok),
+            "hl": sum(r["hl"] for r in ok), "itens": sum(r["itens"] for r in ok), "sem_fator": len(sem_fator),
+            "meses": len([r for r in rs if not r.get("ignorado")]),
+            "ignorados": [(r["ignorado"], r["linhas"]) for r in rs if r.get("ignorado")]}
+
+
+def fim_do_mes(mes: str) -> str:
+    return pd.Period(mes).end_time.strftime("%Y-%m-%d")
+
+
+def mes_carregado(operacao_id: int, origem: str, mes: str) -> bool:
+    r = query_df("SELECT 1 AS x FROM notas_dia WHERE operacao_id = ? AND origem = ? AND data BETWEEN ? AND ? LIMIT 1",
+                 (operacao_id, origem, f"{mes}-01", fim_do_mes(mes)))
+    return not r.empty
 
 
 def gravar_resumo(df: pd.DataFrame, operacao_id: int, origem: str, coluna_data: str) -> dict:
@@ -202,6 +220,12 @@ def gravar_resumo(df: pd.DataFrame, operacao_id: int, origem: str, coluna_data: 
         raise RegraNegocioError("Nenhuma nota com data válida no arquivo.")
     d["data"] = d[coluna_data]
     d["mes"] = d["data"].str[:7]
+    principal = df.attrs.get("principal", True)
+    if not principal:
+        meses_soltos = [m for m in d["mes"].unique() if mes_carregado(operacao_id, origem, m)]
+        if meses_soltos:  # notas soltas de um mês já carregado: não mexe nele
+            return {"de": d["data"].min(), "ate": d["data"].max(), "valor": 0.0, "hl": 0.0, "itens": 0,
+                    "sem_fator": 0, "ignorado": meses_soltos[0], "linhas": len(d)}
     dia = (d.groupby(["data", "operacao_cod", "tipo_movto", "status"], as_index=False)
              .agg(valor=("valor", "sum"), valor_bruto=("valor_bruto", "sum"), desconto=("desconto", "sum"),
                   hl=("hl", "sum"), qtde=("qtde", "sum"), notas=("nota", "nunique"), clientes=("cliente", "nunique"),
@@ -219,11 +243,10 @@ def gravar_resumo(df: pd.DataFrame, operacao_id: int, origem: str, coluna_data: 
                 .agg(descricao=("descricao", "first"), qtde=("qtde", "sum"), hl=("hl", "sum")))
     agora = tempo.agora().strftime("%Y-%m-%d %H:%M:%S")
     with get_conn() as conn:
-        for data in dia["data"].unique():
-            conn.execute("DELETE FROM notas_dia WHERE operacao_id = ? AND origem = ? AND data = ?",
-                         (operacao_id, origem, data))
-            conn.execute("DELETE FROM notas_prod_dia WHERE operacao_id = ? AND origem = ? AND data = ?",
-                         (operacao_id, origem, data))
+        for mes in d["mes"].unique():  # o arquivo substitui o MÊS inteiro (dias que sumiram do arquivo saem)
+            for tabela in ("notas_dia", "notas_prod_dia"):
+                conn.execute(f"DELETE FROM {tabela} WHERE operacao_id = ? AND origem = ? AND data BETWEEN ? AND ?",
+                             (operacao_id, origem, f"{mes}-01", fim_do_mes(mes)))
         for mes in prod["mes"].unique():
             # o mês do produto é regravado com o que veio no arquivo (o arquivo traz o mês inteiro ou o parcial)
             conn.execute("DELETE FROM notas_produto_mes WHERE operacao_id = ? AND origem = ? AND mes = ?",
@@ -430,7 +453,7 @@ def serie_combinada(df: pd.DataFrame, ops_rs: list[str], ops_hl: list[str], chav
     h = serie(df[cods.isin(ops_hl)], chave)
     out = r.drop(columns=["hl", "rs_hl", "qtde"]).merge(h[[chave, "hl", "qtde"]], on=chave, how="outer")
     for c in ("valor", "hl", "notas", "qtde", "desconto"):
-        out[c] = pd.to_numeric(out[c], errors="coerce").fillna(0.0)
+        out[c] = pd.to_numeric(out[c], errors="coerce").fillna(0.0) if c in out else 0.0
     out["rs_hl"] = out["valor"] / out["hl"].where(out["hl"] > 0)
     return out.sort_values(chave).reset_index(drop=True)
 
@@ -470,7 +493,7 @@ def totais(df: pd.DataFrame) -> dict:
 def serie(df: pd.DataFrame, chave: str) -> pd.DataFrame:
     """Agrupa por `data` ou `mes`: valor, hl, R$/HL, notas, qtde."""
     if df.empty:
-        return pd.DataFrame(columns=[chave, "valor", "hl", "rs_hl", "notas", "qtde"])
+        return pd.DataFrame(columns=[chave, "valor", "hl", "rs_hl", "notas", "qtde", "desconto"])
     d = df.assign(mes=df["data"].str[:7]) if chave == "mes" else df
     g = d.groupby(chave, as_index=False)[["valor", "hl", "notas", "qtde", "desconto"]].sum()
     g["rs_hl"] = g["valor"] / g["hl"].where(g["hl"] > 0)

@@ -10,7 +10,7 @@ import datetime as dt
 
 import streamlit as st
 
-from core import tema, ui
+from core import arquivos, tema, ui
 from repositories import operacoes_repo
 from services import estoque_valor_service as ev
 from services import faturamento_service as fs
@@ -18,8 +18,8 @@ from services import produtividade_entrega_service as pe
 from services.erros import RegraNegocioError
 
 
-LIMITE_TXT = ("📦 Até 1 GB por arquivo, CSV ou .zip. Arquivo grande (ano inteiro)? Compacte em .zip — fica ~20× menor, "
-              "sobe rápido e não derruba o servidor; o sistema lê o .zip mês a mês.")
+LIMITE_TXT = ("📦 Até 1 GB por arquivo — " + arquivos.FORMATOS_TXT + ". Subir de novo um mês substitui o mês inteiro. "
+              "Arquivo grande (ano inteiro)? Compacte em .zip — fica ~20× menor e o sistema lê mês a mês.")
 
 
 def _quando(v) -> str:
@@ -28,6 +28,14 @@ def _quando(v) -> str:
 
 def _d(iso) -> str:
     return dt.date.fromisoformat(iso).strftime("%d/%m/%Y") if iso else "—"
+
+
+def _ign(r: dict) -> str:
+    ig = r.get("ignorados") or []
+    if not ig:
+        return ""
+    return (" Mantidos sem mexer (já carregados; o arquivo só tinha poucas notas soltas deles): "
+            + ", ".join(f"{ui.nome_mes(m)} ({n} linha(s))" for m, n in ig) + ".")
 
 
 def _card(titulo: str, ultima: str, texto: str, chave: str, tipos: list[str], acao, usuario: dict,
@@ -49,7 +57,7 @@ def _card(titulo: str, ultima: str, texto: str, chave: str, tipos: list[str], ac
             for k, arq in enumerate(arqs):
                 pre = f"{arq.name} ({k + 1} de {len(arqs)}) · " if len(arqs) > 1 else ""
                 try:
-                    msgs.append(acao(arq, lambda f, t, pre=pre: barra.progress(f, text=pre + t)))
+                    msgs.append(acao(arquivos.preparar(arq), lambda f, t, pre=pre: barra.progress(f, text=pre + t)))
                 except RegraNegocioError as e:
                     erros.append(f"{arq.name}: {e}")
                 except MemoryError:
@@ -72,8 +80,8 @@ def _card(titulo: str, ultima: str, texto: str, chave: str, tipos: list[str], ac
 
 def render(usuario: dict, operacao_id: int) -> None:
     tema.secao("📥 Relatórios da Gestão Corporativa",
-               "Os dados vão se acumulando: subir de novo um período substitui só as datas que vierem no arquivo. "
-               "Arquivo grande? Compacte em .zip antes de subir — o sistema aceita o .zip direto.")
+               "Os dados vão se acumulando mês a mês: subir de novo um mês substitui o mês inteiro (o que já existia "
+               "naquele mês sai e entra o arquivo novo). Aceita " + arquivos.FORMATOS_TXT + ".")
     if operacoes_repo.e_consolidada(operacao_id):
         st.info("Escolha uma revenda no menu (não a visão consolidada) para subir os relatórios.")
         return
@@ -90,13 +98,13 @@ def render(usuario: dict, operacao_id: int) -> None:
         r = pe.importar_notas(arq, arq.name, operacao_id, quem, prog)
         msg = (f"03.02.37 vendas gravada: {ui.numero(r['itens'])} itens · {r['meses']} mês(es) · {r['mapas']} mapas · "
                f"{ui.numero(r['hl'])} HL · {ui.moeda(r['valor'])} ({_d(r['de'])} a {_d(r['ate'])}).")
-        return msg + (f" {r['sem_fator']} produto(s) sem fator HL na 01.11." if r["sem_fator"] else "")
+        return msg + (f" {r['sem_fator']} produto(s) sem fator HL na 01.11." if r["sem_fator"] else "") + _ign(r)
 
     def compra(arq, prog=None):
         r = fs.importar_compra(arq, arq.name, operacao_id, quem, prog)
         msg = (f"03.02.37 compra gravada: {ui.numero(r['itens'])} itens · {r['meses']} mês(es) · {ui.numero(r['hl'])} HL · "
                f"{ui.moeda(r['valor'])} ({_d(r['de'])} a {_d(r['ate'])}).")
-        return msg + (f" {r['sem_fator']} produto(s) sem fator HL na 01.11." if r["sem_fator"] else "")
+        return msg + (f" {r['sem_fator']} produto(s) sem fator HL na 01.11." if r["sem_fator"] else "") + _ign(r)
 
     def operacoes(arq, _prog=None):
         return f"{fs.importar_operacoes(arq.getvalue(), arq.name)} operações atualizadas."
@@ -105,18 +113,18 @@ def render(usuario: dict, operacao_id: int) -> None:
     with c1:
         _card("1. Relatório de mapas (PCD)", _quando(ult["entregas_pcd"]),
               "Uma linha por mapa: placa, veículo, entregas, caixas, % ocupação, peso, KM previsto. "
-              "→ 🚚 Produtividade Entrega.", "pcd", ["csv", "zip"], pcd, usuario)
+              "→ 🚚 Produtividade Entrega.", "pcd", arquivos.FORMATOS, pcd, usuario)
         _card("3. 03.02.37 compra", _quando(ult["notas_compra"]),
               "Notas de entrada (o que foi investido em mercadoria). Coluna Z = total; HL = coluna T × fator HL "
-              "da 01.11. → 💰 Financeiro › 🛒 Compras de Mercadoria.", "compra", ["csv", "zip"], compra, usuario, varios=True)
+              "da 01.11. → 💰 Financeiro › 🛒 Compras de Mercadoria.", "compra", arquivos.FORMATOS, compra, usuario, varios=True)
     with c2:
         _card("2. 03.02.37 vendas", _quando(ult["entregas_notas"]),
               "Notas de saída. Coluna Z = total faturado; C = operação (1 venda, 2 bonificação…); "
               "HL = coluna T × fator HL da 01.11; AA = mapa. → 💵 Faturamento e 🚚 Produtividade Entrega.",
-              "vendas", ["csv", "zip"], vendas, usuario, varios=True)
+              "vendas", arquivos.FORMATOS, vendas, usuario, varios=True)
         _card("4. Relatório de operações", f"{ult['operacoes']} operações cadastradas",
               "Código; Tipo Movimento; Nome da Operação — dá nome às operações nos filtros e no ⚙️ Cadastro.",
-              "operacoes", ["csv", "zip"], operacoes, usuario)
+              "operacoes", arquivos.FORMATOS, operacoes, usuario)
     _card_estoque(usuario, operacao_id)
 
 
@@ -134,11 +142,12 @@ def _card_estoque(usuario: dict, operacao_id: int) -> None:
         mes = c1.selectbox("Mês", meses, format_func=ui.nome_mes, key="rel_ev_mes")
         tipo = c2.radio("Saldo", list(ev.TIPOS_SALDO), format_func=ev.TIPOS_SALDO.get, key="rel_ev_tipo",
                         horizontal=True)
-        arq = c3.file_uploader("02.05.02", type=["csv", "zip"], key="rel_up_estoque", label_visibility="collapsed")
+        arq = c3.file_uploader("02.05.02", type=arquivos.FORMATOS, key="rel_up_estoque", label_visibility="collapsed")
         if arq is not None and st.button("Gravar saldo", key="rel_gravar_estoque", type="primary"):
             try:
                 with st.spinner("Lendo o estoque..."):
-                    r = ev.importar(arq.getvalue(), arq.name, operacao_id, mes, tipo, usuario.get("nome", ""))
+                    a2 = arquivos.preparar(arq)
+                    r = ev.importar(a2.getvalue(), a2.name, operacao_id, mes, tipo, usuario.get("nome", ""))
             except RegraNegocioError as e:
                 st.error(str(e))
             else:

@@ -86,14 +86,29 @@ def _py(v):
     return v.item() if hasattr(v, "item") else v
 
 
-def _gravar(tabela: str, operacao_id_por_linha: pd.Series, df: pd.DataFrame) -> None:
-    """Substitui as datas do arquivo (por filial) e grava as linhas novas."""
+def meses_principais(datas: pd.Series) -> set[str]:
+    """Meses que o arquivo traz de verdade (≥ 20% das linhas do maior mês) — esses são substituídos inteiros."""
+    c = datas.dropna().astype(str).str[:7].value_counts()
+    return set(c[c >= 0.2 * c.max()].index) if len(c) else set()
+
+
+def _gravar(tabela: str, operacao_id_por_linha: pd.Series, df: pd.DataFrame, meses_inteiros: set | None = None) -> None:
+    """Grava as linhas do arquivo (por filial). Mês em `meses_inteiros` é substituído inteiro; o resto, só as datas
+    que vieram no arquivo."""
+    from services.faturamento_service import fim_do_mes
+
     agora = tempo.agora().strftime("%Y-%m-%d %H:%M:%S")
     df = df.assign(operacao_id=operacao_id_por_linha.values, importado_em=agora)
     cols = list(df.columns)
+    meses_inteiros = meses_inteiros or set()
     with get_conn() as conn:
+        for (op, mes), _ in df.groupby([df["operacao_id"], df["data"].astype(str).str[:7]]):
+            if mes in meses_inteiros:
+                conn.execute(f"DELETE FROM {tabela} WHERE operacao_id = ? AND data BETWEEN ? AND ?",
+                             (int(op), f"{mes}-01", fim_do_mes(mes)))
         for (op, data), _ in df.groupby(["operacao_id", "data"]):
-            conn.execute(f"DELETE FROM {tabela} WHERE operacao_id = ? AND data = ?", (int(op), data))
+            if str(data)[:7] not in meses_inteiros:
+                conn.execute(f"DELETE FROM {tabela} WHERE operacao_id = ? AND data = ?", (int(op), data))
         linhas = [tuple(_py(v) for v in r) for r in df.itertuples(index=False)]
         conn.executemany(f"INSERT INTO {tabela} ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})", linhas)
 
@@ -139,7 +154,7 @@ def importar_pcd(conteudo: bytes, nome: str, operacao_padrao: int, usuario: str 
     ops = ops.fillna(operacao_padrao).astype(int)
     df = df.drop_duplicates(["data", "mapa"], keep="last")
     ops = ops.loc[df.index]
-    _gravar("entregas_mapas", ops, df)
+    _gravar("entregas_mapas", ops, df, meses_principais(df["data"]))
     for op in ops.unique():
         _log(int(op), "entregas_pcd", int((ops == op).sum()), nome, usuario)
     return {"linhas": len(df), "de": df["data"].min(), "ate": df["data"].max(),
@@ -170,14 +185,18 @@ def importar_notas(conteudo, nome: str, operacao_id: int, usuario: str = "", pro
     if operacoes_repo.e_consolidada(operacao_id):
         raise RegraNegocioError("Escolha uma revenda (não a visão consolidada) para subir a 03.02.37 vendas.")
     rs, sem, mapas = [], set(), 0
-    for _, df in fs.ler_0302037_meses(conteudo, nome, "emissao", progresso):
+    for mes, df in fs.ler_0302037_meses(conteudo, nome, "emissao", progresso):
+        principal = df.attrs.get("principal", True)
+        if not principal and fs.mes_carregado(operacao_id, "venda", mes):
+            rs.append(fs.gravar_resumo(df, operacao_id, "venda", "emissao"))  # devolve como ignorado
+            continue
         df["mapa"] = df["mapa"].map(_mapa)
         ent = df[df["emissao"].notna() & (df["mapa"] != "")].rename(columns={"emissao": "data"})
         if not ent.empty:
             agg = (ent.groupby(["data", "mapa", "operacao_cod", "tipo_movto", "status"], as_index=False)
                       .agg(hl=("hl", "sum"), qtde=("qtde", "sum"), notas=("nota", "nunique"),
                            clientes=("cliente", "nunique"), valor=("valor", "sum")))
-            _gravar("entregas_notas", pd.Series([operacao_id] * len(agg)), agg)
+            _gravar("entregas_notas", pd.Series([operacao_id] * len(agg)), agg, {mes})
             mapas += int(ent["mapa"].nunique())
         rs.append(fs.gravar_resumo(df, operacao_id, "venda", "emissao"))
         sem |= set(df.loc[df["sem_fator"], "produto"])

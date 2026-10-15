@@ -539,10 +539,13 @@ def render_real(usuario: dict, operacao_id: int) -> None:
         if not obz.pode_plan(usuario):
             st.caption("🔒 Gravar a Base OBZ altera o plan — só quem o Master liberou.")
     st.markdown("**📒 16.03.01 do mês**")
-    arq = st.file_uploader("16.03.01 (.csv)", type=["csv", "zip"], key="obz_r_up")
+    arq = st.file_uploader("16.03.01 (CSV, Excel ou .zip)", type=["csv", "txt", "zip", "xlsx", "xlsm", "xls"], key="obz_r_up")
     if arq is not None and st.button("Gravar realizado", type="primary", key="obz_r_gravar"):
         try:
-            r = obz.importar_real(arq.getvalue(), arq.name, operacao_id, usuario.get("nome", ""))
+            from core import arquivos
+
+            a2 = arquivos.preparar(arq)
+            r = obz.importar_real(a2.getvalue(), a2.name, operacao_id, usuario.get("nome", ""))
         except RegraNegocioError as e:
             st.error(str(e))
         else:

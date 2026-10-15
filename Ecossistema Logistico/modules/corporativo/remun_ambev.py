@@ -9,7 +9,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from core import graficos, tema, ui
+from core import arquivos, graficos, tema, ui
 from repositories import operacoes_repo
 from services import remun_ambev_service as rs
 from services.erros import RegraNegocioError
@@ -321,7 +321,7 @@ def _tabelas(usuario: dict, op: int) -> None:
                                                                           zip(ja["unidade_cod"], ja["unidade_nome"]))
                       if len(ja) else ""))
         v = st.session_state.get("ra_up_v", 0)
-        arqs = st.file_uploader("Tabelas Ambev (CSV ou ZIP)", type=["csv", "txt", "zip"], accept_multiple_files=True,
+        arqs = st.file_uploader("Tabelas Ambev", type=arquivos.FORMATOS, accept_multiple_files=True,
                                 key=f"ra_up_{v}", label_visibility="collapsed")
         arqs = [a for a in (arqs or []) if a is not None]
         rot = f"Gravar como tabela de {ui.nome_mes(mes)}" if len(arqs) <= 1 else \
@@ -330,7 +330,8 @@ def _tabelas(usuario: dict, op: int) -> None:
             erros = []
             for a in arqs:
                 try:
-                    r = rs.importar(a.getvalue(), a.name, op, mes, usuario.get("nome", ""))
+                    a2 = arquivos.preparar(a)
+                    r = rs.importar(a2.getvalue(), a2.name, op, mes, usuario.get("nome", ""))
                 except RegraNegocioError as e:
                     erros.append(f"{a.name}: {e}")
                 except Exception as e:  # noqa: BLE001

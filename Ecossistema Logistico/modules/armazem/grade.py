@@ -4,7 +4,7 @@ import plotly.graph_objects as go
 import pandas as pd
 import streamlit as st
 
-from core import graficos, tema, tempo, ui
+from core import arquivos, graficos, tema, tempo, ui
 from repositories import operacoes_repo
 from services import grade_service as gs
 from services.erros import RegraNegocioError
@@ -111,14 +111,15 @@ def _novo(usuario: dict, op: int) -> None:
     if quando is not None and pd.notna(quando) and quando.date() != data:
         c2.caption("⚠️ O 02.03.04 não é da data do check — atualize se quiser conferir com a grade do dia.")
     c3.metric("Limite de diferença", f"{lim:.0f}%")
-    arq = st.file_uploader("📤 02.05.02 do dia (CSV ou ZIP) — o sistema confere o depósito 1",
-                           type=["csv", "zip", "txt"], key="gr_arq")
+    arq = st.file_uploader("📤 02.05.02 do dia (" + arquivos.FORMATOS_TXT + ") — o sistema confere o depósito 1",
+                           type=arquivos.FORMATOS, key="gr_arq")
     if arq is None:
         st.caption("Suba o 02.05.02 do dia: todos os produtos com saldo no depósito 1 são comparados, em caixas, com o "
                    "disponível da grade (02.03.04).")
         return
     try:
-        sist = gs.sistema_020502(arq.getvalue(), arq.name)
+        a2 = arquivos.preparar(arq)
+        sist = gs.sistema_020502(a2.getvalue(), a2.name)
     except RegraNegocioError as e:
         st.error(str(e))
         return
