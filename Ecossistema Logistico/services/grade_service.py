@@ -1,7 +1,6 @@
-"""Armazém › ✅ Check de Grade — confere o estoque do sistema (disponível do depósito 1) com a grade (contagem
-física). Diferença acima do limite (padrão 5%) vira alerta para os gestores do controle e entra no painel."""
-import io
-
+"""Armazém › ✅ Check de Grade — sobe o 02.05.02 do dia (sistema, depósito 1) e confere com a grade, que vem do
+relatório 02.03.04 (disponível). Diferença acima do limite (padrão 5%) vira alerta para os gestores do controle e
+entra no painel de itens errados."""
 import pandas as pd
 
 from core import tempo
@@ -9,7 +8,6 @@ from database.connection import execute, get_conn, query_df, query_one
 from repositories import operacoes_repo
 from services.erros import RegraNegocioError
 
-FONTES = {"disponivel": "📦 Estoque disponível (02.03.04)", "deposito1": "🏬 Depósito 1 do 02.05.02 (último saldo)"}
 
 
 def agora() -> str:
@@ -42,64 +40,48 @@ def salvar_controle(operacao_id: int, ids: list[int]) -> None:
                          [(int(operacao_id), int(i)) for i in ids])
 
 
-# --- Estoque do sistema ------------------------------------------------------------------------------------------
-def sistema(operacao_id: int, fonte: str = "disponivel") -> pd.DataFrame:
-    """cod, descricao, sistema (caixas) — só itens com saldo."""
-    if fonte == "deposito1":
-        trecho, p = operacoes_repo.filtro("operacao_id", operacao_id)
-        ult = query_one(f"SELECT mes, tipo_saldo FROM estoque_saldos WHERE {trecho} "
-                        "ORDER BY mes DESC, CASE tipo_saldo WHEN 'final' THEN 0 ELSE 1 END LIMIT 1", p)
-        if not ult:
-            return pd.DataFrame(columns=["cod", "descricao", "sistema"])
-        df = query_df(f"SELECT produto AS cod, descricao, deposito, qtd_unid, fator FROM estoque_saldos WHERE {trecho} "
-                      "AND mes = ? AND tipo_saldo = ?", (*p, ult["mes"], ult["tipo_saldo"]))
-        df = df[df["deposito"].astype(str).str.strip().str.lstrip("0") == "1"]
-        f = pd.to_numeric(df["fator"], errors="coerce").replace(0, 1).fillna(1)
-        df["sistema"] = pd.to_numeric(df["qtd_unid"], errors="coerce").fillna(0) / f
-        df = df.groupby("cod", as_index=False).agg(descricao=("descricao", "first"), sistema=("sistema", "sum"))
-    else:
-        trecho, p = operacoes_repo.filtro("operacao_id", operacao_id)
-        df = query_df(f"SELECT cod, MAX(descricao) AS descricao, SUM(disponivel) AS sistema FROM estoque "
-                      f"WHERE {trecho} GROUP BY cod", p)
-    df["cod"] = df["cod"].astype(str).str.replace(r"\.0$", "", regex=True).str.lstrip("0")
-    df["sistema"] = pd.to_numeric(df["sistema"], errors="coerce").fillna(0.0)
-    return df[df["sistema"] != 0].sort_values("descricao").reset_index(drop=True)
+# --- Sistema (02.05.02 do dia, depósito 1) × grade (02.03.04) ----------------------------------------------------
+FONTE = "02.05.02 do dia (depósito 1) × grade 02.03.04"
 
 
-def ler_grade(conteudo: bytes, nome: str) -> pd.DataFrame:
-    """Arquivo da grade (CSV/XLSX/ZIP): acha a coluna do código e a da quantidade. Devolve cod, grade."""
-    from services.produtividade_entrega_service import _abrir, _ler_csv, _n
+def sistema_020502(conteudo, nome: str, deposito: str = "1") -> pd.DataFrame:
+    """Lê o 02.05.02 do dia (não grava nos saldos do mês): cod, descricao, sistema (caixas no depósito)."""
+    from services import estoque_valor_service as ev
 
-    if str(nome).lower().endswith((".xlsx", ".xls")):
-        df = pd.read_excel(io.BytesIO(conteudo), dtype=str)
-    else:
-        df = _ler_csv(_abrir(conteudo, nome))
+    df = ev.ler_020502(conteudo, nome)
+    df = df[df["deposito"].astype(str).str.strip().str.lstrip("0") == str(deposito).lstrip("0")]
     if df.empty:
-        raise RegraNegocioError("Arquivo da grade vazio.")
-    cols = {c: _n(c) for c in df.columns}
-    c_cod = next((c for c, n in cols.items() if n.startswith(("cod", "produto", "sku", "item"))), df.columns[0])
-    c_qtd = next((c for c, n in cols.items() if any(k in n for k in ("grade", "contag", "qtd", "quant", "fisic",
-                                                                      "saldo", "caixa"))), None)
-    if c_qtd is None:
-        nums = [c for c in df.columns if c != c_cod and pd.to_numeric(
-            df[c].astype(str).str.replace(".", "", regex=False).str.replace(",", ".", regex=False),
-            errors="coerce").notna().mean() > .8]
-        if not nums:
-            raise RegraNegocioError("Não achei a coluna da quantidade na grade (nomeie como Quantidade/Grade/Contagem).")
-        c_qtd = nums[-1]
-    q = df[c_qtd].astype(str).str.strip()
-    q = q.where(~q.str.contains(","), q.str.replace(".", "", regex=False).str.replace(",", ".", regex=False))
-    out = pd.DataFrame({"cod": df[c_cod].astype(str).str.replace(r"\D", "", regex=True).str.lstrip("0"),
-                        "grade": pd.to_numeric(q, errors="coerce")})
-    out = out[out["cod"] != ""].groupby("cod", as_index=False)["grade"].sum(min_count=1)
-    return out
+        raise RegraNegocioError(f"O 02.05.02 não tem itens no depósito {deposito}.")
+    g = df.groupby("produto", as_index=False).agg(descricao=("descricao", "first"), sistema=("qtd_venda", "sum"))
+    g = g.rename(columns={"produto": "cod"})
+    g["cod"] = g["cod"].astype(str).str.lstrip("0")
+    return g[g["sistema"].round(4) != 0].sort_values("descricao").reset_index(drop=True)
+
+
+def grade_020304(operacao_id: int) -> tuple[pd.DataFrame, str | None]:
+    """Grade = disponível do relatório 02.03.04 (último carregado): (cod, descricao, grade), data da carga."""
+    trecho, p = operacoes_repo.filtro("operacao_id", operacao_id)
+    df = query_df(f"SELECT cod, MAX(descricao) AS descricao, SUM(disponivel) AS grade, MAX(dt_atualizacao) AS dt "
+                  f"FROM estoque WHERE {trecho} GROUP BY cod", p)
+    if df.empty:
+        return pd.DataFrame(columns=["cod", "descricao", "grade"]), None
+    dt_ = df["dt"].dropna().max() if "dt" in df else None
+    df["cod"] = df["cod"].astype(str).str.replace(r"\.0$", "", regex=True).str.lstrip("0")
+    df["grade"] = pd.to_numeric(df["grade"], errors="coerce").fillna(0.0)
+    return df.drop(columns="dt"), dt_
 
 
 def comparar(sist: pd.DataFrame, grade: pd.DataFrame, lim: float) -> pd.DataFrame:
+    """Todos os produtos do depósito 1 (sistema) e da grade. Diferença = grade − sistema."""
+    if "descricao" in grade:
+        grade = grade.rename(columns={"descricao": "desc_grade"})
     df = sist.merge(grade, on="cod", how="outer")
+    if "desc_grade" in df:
+        df["descricao"] = df["descricao"].fillna(df["desc_grade"])
+        df = df.drop(columns="desc_grade")
     df["sistema"] = df["sistema"].fillna(0.0)
     df["grade"] = df["grade"].fillna(0.0)
-    df["descricao"] = df["descricao"].fillna("(fora do sistema)")
+    df["descricao"] = df["descricao"].fillna("(sem descrição)")
     df["dif"] = df["grade"] - df["sistema"]
     base = df["sistema"].where(df["sistema"] != 0, df["grade"])
     df["dif_pct"] = (df["dif"] / base.abs().where(base != 0) * 100).fillna(0.0)

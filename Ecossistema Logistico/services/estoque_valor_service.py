@@ -43,13 +43,10 @@ def mes_seguinte(mes: str) -> str:
 
 
 # --- Importação ----------------------------------------------------------------------------------------
-def importar(conteudo: bytes, nome: str, operacao_id: int, mes: str, tipo_saldo: str, usuario: str = "") -> dict:
-    from services.produtividade_entrega_service import _abrir, _ler_csv, _log, _n, _py
+def ler_020502(conteudo, nome: str) -> pd.DataFrame:
+    """Lê o 02.05.02 (armazém, depósito, produto, quantidades e valores). qtd_venda = caixas (unidades ÷ fator)."""
+    from services.produtividade_entrega_service import _abrir, _ler_csv, _n
 
-    if operacoes_repo.e_consolidada(operacao_id):
-        raise RegraNegocioError("Escolha uma revenda (não a visão consolidada) para subir o 02.05.02.")
-    if tipo_saldo not in TIPOS_SALDO:
-        raise RegraNegocioError("Escolha se é o saldo inicial ou o saldo final.")
     bruto = _abrir(conteudo, nome)
     cab = _ler_csv(bruto, nrows=0)
     if len(cab.columns) < 31 or "qtd" not in _n(cab.columns[27]) or "estoque" not in _n(cab.columns[29]):
@@ -65,6 +62,17 @@ def importar(conteudo: bytes, nome: str, operacao_id: int, mes: str, tipo_saldo:
     df["produto"] = df["produto"].str.replace(r"\D", "", regex=True).str.lstrip("0")
     df["fator"] = df["fator"].where(df["fator"] > 0, 1.0)
     df["qtd_venda"] = df["qtd_unid"] / df["fator"]
+    return df
+
+
+def importar(conteudo: bytes, nome: str, operacao_id: int, mes: str, tipo_saldo: str, usuario: str = "") -> dict:
+    from services.produtividade_entrega_service import _log, _py
+
+    if operacoes_repo.e_consolidada(operacao_id):
+        raise RegraNegocioError("Escolha uma revenda (não a visão consolidada) para subir o 02.05.02.")
+    if tipo_saldo not in TIPOS_SALDO:
+        raise RegraNegocioError("Escolha se é o saldo inicial ou o saldo final.")
+    df = ler_020502(conteudo, nome)
     fat = query_df("SELECT cod, fator_hl FROM produtos")
     fat["produto"] = pd.to_numeric(fat["cod"], errors="coerce").astype("Int64").astype(str)
     df = df.merge(fat[["produto", "fator_hl"]].drop_duplicates("produto"), on="produto", how="left")

@@ -1,5 +1,5 @@
-"""Armazém › ✅ Check de Grade — sistema (disponível do depósito 1) × grade (contagem). Diferença acima do limite
-vira alerta para os gestores do controle e aparece no painel de itens errados."""
+"""Armazém › ✅ Check de Grade — 02.05.02 do dia (depósito 1) × grade (02.03.04). Diferença acima do limite vira
+alerta para os gestores do controle e aparece no painel de itens errados."""
 import plotly.graph_objects as go
 import pandas as pd
 import streamlit as st
@@ -31,8 +31,8 @@ def render(usuario: dict, operacao_id: int) -> None:
 def _painel(usuario: dict, op: int) -> None:
     ck = gs.checks(op)
     if ck.empty:
-        st.info("Nenhum check de grade ainda. Use ➕ Novo check: o sistema pega o disponível do depósito 1 e você sobe "
-                "a grade (ou digita a contagem).")
+        st.info("Nenhum check de grade ainda. Use ➕ Novo check: suba o 02.05.02 do dia — o depósito 1 é conferido "
+                "com a grade do relatório 02.03.04.")
         return
     ult = ck.iloc[0]
     it = gs.itens(int(ult["id"]))
@@ -50,9 +50,9 @@ def _painel(usuario: dict, op: int) -> None:
          "icone": "🎯", "status": "bom" if (acur or 0) >= 98 else "atencao" if (acur or 0) >= 95 else "critico",
          "detalhe": "itens sem diferença"},
         {"titulo": "Falta na grade", "valor": f"{_n(falta)} cx", "icone": "🔻", "status": "critico" if falta else "bom",
-         "detalhe": "grade menor que o sistema"},
+         "detalhe": "grade menor que o depósito 1"},
         {"titulo": "Sobra na grade", "valor": f"{_n(sobra)} cx", "icone": "🔺", "status": "atencao" if sobra else "bom",
-         "detalhe": "grade maior que o sistema"},
+         "detalhe": "grade maior que o depósito 1"},
     ], key="kp_grade")
     if not div.empty:
         top = div.head(15).iloc[::-1]
@@ -60,7 +60,7 @@ def _painel(usuario: dict, op: int) -> None:
                                marker_color=[VERMELHO if d < 0 else AMARELO for d in top["dif"]],
                                text=[f"{d:+.0f} cx ({p:+.0f}%)" for d, p in zip(top["dif"], top["dif_pct"])],
                                textposition="outside"))
-        graficos.mostrar(graficos._layout(fig, "Maiores diferenças (grade − sistema, em caixas)",
+        graficos.mostrar(graficos._layout(fig, "Maiores diferenças (grade − depósito 1, em caixas)",
                                           max(300, 32 * len(top) + 90), legenda=False), key="gr_g_top")
         tema.secao(f"❌ Itens errados no check de {pd.to_datetime(ult['data']).strftime('%d/%m/%Y')}")
         ui.tabela(_tab(div), baixar=f"grade_errados_{ult['data']}")
@@ -88,7 +88,7 @@ def _painel(usuario: dict, op: int) -> None:
 def _tab(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame({
         "": ["🔻" if d < 0 else "🔺" for d in df["dif"]], "Código": df["cod"], "Produto": df["descricao"],
-        "Sistema (cx)": df["sistema"].map(_n), "Grade (cx)": df["grade"].map(_n),
+        "Depósito 1 (cx)": df["sistema"].map(_n), "Grade 02.03.04 (cx)": df["grade"].map(_n),
         "Diferença (cx)": df["dif"].map(lambda v: f"{v:+.0f}"), "Diferença %": df["dif_pct"].map(_p)}).reset_index(
         drop=True)
 
@@ -98,48 +98,35 @@ def _novo(usuario: dict, op: int) -> None:
     if operacoes_repo.e_consolidada(op):
         st.info("Escolha uma filial no menu para conferir a grade.")
         return
+    grade, dt_grade = gs.grade_020304(op)
+    lim = gs.limite(op)
     c1, c2, c3 = st.columns([1, 1.6, 1])
     data = c1.date_input("Data do check", value=tempo.hoje(), format="DD/MM/YYYY", key="gr_data")
-    fonte = c2.radio("Estoque do sistema", list(gs.FONTES), format_func=gs.FONTES.get, key="gr_fonte",
-                     horizontal=True)
-    lim = gs.limite(op)
-    c3.metric("Limite de diferença", f"{lim:.0f}%")
-    sist = gs.sistema(op, fonte)
-    if sist.empty:
-        st.warning("Sem estoque do sistema nesta fonte. Atualize a base (02.03.04 em 📥 Atualizar relatórios, ou o "
-                   "02.05.02 em Gestão Corporativa › 📥 Relatórios).")
+    if grade.empty:
+        c2.warning("A grade vem do relatório **02.03.04** — suba ele em 📥 Atualizar relatórios.")
         return
-    st.caption(f"{len(sist)} produto(s) com saldo no sistema · {_n(sist['sistema'].sum())} cx.")
-    modo = ui._escolha("gr_modo", ["arquivo", "digitar"], "arquivo", pills=True,
-                       formatar={"arquivo": "📤 Subir a grade (arquivo)", "digitar": "⌨️ Digitar a contagem"}.get)
-    grade = None
-    if modo == "arquivo":
-        arq = st.file_uploader("Grade (CSV, XLSX ou ZIP) — colunas: código e quantidade", type=["csv", "xlsx", "zip"],
-                               key="gr_arq")
-        if arq is not None:
-            try:
-                grade = gs.ler_grade(arq.getvalue(), arq.name)
-            except RegraNegocioError as e:
-                st.error(str(e))
-                return
-            st.caption(f"Grade lida: {len(grade)} produto(s) · {_n(grade['grade'].sum())} cx.")
-    else:
-        tab = sist.assign(grade=pd.Series([None] * len(sist), dtype="float64"))
-        novo = st.data_editor(tab, hide_index=True, key=f"gr_ed_{op}_{fonte}", **ui.LARGURA,
-                              disabled=["cod", "descricao", "sistema"],
-                              column_config={"cod": "Código", "descricao": st.column_config.TextColumn("Produto",
-                                                                                                      width="large"),
-                                             "sistema": st.column_config.NumberColumn("Sistema (cx)", format="%.0f"),
-                                             "grade": st.column_config.NumberColumn("Grade / contagem (cx) ✏️",
-                                                                                    format="%.0f")})
-        preenchidos = novo["grade"].notna().sum()
-        st.caption(f"{preenchidos} de {len(novo)} contagens preenchidas — vazio conta como 0 na grade.")
-        grade = novo[["cod", "grade"]].assign(grade=novo["grade"].fillna(0.0))
-    if grade is None:
+    quando = pd.to_datetime(dt_grade, errors="coerce") if dt_grade else None
+    c2.markdown(f"**Grade (02.03.04):** {len(grade)} produto(s) · {_n(grade['grade'].sum())} cx  \n"
+                f"carregado em {quando.strftime('%d/%m/%Y %H:%M') if quando is not None and pd.notna(quando) else '—'}")
+    if quando is not None and pd.notna(quando) and quando.date() != data:
+        c2.caption("⚠️ O 02.03.04 não é da data do check — atualize se quiser conferir com a grade do dia.")
+    c3.metric("Limite de diferença", f"{lim:.0f}%")
+    arq = st.file_uploader("📤 02.05.02 do dia (CSV ou ZIP) — o sistema confere o depósito 1",
+                           type=["csv", "zip", "txt"], key="gr_arq")
+    if arq is None:
+        st.caption("Suba o 02.05.02 do dia: todos os produtos com saldo no depósito 1 são comparados, em caixas, com o "
+                   "disponível da grade (02.03.04).")
+        return
+    try:
+        sist = gs.sistema_020502(arq.getvalue(), arq.name)
+    except RegraNegocioError as e:
+        st.error(str(e))
         return
     comp = gs.comparar(sist, grade, lim)
     div = comp[comp["divergente"]]
     tema.kpis([
+        {"titulo": "Depósito 1 (02.05.02)", "valor": f"{_n(sist['sistema'].sum())} cx", "icone": "🏬",
+         "status": "info", "detalhe": f"{len(sist)} produto(s)"},
         {"titulo": "Itens conferidos", "valor": _n(len(comp)), "icone": "📋", "status": "info"},
         {"titulo": "Com diferença", "valor": _n(len(div)), "icone": "⚠️", "status": "critico" if len(div) else "bom",
          "detalhe": f"acima de {lim:.0f}%"},
@@ -147,10 +134,12 @@ def _novo(usuario: dict, op: int) -> None:
     ], key="kp_gr_novo")
     if not div.empty:
         ui.tabela(_tab(div), baixar="grade_previa")
+    else:
+        st.success("Tudo batendo: depósito 1 igual à grade. 👏")
     obs = st.text_input("Observação (opcional)", key="gr_obs")
     if st.button("💾 Salvar check e alertar o controle", type="primary", key="gr_salvar"):
         try:
-            gs.salvar_check(op, data.isoformat(), fonte, comp, usuario, obs)
+            gs.salvar_check(op, data.isoformat(), gs.FONTE, comp, usuario, obs)
         except RegraNegocioError as e:
             st.error(str(e))
         else:
@@ -167,7 +156,7 @@ def _historico(usuario: dict, op: int) -> None:
         st.info("Nenhum check ainda.")
         return
     vis = pd.DataFrame({"Data": pd.to_datetime(ck["data"]).dt.strftime("%d/%m/%Y"),
-                        "Fonte": ck["fonte"].map(gs.FONTES).fillna(""), "Itens": ck["itens"],
+                        "Itens": ck["itens"],
                         "Com diferença": ck["divergentes"],
                         "Acurácia": [f"{(1 - d / i) * 100:.1f}%".replace(".", ",") if i else "—"
                                      for d, i in zip(ck["divergentes"], ck["itens"])],
