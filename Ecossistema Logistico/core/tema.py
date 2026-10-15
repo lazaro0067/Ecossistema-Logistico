@@ -177,7 +177,7 @@ header[data-testid="stHeader"] {{ background: transparent; }}
 [data-testid="stFileUploaderDropzoneInstructions"] small,
 [data-testid="stFileUploaderDropzoneInstructions"] span {{ display: none !important; }}
 [data-testid="stFileUploaderDropzoneInstructions"]::after {{
-  content: "Arraste o arquivo aqui · até 1 GB"; font-size: .85rem; color: #5b6575; }}
+  content: "Arraste o arquivo aqui · até 3 GB"; font-size: .85rem; color: #5b6575; }}
 
 
 

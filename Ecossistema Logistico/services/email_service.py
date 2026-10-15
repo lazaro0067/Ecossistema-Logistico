@@ -70,6 +70,38 @@ def enviar(para: str, assunto: str, titulo: str, corpo_html: str, corpo_texto: s
         raise RegraNegocioError(f"Não foi possível enviar o e-mail agora ({e.__class__.__name__}). Tente de novo.")
 
 
+def enviar_html(para: list[str], assunto: str, html_completo: str, corpo_texto: str) -> None:
+    """Envia um e-mail já montado (relatórios como o DRE). `para` = lista de endereços."""
+    if not configurado():
+        raise RegraNegocioError("O envio de e-mail ainda não foi configurado (SMTP nos Secrets). Peça ao Master — "
+                                "enquanto isso, baixe o arquivo e anexe no seu e-mail.")
+    para = [p.strip() for p in para if p and "@" in p]
+    if not para:
+        raise RegraNegocioError("Informe pelo menos um e-mail válido.")
+    msg = EmailMessage()
+    msg["From"] = _remetente()
+    msg["To"] = ", ".join(para)
+    msg["Subject"] = assunto
+    msg.set_content(corpo_texto)
+    msg.add_alternative(html_completo, subtype="html")
+    host, porta = segredo("SMTP_HOST"), int(segredo("SMTP_PORT", 587))
+    contexto = ssl.create_default_context()
+    try:
+        if porta == 465:
+            with smtplib.SMTP_SSL(host, porta, context=contexto, timeout=30) as s:
+                s.login(segredo("SMTP_USUARIO"), segredo("SMTP_SENHA"))
+                s.send_message(msg)
+        else:
+            with smtplib.SMTP(host, porta, timeout=30) as s:
+                s.starttls(context=contexto)
+                s.login(segredo("SMTP_USUARIO"), segredo("SMTP_SENHA"))
+                s.send_message(msg)
+    except smtplib.SMTPAuthenticationError:
+        raise RegraNegocioError("O servidor de e-mail recusou o usuário/senha do SMTP. Confira os Secrets.")
+    except (smtplib.SMTPException, OSError) as e:
+        raise RegraNegocioError(f"Não foi possível enviar o e-mail agora ({e.__class__.__name__}). Tente de novo.")
+
+
 def _link() -> str:
     url = segredo("APP_URL")
     return f'<p><a href="{html.escape(url)}" style="color:#2a78d6">Abrir o sistema</a></p>' if url else ""

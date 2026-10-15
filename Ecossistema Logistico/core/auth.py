@@ -62,7 +62,8 @@ def _perms(usuario: dict) -> set[str]:
 # Telas novas liberadas junto com a tela "irmã" que o usuário já tinha (evita reconfigurar acessos)
 _ABAS_IRMAS = {"armazem.pedidos": "armazem.patio",
                **{f"financeiro.{a}": "financeiro.painel" for a in ("obz_gestao", "obz_tend", "obz_aprov", "obz_reuniao",
-                                                                   "obz_plan", "obz_real", "obz_cad")}, "vendas.acompanhamento": "vendas.metas",
+                                                                   "obz_plan", "obz_real", "obz_cad", "obz_rshl",
+                                                                   "obz_sim")}, "vendas.acompanhamento": "vendas.metas",
                "vendas.metas_cestas": "vendas.metas", "puxada.pedidos_dia": "puxada.disponibilidade",
                "puxada.disp_motoristas": "puxada.disponibilidade",
                "puxada.manutencao": "puxada.disponibilidade",

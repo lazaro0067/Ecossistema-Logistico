@@ -18,8 +18,8 @@ from services import produtividade_entrega_service as pe
 from services.erros import RegraNegocioError
 
 
-LIMITE_TXT = ("📦 Limite de 1 GB por arquivo (CSV ou .zip). Ano inteiro? Compacte o CSV em .zip — 1,6 GB vira cerca "
-              "de 60 MB, sobe rápido e é lido mês a mês.")
+LIMITE_TXT = ("📦 Até 3 GB por arquivo, CSV ou .zip — o arquivo do ano inteiro sobe direto e é gravado mês a mês. "
+              "Em .zip ele fica ~20× menor e sobe muito mais rápido.")
 
 
 def _quando(v) -> str:
@@ -30,33 +30,40 @@ def _d(iso) -> str:
     return dt.date.fromisoformat(iso).strftime("%d/%m/%Y") if iso else "—"
 
 
-def _card(titulo: str, ultima: str, texto: str, chave: str, tipos: list[str], acao, usuario: dict) -> None:
+def _card(titulo: str, ultima: str, texto: str, chave: str, tipos: list[str], acao, usuario: dict,
+          varios: bool = False) -> None:
     with st.container(border=True):
         st.markdown(f"**{titulo}**  \nÚltima carga: {ultima}")
         st.caption(texto)
-        arq = st.file_uploader(titulo, type=tipos, key=f"rel_up_{chave}", label_visibility="collapsed")
-        st.caption(LIMITE_TXT)
-        if arq is not None:
-            mb = arq.size / 1024 ** 2
-            grande = mb > 150 and not arq.name.lower().endswith(".zip")
-            st.caption(f"📄 {arq.name} · {ui.numero(mb, 1)} MB"
-                       + (" — dica: em .zip ele sobe bem mais rápido." if grande else ""))
-        if arq is not None and st.button("Gravar", key=f"rel_gravar_{chave}", type="primary"):
+        versao = st.session_state.get(f"rel_up_v_{chave}", 0)  # muda após gravar: limpa o arquivo da memória
+        arqs = st.file_uploader(titulo, type=tipos, key=f"rel_up_{chave}_{versao}", label_visibility="collapsed",
+                                accept_multiple_files=varios)
+        arqs = [a for a in ((arqs or []) if varios else [arqs]) if a is not None]
+        st.caption(LIMITE_TXT + (" Pode escolher vários arquivos de uma vez (ex.: um por mês)." if varios else ""))
+        for a in arqs:
+            st.caption(f"📄 {a.name} · {ui.numero(a.size / 1024 ** 2, 1)} MB")
+        if arqs and st.button("Gravar" if len(arqs) == 1 else f"Gravar os {len(arqs)} arquivos",
+                              key=f"rel_gravar_{chave}", type="primary"):
             barra = st.progress(0.0, text="Preparando a leitura…")
-            try:
-                msg = acao(arq, lambda f, t: barra.progress(f, text=t))
-            except RegraNegocioError as e:
-                barra.empty()
-                st.error(f"❌ Não foi possível gravar: {e}")
-            except MemoryError:
-                barra.empty()
-                st.error("❌ O arquivo é grande demais para ler sem compactar. Compacte em .zip e suba de novo.")
-            except Exception as e:  # noqa: BLE001 — mostra em português em vez de travar a tela
-                barra.empty()
-                st.error(f"❌ Erro inesperado ao ler o arquivo: {e}. Confira se é o relatório certo, em CSV ou .zip.")
-            else:
-                barra.empty()
-                ui.avisar(msg)
+            msgs, erros = [], []
+            for k, arq in enumerate(arqs):
+                pre = f"{arq.name} ({k + 1} de {len(arqs)}) · " if len(arqs) > 1 else ""
+                try:
+                    msgs.append(acao(arq, lambda f, t, pre=pre: barra.progress(f, text=pre + t)))
+                except RegraNegocioError as e:
+                    erros.append(f"{arq.name}: {e}")
+                except MemoryError:
+                    erros.append(f"{arq.name}: faltou memória no servidor para ler o arquivo. Compacte em .zip e "
+                                 "suba de novo (fica bem menor).")
+                except Exception as e:  # noqa: BLE001 — mostra em português em vez de travar a tela
+                    erros.append(f"{arq.name}: erro inesperado ({e}). Confira se é o relatório certo, em CSV ou .zip.")
+            barra.empty()
+            for m in msgs:
+                ui.avisar(m)
+            if erros:
+                st.error("❌ Não foi possível gravar:\n\n- " + "\n- ".join(erros))
+            if msgs and not erros:
+                st.session_state[f"rel_up_v_{chave}"] = versao + 1
                 st.rerun()
 
 
@@ -98,12 +105,12 @@ def render(usuario: dict, operacao_id: int) -> None:
               "→ 🚚 Produtividade Entrega.", "pcd", ["csv", "zip"], pcd, usuario)
         _card("3. 03.02.37 compra", _quando(ult["notas_compra"]),
               "Notas de entrada (o que foi investido em mercadoria). Coluna Z = total; HL = coluna T × fator HL "
-              "da 01.11. → 💰 Financeiro › 🛒 Compras de Mercadoria.", "compra", ["csv", "zip"], compra, usuario)
+              "da 01.11. → 💰 Financeiro › 🛒 Compras de Mercadoria.", "compra", ["csv", "zip"], compra, usuario, varios=True)
     with c2:
         _card("2. 03.02.37 vendas", _quando(ult["entregas_notas"]),
               "Notas de saída. Coluna Z = total faturado; C = operação (1 venda, 2 bonificação…); "
               "HL = coluna T × fator HL da 01.11; AA = mapa. → 💵 Faturamento e 🚚 Produtividade Entrega.",
-              "vendas", ["csv", "zip"], vendas, usuario)
+              "vendas", ["csv", "zip"], vendas, usuario, varios=True)
         _card("4. Relatório de operações", f"{ult['operacoes']} operações cadastradas",
               "Código; Tipo Movimento; Nome da Operação — dá nome às operações nos filtros e no ⚙️ Cadastro.",
               "operacoes", ["csv", "zip"], operacoes, usuario)

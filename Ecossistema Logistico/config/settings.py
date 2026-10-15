@@ -99,6 +99,8 @@ MODULOS = {
         "fluxo": "📊 Fluxo de Caixa",
         "analise": "🩺 Saúde Financeira",
         "obz_gestao": "📊 Painel OBZ (Plan × Tend × Real)",
+        "obz_rshl": "💲 R$/HL por departamento",
+        "obz_sim": "🧮 Simulador OBZ (orçamento do ano)",
         "obz_tend": "📝 Lançar Tendências",
         "obz_aprov": "✔️ Justificativas & Aprovação",
         "obz_reuniao": "🗓️ Reunião & Ações",
@@ -176,7 +178,8 @@ GRUPOS_ABAS = {
     "financeiro": {
         "💳 Contas": ["diario", "contas", "vencimentos"],
         "📊 Caixa & Saúde": ["fluxo", "analise"],
-        "🎯 Gestão OBZ": ["obz_gestao", "obz_tend", "obz_aprov", "obz_reuniao"],
+        "🎯 Gestão OBZ": ["obz_gestao", "obz_rshl", "obz_tend", "obz_aprov", "obz_reuniao"],
+        "🧮 Orçamento (simulador)": ["obz_sim"],
         "⚙️ OBZ: bases & cadastros": ["obz_plan", "obz_real", "obz_cad"],
         "📒 OBZ manual": ["painel", "lancamentos"],
     },

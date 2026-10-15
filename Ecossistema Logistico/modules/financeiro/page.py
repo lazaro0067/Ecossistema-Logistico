@@ -289,4 +289,16 @@ def _obz_abas() -> dict:
 
     return {"obz_gestao": obz.render_gestao, "obz_tend": obz.render_tend, "obz_aprov": obz.render_aprovacao,
             "obz_reuniao": obz.render_reuniao, "obz_plan": obz.render_plan, "obz_real": obz.render_real,
-            "obz_cad": obz.render_cadastros}
+            "obz_cad": obz.render_cadastros, "obz_rshl": _rshl, "obz_sim": _sim}
+
+
+def _rshl(usuario: dict, operacao_id: int) -> None:
+    from modules.financeiro import obz_rshl
+
+    obz_rshl.render(usuario, operacao_id)
+
+
+def _sim(usuario: dict, operacao_id: int) -> None:
+    from modules.financeiro import obz_sim
+
+    obz_sim.render(usuario, operacao_id)

@@ -595,9 +595,11 @@ def render_cadastros(usuario: dict, operacao_id: int) -> None:
     else:
         for papel, rot in obz.PAPEIS.items():
             atuais = obz.usuarios_papel(papel)
+            libera = e_master(usuario) if papel in obz.PAPEIS_MASTER else pode
             sel = st.multiselect(rot, list(users), default=[u for u in atuais if u in users], format_func=fmt_u,
-                                 key=f"obz_c_pap_{papel}")
-            if pode and st.button("Salvar", key=f"obz_c_pap_s_{papel}"):
+                                 key=f"obz_c_pap_{papel}", disabled=not libera,
+                                 help=None if libera else "Só o Master libera este papel.")
+            if libera and st.button("Salvar", key=f"obz_c_pap_s_{papel}"):
                 ui.acao(obz.salvar_papel, papel, sel, sucesso="Salvo.")
         st.caption("Donos (por conta) e sub-donos (conta × depto) também lançam tendências das suas contas. "
                    "Aprovadores recebem notificação quando chega justificativa crítica.")

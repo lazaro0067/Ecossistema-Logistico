@@ -681,6 +681,126 @@ CREATE TABLE IF NOT EXISTS portal_rn (
     ultimo_acesso TEXT
 );
 
+CREATE TABLE IF NOT EXISTS dre_editado (
+    operacao_id  INTEGER NOT NULL,
+    mes          TEXT NOT NULL,
+    chave        TEXT NOT NULL,
+    valor        REAL,
+    editado_por  TEXT,
+    editado_em   TEXT,
+    PRIMARY KEY (operacao_id, mes, chave)
+);
+
+CREATE TABLE IF NOT EXISTS dre_editado_log (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id  INTEGER NOT NULL,
+    mes          TEXT NOT NULL,
+    chave        TEXT,
+    rotulo       TEXT,
+    de           REAL,
+    para         REAL,
+    usuario      TEXT,
+    em           TEXT
+);
+
+CREATE TABLE IF NOT EXISTS obz_sim (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id   INTEGER NOT NULL,
+    ano           TEXT NOT NULL,
+    nome          TEXT,
+    status        TEXT DEFAULT 'rascunho',
+    premissas     TEXT,
+    criado_por    TEXT,
+    criado_em     TEXT,
+    atualizado_em TEXT,
+    publicado_em  TEXT
+);
+
+CREATE TABLE IF NOT EXISTS obz_sim_volume (
+    sim_id   INTEGER NOT NULL,
+    mes      TEXT NOT NULL,
+    hl_base  REAL,
+    hl_plan  REAL,
+    PRIMARY KEY (sim_id, mes)
+);
+
+CREATE TABLE IF NOT EXISTS obz_sim_equipe (
+    sim_id        INTEGER NOT NULL,
+    area          TEXT NOT NULL,
+    equipe_atual  REAL,
+    produtividade REAL,
+    acompanha     INTEGER DEFAULT 1,
+    PRIMARY KEY (sim_id, area)
+);
+
+CREATE TABLE IF NOT EXISTS obz_sim_linha (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    sim_id      INTEGER NOT NULL,
+    conta       TEXT NOT NULL,
+    depto       TEXT NOT NULL,
+    area        TEXT,
+    driver      TEXT,
+    base_ano    REAL,
+    calc_ano    REAL,
+    prop_conta  REAL,
+    just_conta  TEXT,
+    por_conta   TEXT,
+    em_conta    TEXT,
+    prop_depto  REAL,
+    just_depto  TEXT,
+    por_depto   TEXT,
+    em_depto    TEXT,
+    decisao     TEXT,
+    just_fin    TEXT,
+    por_fin     TEXT,
+    em_fin      TEXT,
+    final_ano   REAL
+);
+
+CREATE TABLE IF NOT EXISTS obz_sim_valor (
+    sim_id  INTEGER NOT NULL,
+    conta   TEXT NOT NULL,
+    depto   TEXT NOT NULL,
+    mes     TEXT NOT NULL,
+    valor   REAL,
+    PRIMARY KEY (sim_id, conta, depto, mes)
+);
+
+CREATE TABLE IF NOT EXISTS obz_sim_inic (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    sim_id      INTEGER NOT NULL,
+    tipo        TEXT,
+    descricao   TEXT,
+    area        TEXT,
+    conta       TEXT,
+    mes_ini     INTEGER,
+    valor       REAL,
+    recorrente  INTEGER DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS obz_sim_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    sim_id      INTEGER NOT NULL,
+    etapa       TEXT,
+    acao        TEXT,
+    usuario     TEXT,
+    em          TEXT,
+    comentario  TEXT
+);
+
+CREATE TABLE IF NOT EXISTS obz_sim_reuniao (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    sim_id        INTEGER NOT NULL,
+    etapa         TEXT,
+    data          TEXT,
+    participantes TEXT,
+    pauta         TEXT,
+    ata           TEXT,
+    decisoes      TEXT,
+    criado_por    TEXT,
+    criado_em     TEXT
+);
+
 CREATE TABLE IF NOT EXISTS dre_manual (
     operacao_id     INTEGER NOT NULL,
     mes             TEXT NOT NULL,
@@ -1197,6 +1317,10 @@ MIGRACOES: list[tuple[str, str]] = [
     ("037_obz_bonif", """
         UPDATE obz_contas SET no_obz = 0, pacote = 'Bonificações'
          WHERE LOWER(nome) LIKE '%bonif%' OR LOWER(nome) LIKE '%amostra%';
+    """),
+    ("038_obz_sim", """
+        CREATE INDEX IF NOT EXISTS ix_sim_linha ON obz_sim_linha(sim_id);
+        CREATE INDEX IF NOT EXISTS ix_sim_log ON obz_sim_log(sim_id);
     """),
 ]
 

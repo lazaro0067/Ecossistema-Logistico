@@ -308,3 +308,167 @@ def mes_atual() -> str:
 
 def hoje() -> dt.date:
     return tempo.hoje()
+
+
+# --- DRE editado ------------------------------------------------------------------------------------------------
+# Linhas que podem ser editadas (os totais são recalculados): chave → rótulo
+EDITAVEIS_FIXAS = {"receita_bruta": "Receita bruta de vendas", "icms": "ICMS", "pis_cofins": "PIS/COFINS",
+                   "ei": "Estoque inicial", "compras": "Compras", "ef": "Estoque final",
+                   "conta_corrente": "Conta corrente"}
+
+
+def pode_editar_dre(usuario: dict) -> bool:
+    from core.auth import e_master
+    from services import obz_service
+
+    return e_master(usuario) or usuario.get("id") in obz_service.usuarios_papel("dre_editar")
+
+
+def valores_dre(r: dict) -> dict:
+    """Valores-base (editáveis) de um DRE calculado."""
+    v = {"receita_bruta": r["receita_bruta"], "icms": abs(r["icms"]), "pis_cofins": abs(r["pis_cofins"]),
+         "ei": r["ei"] if r["ok"] else None, "compras": r["compras"], "ef": r["ef"] if r["ok"] else None,
+         "conta_corrente": r["conta_corrente"]}
+    if r["despesas"] is not None and not r["obz"].empty:
+        for p, x in zip(r["obz"]["pacote"], r["obz"]["realizado"]):
+            v[f"dep:{p}"] = float(x)
+    return v
+
+
+def rotulo_chave(chave: str) -> str:
+    return chave[4:] if chave.startswith("dep:") else EDITAVEIS_FIXAS.get(chave, chave)
+
+
+def edicoes(operacao_id: int, mes: str) -> pd.DataFrame:
+    return query_df("SELECT chave, valor, editado_por, editado_em FROM dre_editado WHERE operacao_id = ? AND mes = ?",
+                    (operacao_id, mes))
+
+
+def _aplicar(r: dict, v: dict) -> dict:
+    """Monta o DRE (mesmas chaves do dre_periodo) a partir dos valores-base, recalculando os totais."""
+    r = dict(r)
+    r["receita_bruta"] = v.get("receita_bruta") or 0.0
+    r["icms"], r["pis_cofins"] = v.get("icms") or 0.0, v.get("pis_cofins") or 0.0
+    r["conta_corrente"] = v.get("conta_corrente") or 0.0
+    r["receita"] = r["receita_bruta"] - abs(r["icms"]) - abs(r["pis_cofins"])
+    r["compras"] = v.get("compras") or 0.0
+    ok = v.get("ei") is not None and v.get("ef") is not None
+    r["ok"], r["ei"], r["ef"] = ok, v.get("ei") or 0.0, v.get("ef") or 0.0
+    r["cmv"] = r["ei"] + r["compras"] - r["ef"] if ok else None
+    deps = {k[4:]: x for k, x in v.items() if k.startswith("dep:")}
+    orc = dict(zip(r["obz"]["pacote"], r["obz"]["orcado"])) if not r["obz"].empty else {}
+    if deps:
+        ob = pd.DataFrame({"pacote": list(deps), "realizado": [float(x or 0) for x in deps.values()],
+                           "orcado": [float(orc.get(p, 0.0)) for p in deps]})
+        r["obz"] = ob.sort_values("realizado", ascending=False).reset_index(drop=True)
+        r["despesas"] = float(r["obz"]["realizado"].sum())
+    r["lucro_bruto"] = r["receita"] - r["cmv"] if r["cmv"] is not None else None
+    r["resultado"] = (r["lucro_bruto"] - r["despesas"] + r["conta_corrente"]
+                      if r["lucro_bruto"] is not None and r["despesas"] is not None else None)
+    return r
+
+
+def dre_editado_mes(operacao_id: int, mes: str) -> tuple[dict, dict, pd.DataFrame]:
+    """(DRE gerado, DRE editado, edições). Na visão consolidada soma o efeito das edições de cada revenda."""
+    gerado = dre_mes(operacao_id, mes)
+    base = valores_dre(gerado)
+    if operacoes_repo.e_consolidada(operacao_id):
+        todas = []
+        for oid in operacoes_repo.ids_efetivos(operacao_id):
+            e = edicoes(oid, mes)
+            if e.empty:
+                continue
+            g_op = valores_dre(dre_mes(oid, mes))
+            for k, x in zip(e["chave"], e["valor"]):
+                base[k] = (base.get(k) or 0.0) + float(x or 0) - float(g_op.get(k) or 0.0)
+            todas.append(e)
+        ed = pd.concat(todas, ignore_index=True) if todas else edicoes(operacao_id, mes)
+    else:
+        ed = edicoes(operacao_id, mes)
+        for k, x in zip(ed["chave"], ed["valor"]):
+            base[k] = float(x) if x is not None else None
+    return gerado, _aplicar(gerado, base), ed
+
+
+def dre_editado_periodo(operacao_id: int, meses_: list[str]) -> dict:
+    """Total de vários meses do DRE editado: soma os meses; estoque inicial do 1º e final do último."""
+    rs = [dre_editado_mes(operacao_id, m)[1] for m in sorted(meses_)]
+    if len(rs) == 1:
+        return rs[0]
+    tot = dict(rs[-1])
+    v = {k: sum((r[k] or 0.0) for r in rs) for k in ("receita_bruta", "icms", "pis_cofins", "compras",
+                                                      "conta_corrente")}
+    v["ei"] = rs[0]["ei"] if rs[0]["ok"] else None
+    v["ef"] = rs[-1]["ef"] if rs[-1]["ok"] else None
+    deps: dict = {}
+    for r in rs:
+        if not r["obz"].empty:
+            for p, x in zip(r["obz"]["pacote"], r["obz"]["realizado"]):
+                deps[p] = deps.get(p, 0.0) + float(x)
+    v.update({f"dep:{p}": x for p, x in deps.items()})
+    ob = [r["obz"] for r in rs if not r["obz"].empty]
+    tot["obz"] = (pd.concat(ob).groupby("pacote", as_index=False)[["orcado", "realizado"]].sum()
+                  if ob else pd.DataFrame(columns=["pacote", "orcado", "realizado"]))
+    tot["despesas"] = sum(r["despesas"] for r in rs if r["despesas"] is not None) if any(
+        r["despesas"] is not None for r in rs) else None
+    tot["orcado"] = sum(r["orcado"] or 0 for r in rs) if tot["despesas"] is not None else None
+    tot["hl"] = sum(r["hl"] for r in rs)
+    tot["meses"] = sorted(meses_)
+    return _aplicar(tot, v)
+
+
+def salvar_edicao(operacao_id: int, mes: str, novos: dict, usuario: dict) -> int:
+    """Grava os valores editados (só os que mudaram). Valor igual ao gerado volta a ser 'gerado'.
+    Devolve quantas linhas mudaram."""
+    if not pode_editar_dre(usuario):
+        raise RegraNegocioError("Editar o DRE precisa ser liberado pelo Master (⚙️ Cadastros OBZ › Papéis).")
+    if operacoes_repo.e_consolidada(operacao_id):
+        raise RegraNegocioError("Escolha uma revenda (não a visão consolidada) para editar o DRE.")
+    gerado = valores_dre(dre_mes(operacao_id, mes))
+    atuais = {k: v for k, v in zip(*[edicoes(operacao_id, mes)[c] for c in ("chave", "valor")])}
+    quem = usuario.get("nome") or usuario.get("login") or ""
+    quando = tempo.agora().strftime("%Y-%m-%d %H:%M")
+    mudou = 0
+    with get_conn() as conn:
+        for k, novo in novos.items():
+            novo = None if novo is None or (isinstance(novo, float) and pd.isna(novo)) else round(float(novo), 2)
+            antes = atuais.get(k, gerado.get(k))
+            antes = None if antes is None else round(float(antes), 2)
+            if novo == antes:
+                continue
+            ger = gerado.get(k)
+            if novo is not None and ger is not None and abs(novo - float(ger)) < 0.005:
+                conn.execute("DELETE FROM dre_editado WHERE operacao_id = ? AND mes = ? AND chave = ?",
+                             (operacao_id, mes, k))
+            else:
+                conn.execute("""INSERT INTO dre_editado (operacao_id, mes, chave, valor, editado_por, editado_em)
+                                VALUES (?, ?, ?, ?, ?, ?)
+                                ON CONFLICT(operacao_id, mes, chave) DO UPDATE SET valor = excluded.valor,
+                                  editado_por = excluded.editado_por, editado_em = excluded.editado_em""",
+                             (operacao_id, mes, k, novo, quem, quando))
+            conn.execute("""INSERT INTO dre_editado_log (operacao_id, mes, chave, rotulo, de, para, usuario, em)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""", (operacao_id, mes, k, rotulo_chave(k), antes, novo,
+                                                                  quem, quando))
+            mudou += 1
+    return mudou
+
+
+def voltar_ao_gerado(operacao_id: int, mes: str, usuario: dict) -> None:
+    if not pode_editar_dre(usuario):
+        raise RegraNegocioError("Editar o DRE precisa ser liberado pelo Master.")
+    quem = usuario.get("nome") or usuario.get("login") or ""
+    quando = tempo.agora().strftime("%Y-%m-%d %H:%M")
+    with get_conn() as conn:
+        conn.execute("DELETE FROM dre_editado WHERE operacao_id = ? AND mes = ?", (operacao_id, mes))
+        conn.execute("""INSERT INTO dre_editado_log (operacao_id, mes, chave, rotulo, de, para, usuario, em)
+                        VALUES (?, ?, '*', 'Tudo voltou ao gerado', NULL, NULL, ?, ?)""",
+                     (operacao_id, mes, quem, quando))
+
+
+def log_edicoes(operacao_id: int, mes: str | None = None) -> pd.DataFrame:
+    trecho, p = operacoes_repo.filtro("operacao_id", operacao_id)
+    sql, params = f"SELECT * FROM dre_editado_log WHERE {trecho}", list(p)
+    if mes:
+        sql += " AND mes = ?"
+        params.append(mes)
+    return query_df(sql + " ORDER BY id DESC LIMIT 300", params)

@@ -230,7 +230,7 @@ def _fmt(v, tipo) -> str:
     return {"m": _m, "p": _p, "n": lambda x: _n(x), "h": _m}[tipo](v)
 
 
-def _kpis_dre(r: dict, rotulo: str) -> None:
+def _kpis_dre(r: dict, rotulo: str, key: str = "kp_dre") -> None:
     lb, bruta, res = r["lucro_bruto"], r["receita_bruta"], r["resultado"]
     mb = _div(lb, bruta)
     tema.kpis([
@@ -253,7 +253,7 @@ def _kpis_dre(r: dict, rotulo: str) -> None:
          "status": "neutro" if res is None else "bom" if res >= 0 else "critico",
          "detalhe": (f"margem {_p(_div(res, bruta) * 100 if res is not None and bruta else None)}"
                      if r["despesas"] is not None else "aguardando OBZ")},
-    ], key="kp_dre")
+    ], key=key)
 
 
 def _manuais(usuario: dict, op: int, lista: list[str]) -> None:
@@ -299,6 +299,9 @@ def render_dre(usuario: dict, operacao_id: int) -> None:
         st.info("Para o DRE, suba a 03.02.37 vendas, a 03.02.37 compra e o 02.05.02 (saldo inicial e final).")
         _ir_relatorios("dre")
         return
+    visao = ui._escolha("dre_visao", ["gerado", "editado", "email"], "gerado", pills=True,
+                        formatar={"gerado": "📑 DRE gerado", "editado": "✏️ DRE editado",
+                                  "email": "📧 Para e-mail"}.get)
     c1, c2, _ = st.columns([1.2, 1, 2])
     with c1:
         modo = ui._escolha("dre_modo", ["mes", "ano"], "mes", pills=True, formatar={"mes": "🗓️ Mês", "ano": "📆 Ano"}.get)
@@ -309,9 +312,26 @@ def render_dre(usuario: dict, operacao_id: int) -> None:
         a = c2.selectbox("Ano", sorted({m[:4] for m in meses}, reverse=True), key="dre_ano")
         lista = sorted(m for m in meses if m.startswith(a))
         rotulo = f"ano {a}" if len(lista) > 1 else _nome_mes(lista[0])
+    if visao == "editado":
+        from modules.corporativo import dre_editado
+
+        dre_editado.render(usuario, op, lista, rotulo)
+        return
+    if visao == "email":
+        from modules.corporativo import dre_editado
+
+        dre_editado.render_email(usuario, op, lista, rotulo)
+        return
     with st.spinner("Montando o DRE..."):
         res = [ev.dre_mes(op, m) for m in lista]
         tot = ev.dre_periodo(op, lista) if len(lista) > 1 else res[0]
+    _faltas(res)
+    _kpis_dre(tot, rotulo)
+    _manuais(usuario, op, lista)
+    tabela_dre(lista, res, tot, rotulo, "DRE")
+
+
+def _faltas(res: list[dict]) -> None:
     faltas = []
     if not all(r["ok"] for r in res):
         faltas.append("saldo de estoque (02.05.02 inicial e final) — sem ele não há CMV nem lucro bruto")
@@ -319,8 +339,9 @@ def render_dre(usuario: dict, operacao_id: int) -> None:
         faltas.append("OBZ (despesas) — o resultado operacional aparece quando o OBZ for lançado")
     if faltas:
         st.warning("Falta para fechar o DRE: " + " · ".join(faltas) + ".")
-    _kpis_dre(tot, rotulo)
-    _manuais(usuario, op, lista)
+
+
+def montar_tabela(lista: list[str], res: list[dict], tot: dict, rotulo: str) -> pd.DataFrame:
     rotulos = [l_[0] for l_ in _linhas_dre(tot)]
     for r in res:  # departamento que só existe num mês e não no total (não deve acontecer, mas não some)
         for l_ in _linhas_dre(r):
@@ -338,8 +359,12 @@ def render_dre(usuario: dict, operacao_id: int) -> None:
         tabela[rotulo] = [_fmt(v, t) for _, v, t in ls]
         tabela["% da receita bruta"] = [_p(_div(v, tot["receita_bruta"]) * 100) if t == "m" and v is not None
                                         and tot["receita_bruta"] else "" for _, v, t in ls]
-    vis = pd.DataFrame(tabela)
-    ui.tabela(vis, baixar=f"DRE_{lista[0]}_{lista[-1]}", height=(len(vis) + 1) * 35 + 25)
+    return pd.DataFrame(tabela)
+
+
+def tabela_dre(lista: list[str], res: list[dict], tot: dict, rotulo: str, prefixo: str) -> None:
+    vis = montar_tabela(lista, res, tot, rotulo)
+    ui.tabela(vis, baixar=f"{prefixo}_{lista[0]}_{lista[-1]}", height=(len(vis) + 1) * 35 + 25)
     if len(lista) > 1:
         x = [_nome_mes(m)[:3] for m in lista]
         series = {"Faturamento (R$ mil)": [r["receita_bruta"] / 1000 for r in res],
@@ -348,7 +373,7 @@ def render_dre(usuario: dict, operacao_id: int) -> None:
                   "OBZ (R$ mil)": [(r["despesas"] or 0) / 1000 for r in res],
                   "Resultado operacional (R$ mil)": [(r["resultado"] or 0) / 1000 for r in res]}
         graficos.mostrar(graficos.barras(x, series, titulo="Faturamento, CMV, lucro bruto, OBZ e resultado por mês"),
-                         key="g_dre")
+                         key=f"g_{prefixo}")
     st.caption("Receita bruta = total das notas (coluna Z) só das operações de R$ de venda (⚙️ Cadastros) · "
                "CMV = estoque inicial + compras − estoque final (02.05.02, depósitos "
                "marcados em 🏬 Estoque) — o mesmo do 📊 Resumo & Lucro Bruto · Despesas = OBZ realizado por "

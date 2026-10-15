@@ -24,7 +24,13 @@ LIMITE_PADRAO = 10.0
 STATUS = {"lancada": "✅ Lançada", "aguardando": "⏳ Aguardando aprovação", "aprovada": "✔️ Aprovada",
           "reprovada": "❌ Reprovada — revisar", "sugerida": "💡 Sugestão (não lançada)"}
 PAPEIS = {"lancador": "📝 Lança tendências", "aprovador": "✔️ Aprova (financeiro)",
-          "plan": "🎯 Pode alterar o Plan (liberado pelo Master)"}
+          "plan": "🎯 Pode alterar o Plan (liberado pelo Master)",
+          "dre_editar": "✏️ Pode editar o DRE (liberado pelo Master)",
+          "fin_dono": "🏦 Dono do financeiro — monta e aprova o simulador OBZ",
+          "diretor": "🎩 Diretor — aprova o orçamento do simulador",
+          "ceo": "🏛️ Corporativo / CEO — aprovação final do orçamento"}
+# papéis que só o Master concede
+PAPEIS_MASTER = {"plan", "dre_editar", "fin_dono", "diretor", "ceo"}
 _MESES = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
 
 
@@ -978,3 +984,43 @@ def serie_mensal(operacao_id: int, ano: str) -> pd.DataFrame:
         x["area"] = [area_de(c, d, mp) for c, d in zip(x["conta"], x["depto"])]
         out.append(x.groupby(["mes", "area"], as_index=False)["valor"].sum().assign(tipo=nome))
     return pd.concat(out, ignore_index=True) if out else pd.DataFrame(columns=["mes", "area", "valor", "tipo"])
+
+
+# --- R$/HL por departamento -------------------------------------------------------------------------------------
+def hl_mensal(operacao_id: int, ano: str) -> dict:
+    """HL vendido por mês (operações de HL de venda: venda + bonificação)."""
+    from services import faturamento_service as fs
+
+    dv = fs.dia_df(operacao_id, "venda", f"{ano}-01-01", f"{ano}-12-31", fs.STATUS_PADRAO["venda"])
+    if dv.empty:
+        return {}
+    dv = dv[dv["operacao_cod"].astype(str).isin(fs.operacoes_do_setor("hl_venda"))]
+    return dv.assign(mes=dv["data"].str[:7]).groupby("mes")["hl"].sum().to_dict()
+
+
+def gastos_ano(operacao_id: int, ano: str) -> pd.DataFrame:
+    """Despesa líquida (despesa − receita) do OBZ por mês × conta × depto, com departamento: real e plan."""
+    ct = contas()
+    obz_ok = set(ct.loc[ct["no_obz"].fillna(1).astype(int) == 1, "codigo"])
+    nat = dict(zip(ct["codigo"], ct["natureza"]))
+    nome = dict(zip(ct["codigo"], ct["nome"]))
+    mp = _mapas()
+    partes = []
+    for tipo, x in (("real", real_df(operacao_id, f"{ano}-01", f"{ano}-12")),
+                    ("plan", plan_df(operacao_id, f"{ano}-01", f"{ano}-12"))):
+        if x.empty:
+            continue
+        x = x[x["conta"].isin(obz_ok)]
+        g = x.groupby(["mes", "conta", "depto"], as_index=False)["valor"].sum()
+        g["valor"] = [v if nat.get(c) != "receita" else -v for v, c in zip(g["valor"], g["conta"])]
+        partes.append(g.rename(columns={"valor": tipo}))
+    if not partes:
+        return pd.DataFrame(columns=["mes", "conta", "depto", "area", "nome_conta", "real", "plan"])
+    df = partes[0]
+    for p in partes[1:]:
+        df = df.merge(p, on=["mes", "conta", "depto"], how="outer")
+    for c in ("real", "plan"):
+        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0) if c in df else 0.0
+    df["area"] = [area_de(c, d, mp) for c, d in zip(df["conta"], df["depto"])]
+    df["nome_conta"] = df["conta"].map(nome)
+    return df
