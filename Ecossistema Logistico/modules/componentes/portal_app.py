@@ -1,7 +1,7 @@
 """Portal Comercial com cara de aplicativo (link público por revenda).
 
 Topo com a foto da carreta e a revenda, chips de status (Stock Out / Low / Ideal / Over) para filtrar,
-busca, e a lista de produtos em cartões: estoque, trânsito, puxadas D0/D1/D2 e barra de cobertura.
+busca, e a lista de produtos em cartões: estoque, trânsito e barra de cobertura.
 A tabela e o quadro para o grupo continuam disponíveis.
 """
 import html
@@ -88,15 +88,15 @@ def _n(v) -> str:
     return ui.numero(f) if f == f else "0"
 
 
-def _hero(revenda: str, atualizado) -> None:
+def _hero(revenda: str, atualizado, logado: bool = True) -> None:
     from modules.puxada.app_motorista import _foto_carreta
 
     foto = _foto_carreta()
     fundo = f' style="background-image:url({foto})"' if foto else ""
     st.markdown(_CSS + f'<div class="pa-hero"{fundo}><div class="in"><span class="tag">Portal Comercial · Grupo Lima</span>'
-                f'<h1>{_e(revenda)}</h1><div class="sub">Estoque do dia com o que está chegando (trânsito e puxadas '
-                f'D0, D1, D2)</div><div class="chips"><span>🕒 estoque de {_e(atualizado or "—")}</span>'
-                f'<span>🔒 somente leitura</span></div></div></div>', unsafe_allow_html=True)
+                f'<h1>{_e(revenda)}</h1><div class="sub">Estoque do dia com o que está chegando (trânsito)</div><div class="chips"><span>🕒 estoque de {_e(atualizado or "—")}</span>'
+                f'<span>🔒 {"somente leitura" if logado else "acesso por CPF e senha"}</span></div></div></div>',
+                unsafe_allow_html=True)
 
 
 def _card(r) -> str:
@@ -105,7 +105,7 @@ def _card(r) -> str:
     doi = r.doi if r.doi == r.doi else None
     pct = 100 if doi is None and r.disponivel > 0 else min((doi or 0) / 15 * 100, 100)
     cob = "—" if doi is None else f"{ui.numero(doi, 1)} dias"
-    pux = [("Trâns.", r.transito), ("D0", r.d0), ("D1", r.d1), ("D2", r.d2)]
+    pux = [("🚚 Trânsito", r.transito)]
     chips = "".join(f'<div class="{"on" if v else "z"}"><small>{k}</small><b>{_n(v)}</b></div>' for k, v in pux)
     return (f'<div class="pa-card" style="--c:{cor}"><div class="pa-top"><span class="pa-cod">CÓD {_e(r.cod)} · '
             f'{_e(r.categoria_detalhada)}</span><span class="pa-st">{ICONE.get(st_, "")} {ROTULO.get(st_, st_)}</span></div>'
@@ -114,10 +114,71 @@ def _card(r) -> str:
             f'<div class="pa-barra"><i style="width:{pct:.0f}%"></i></div><div class="pa-pux">{chips}</div></div>')
 
 
-def render(operacao_id: int, revenda: str) -> None:
+def tela_login(operacao_id: int, revenda: str) -> None:
+    """Login do RN: CPF e senha (o Master libera o CPF; no primeiro acesso o RN cria a senha)."""
+    from services import portal_rn_service as prn
+    from services.erros import RegraNegocioError
+
+    _hero(revenda, None, logado=False)
+    with st.container(key="pa_login"):
+        st.markdown("#### 🔐 Acesso do RN")
+        cpf = st.text_input("CPF", key="pa_cpf", placeholder="000.000.000-00")
+        sit = prn.situacao(cpf, operacao_id) if prn.cpf_valido(cpf) else None
+        if cpf and not prn.cpf_valido(cpf):
+            st.caption("Digite um CPF válido.")
+        elif sit == "sem_cadastro":
+            st.error("CPF não liberado para o Portal. Peça o acesso à gestão da revenda.")
+        elif sit == "bloqueado":
+            st.error("Acesso bloqueado. Fale com a gestão da revenda.")
+        elif sit == "sem_revenda":
+            st.error(f"Seu CPF não está liberado para {revenda}.")
+        elif sit == "criar_senha":
+            st.info("👋 Primeiro acesso: crie a sua senha (mínimo 6 caracteres).")
+            s1 = st.text_input("Nova senha", type="password", key="pa_s1")
+            s2 = st.text_input("Confirme a senha", type="password", key="pa_s2")
+            if st.button("Criar senha e entrar", type="primary", key="pa_criar", **ui.LARGURA):
+                try:
+                    rn = prn.criar_senha(cpf, s1, s2)
+                except RegraNegocioError as e:
+                    st.error(str(e))
+                else:
+                    _logar(rn)
+        elif sit == "ok":
+            senha = st.text_input("Senha", type="password", key="pa_senha")
+            manter = st.checkbox("Manter conectado neste aparelho", value=True, key="pa_manter")
+            if st.button("Entrar", type="primary", key="pa_entrar", **ui.LARGURA):
+                try:
+                    rn = prn.entrar(cpf, senha)
+                except RegraNegocioError as e:
+                    st.error(str(e))
+                else:
+                    _logar(rn, manter)
+            st.caption("Esqueceu a senha? Peça à gestão para zerar — no próximo acesso você cria outra.")
+
+
+def _logar(rn: dict, manter: bool = True) -> None:
+    from services import portal_rn_service as prn
+
+    st.session_state["rn"] = rn
+    if manter:
+        tok = prn.gerar_token(rn)
+        if tok:
+            st.query_params["r"] = tok
+    st.rerun()
+
+
+def render(operacao_id: int, revenda: str, rn: dict | None = None) -> None:
     df = armazem_service.estoque_comercial(operacao_id)
     ult = df["dt_atualizacao"].dropna().max() if not df.empty and "dt_atualizacao" in df else None
     _hero(revenda, ult)
+    if rn:
+        a, b = st.columns([4, 1])
+        a.caption(f"👤 {rn['nome']}")
+        if b.button("Sair", key="pa_sair"):
+            st.session_state.pop("rn", None)
+            if "r" in st.query_params:
+                del st.query_params["r"]
+            st.rerun()
     if df.empty:
         st.markdown('<div class="pa-vazio">Estoque ainda não atualizado. Volte mais tarde. 🙂</div>',
                     unsafe_allow_html=True)
@@ -163,14 +224,11 @@ def render(operacao_id: int, revenda: str) -> None:
         return
     if modo.startswith("📊"):
         ui.tabela(vis.assign(status=vis["status_comercial"].map(lambda s: f"{ICONE.get(s, '')} {ROTULO.get(s, s)}"))[
-            ["cod", "descricao", "categoria_detalhada", "disponivel", "transito", "d0", "d1", "d2", "doi", "status"]],
+            ["cod", "descricao", "categoria_detalhada", "disponivel", "transito", "doi", "status"]],
             column_config={"cod": st.column_config.NumberColumn("Código", format="%d"), "descricao": "Produto",
                            "categoria_detalhada": "Embalagem",
                            "disponivel": st.column_config.NumberColumn("Estoque (cx)", format="%.0f"),
                            "transito": st.column_config.NumberColumn("🚚 Trânsito", format="%.0f"),
-                           "d0": st.column_config.NumberColumn("D0", format="%.0f"),
-                           "d1": st.column_config.NumberColumn("D1", format="%.0f"),
-                           "d2": st.column_config.NumberColumn("D2", format="%.0f"),
                            "doi": st.column_config.NumberColumn("Cobertura", format="%.1f d"), "status": "Status"},
             baixar="portal_comercial")
         return

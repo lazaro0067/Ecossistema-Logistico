@@ -111,6 +111,18 @@ def gravar_resumo(df: pd.DataFrame, operacao_id: int, origem: str, coluna_data: 
                          (operacao_id, origem, mes))
             conn.execute("DELETE FROM notas_cliente_mes WHERE operacao_id = ? AND origem = ? AND mes = ?",
                          (operacao_id, origem, mes))
+            if origem == "venda":
+                conn.execute("DELETE FROM notas_cli_prod_mes WHERE operacao_id = ? AND mes = ?", (operacao_id, mes))
+        if origem == "venda":  # cliente × produto (só venda/bonificação, notas ativas) — para o lucro por cliente
+            ops = set(operacoes_do_setor("fat_venda")) | set(operacoes_do_setor("hl_venda")) | \
+                set(operacoes_do_setor("fat_bonif"))
+            cp = d[d["operacao_cod"].astype(str).isin(ops) & (d["status"] == "A")]
+            cp = cp.groupby(["mes", "operacao_cod", "status", "cliente", "produto"], as_index=False)[["valor", "hl"]].sum()
+            cp["produto"] = cp["produto"].astype(str).str.replace(r"\D", "", regex=True).str.lstrip("0")
+            cp = cp.assign(operacao_id=operacao_id)
+            cols = list(cp.columns)
+            conn.executemany(f"INSERT INTO notas_cli_prod_mes ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
+                             [tuple(_py(v) for v in r) for r in cp.itertuples(index=False)])
         for tabela, tab in (("notas_dia", dia), ("notas_produto_mes", prod), ("notas_cliente_mes", cli)):
             tab = tab.assign(operacao_id=operacao_id, origem=origem, importado_em=agora)
             cols = list(tab.columns)
@@ -441,3 +453,33 @@ def margem_por(df: pd.DataFrame, chave: str) -> pd.DataFrame:
     g["custo_hl"] = g["cmv"] / g["hl_venda"].where(g["hl_venda"] > 0)
     g["part"] = g["margem"] / g["margem"].sum() * 100 if g["margem"].sum() else None
     return g.sort_values("margem", ascending=False).reset_index(drop=True)
+
+
+
+def lucro_clientes(operacao_id: int, mes_de: str, mes_ate: str) -> pd.DataFrame:
+    """Lucro bruto por cliente: venda (R$ das operações de venda) − HL (venda + bonificação) × custo/HL de cada
+    produto (mesmo custo da margem por produto). Precisa do 03.02.37 vendas subido nesta versão."""
+    trecho, p = operacoes_repo.filtro("operacao_id", operacao_id)
+    cp = query_df(f"SELECT cliente, produto, operacao_cod, SUM(valor) AS valor, SUM(hl) AS hl FROM notas_cli_prod_mes "
+                  f"WHERE {trecho} AND mes BETWEEN ? AND ? GROUP BY cliente, produto, operacao_cod",
+                  (*p, mes_de, mes_ate))
+    if cp.empty:
+        return cp
+    mg = margem(operacao_id, mes_de, mes_ate)
+    custo = dict(zip(mg["produto"].astype(str), mg["custo_hl"])) if not mg.empty else {}
+    ov, ohv = set(operacoes_do_setor("fat_venda")), set(operacoes_do_setor("hl_venda"))
+    cp["produto"] = cp["produto"].astype(str)
+    cp["venda"] = cp["valor"].where(cp["operacao_cod"].astype(str).isin(ov), 0.0)
+    cp["hl_c"] = cp["hl"].where(cp["operacao_cod"].astype(str).isin(ohv), 0.0)
+    cp["cmv"] = cp["hl_c"] * cp["produto"].map(custo).astype(float)
+    cp["sem_custo"] = cp["cmv"].isna() & (cp["hl_c"] > 0)
+    cp["cmv"] = cp["cmv"].fillna(0.0)
+    g = cp.groupby("cliente", as_index=False).agg(venda=("venda", "sum"), hl=("hl_c", "sum"), cmv=("cmv", "sum"),
+                                                  produtos=("produto", "nunique"), sem_custo=("sem_custo", "sum"))
+    nomes = query_df(f"SELECT cliente, MAX(nome) AS nome FROM notas_cliente_mes WHERE {trecho} AND origem = 'venda' "
+                     f"GROUP BY cliente", p)
+    g = g.merge(nomes, on="cliente", how="left")
+    g["lucro"] = g["venda"] - g["cmv"]
+    g["margem_pct"] = g["lucro"] / g["venda"].where(g["venda"] > 0) * 100
+    g["lucro_hl"] = g["lucro"] / g["hl"].where(g["hl"] > 0)
+    return g.sort_values("lucro").reset_index(drop=True)

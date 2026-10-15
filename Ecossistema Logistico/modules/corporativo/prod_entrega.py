@@ -340,15 +340,12 @@ def _modais(df: pd.DataFrame, chave: str) -> None:
     for linha in _leitura(m, base):
         st.markdown(f"- {linha}")
 
-    c1, c2 = st.columns(2)
-    with c1:
-        tema.secao("🔀 Modal usado × modal ideal", "Linhas: veículo que rodou · colunas: modal ideal.")
-        ui.tabela(m["matriz"].reset_index().rename(columns={"veiculo": "Rodou com"}), baixar="matriz_modais")
-    with c2:
-        tema.secao("📆 Necessidade média por dia da semana", "Viagens por modal ideal (média do dia da semana).")
-        s = m["semana"].copy()
-        s.index = [_SEMANA[i] for i in s.index]
-        ui.tabela(s.reset_index(names="Dia"), baixar="modais_dia_semana")
+    tema.secao("🔀 Modal usado × modal ideal", "Linhas: veículo que rodou · colunas: modal ideal.")
+    ui.tabela(m["matriz"].reset_index().rename(columns={"veiculo": "Rodou com"}), baixar="matriz_modais")
+    tema.secao("📆 Necessidade média por dia da semana", "Viagens por modal ideal (média do dia da semana).")
+    s = m["semana"].copy()
+    s.index = [_SEMANA[i] for i in s.index]
+    ui.tabela(s.reset_index(names="Dia"), baixar="modais_dia_semana")
     tema.secao("🗺️ Modal ideal por classificação da rota")
     ui.tabela(m["classificacao"].reset_index().rename(columns={"classificacao": "Classificação"}),
               baixar="modais_classificacao")

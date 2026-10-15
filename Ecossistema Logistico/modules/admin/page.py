@@ -367,7 +367,7 @@ def _aba_links(usuario: dict) -> None:
     from services import links_service
 
     tema.secao("🔗 Links do Portal Comercial por revenda",
-               "Cada revenda tem o seu link (somente leitura, sem login) e só enxerga o estoque dela. "
+               "Cada revenda tem o seu link e só enxerga o estoque dela. O RN entra com CPF e senha (liberado abaixo). "
                "“Gerar novo link” troca o código: o link antigo para de funcionar na hora.")
     revendas = [o for o in operacoes_repo.listar(apenas_ativas=True) if not operacoes_repo.e_consolidada(o["id"])]
     for o in revendas:
@@ -389,7 +389,8 @@ def _aba_links(usuario: dict) -> None:
             c1, c2, c3 = st.columns(3)
             if ativo:
                 c1.link_button("🔗 Abrir", url, **ui.LARGURA)
-                msg = f"🛍️ Portal Comercial — {o['nome']}\nEstoque do dia com as puxadas D0, D1 e D2:\n{url}"
+                msg = (f"🛍️ Portal Comercial — {o['nome']}\nEstoque do dia e o que está em trânsito.\n"
+                       f"Entre com o seu CPF (no primeiro acesso você cria a senha):\n{url}")
                 c2.link_button("📲 Enviar pelo WhatsApp", link_whatsapp(msg), **ui.LARGURA)
             with c3.popover("♻️ Gerar novo link", **ui.LARGURA):
                 st.caption("O link atual deixa de funcionar. Envie o novo para o time da revenda.")
@@ -397,6 +398,54 @@ def _aba_links(usuario: dict) -> None:
                     links_service.renovar(o["id"], usuario=usuario.get("nome") or "")
                     ui.avisar(f"Novo link gerado para {o['nome']}.")
                     st.rerun()
+
+
+def _acessos_rn(usuario: dict) -> None:
+    """RNs liberados no Portal Comercial (login por CPF; o próprio RN cria a senha no primeiro acesso)."""
+    from repositories import operacoes_repo
+    from services import portal_rn_service as prn
+
+    tema.secao("👤 Acessos do RN (CPF e senha)",
+               "Libere o CPF e as revendas. No primeiro acesso o RN cria a própria senha. “Zerar senha” faz ele "
+               "criar outra no próximo acesso.")
+    revendas = {o["id"]: o["nome"] for o in operacoes_repo.listar(apenas_ativas=True)
+                if not operacoes_repo.e_consolidada(o["id"])}
+    with st.form("rn_novo", clear_on_submit=True):
+        c1, c2, c3 = st.columns([1, 1.5, 2])
+        cpf = c1.text_input("CPF")
+        nome = c2.text_input("Nome do RN")
+        ops = c3.multiselect("Revendas", list(revendas), format_func=revendas.get)
+        if st.form_submit_button("➕ Liberar acesso", type="primary"):
+            ui.acao(prn.salvar, cpf, nome, ops, usuario.get("nome") or "", sucesso="RN liberado.")
+    df = prn.listar()
+    if df.empty:
+        st.info("Nenhum RN liberado ainda.")
+        return
+    ed = pd.DataFrame({"id": df["id"], "CPF": df["cpf"].map(prn.formatar_cpf), "Nome": df["nome"],
+                       "Revendas": [[revendas.get(int(x), x) for x in str(o or "").split(",") if x]
+                                    for o in df["operacoes"]],
+                       "Ativo": df["ativo"].astype(int) == 1,
+                       "Senha": df["tem_senha"].map(lambda v: "✅ criada" if v else "⏳ primeiro acesso"),
+                       "Último acesso": df["ultimo_acesso"].fillna("—"), "Zerar senha": False, "Excluir": False})
+    novo = st.data_editor(ed, hide_index=True, key="rn_ed", **ui.LARGURA,
+                          disabled=["id", "CPF", "Senha", "Último acesso"],
+                          column_config={"id": None, "Revendas": st.column_config.ListColumn("Revendas"),
+                                         "Zerar senha": st.column_config.CheckboxColumn("🔑 Zerar"),
+                                         "Excluir": st.column_config.CheckboxColumn("🗑️")})
+    st.caption("Para mudar as revendas de um RN, exclua e libere de novo.")
+    if st.button("💾 Salvar RNs", key="rn_salvar"):
+        for (_, o), (_, r) in zip(ed.iterrows(), novo.iterrows()):
+            if r["Excluir"]:
+                prn.excluir(int(o["id"]))
+                continue
+            if r["Zerar senha"]:
+                prn.resetar_senha(int(o["id"]))
+            if r["Nome"] != o["Nome"] or r["Ativo"] != o["Ativo"]:
+                linha = df[df["id"] == o["id"]].iloc[0]
+                prn.salvar(linha["cpf"], r["Nome"], [int(x) for x in str(linha["operacoes"]).split(",") if x],
+                           rn_id=int(o["id"]), ativo=bool(r["Ativo"]))
+        ui.avisar("RNs atualizados.")
+        st.rerun()
 
 
 def _bloco_backup_auto(backup_auto) -> None:
@@ -513,6 +562,7 @@ def render(usuario: dict, operacao_id: int | None) -> None:
         _aba_operacoes()
     with a4:
         _aba_links(usuario)
+        _acessos_rn(usuario)
     with a5:
         _aba_backup()
     with a3:

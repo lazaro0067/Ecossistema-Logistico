@@ -65,14 +65,19 @@ h1, h2, h3 {{ letter-spacing: -0.01em; color:{TINTA}; }}
 .eco-menu-titulo {{ font-size:.7rem; letter-spacing:.08em; text-transform:uppercase; opacity:.55; margin:.6rem 0 .2rem .2rem; }}
 
 /* ---------- Cabeçalho da página ---------- */
-.eco-hero {{ background:#fff; border:1px solid {BORDA}; border-radius:16px; padding:1.1rem 1.4rem;
-    display:flex; justify-content:space-between; align-items:center; gap:1rem; margin-bottom:1rem;
-    box-shadow: 0 1px 2px rgba(11,31,58,.04); flex-wrap: wrap; }}
-.eco-hero h1 {{ font-size:1.65rem; margin:0; padding:0; }}
-.eco-hero p {{ margin:.15rem 0 0; color:{TINTA_2}; font-size:.92rem; }}
-.eco-pill {{ display:inline-flex; align-items:center; gap:.35rem; padding:.3rem .7rem; border-radius:999px;
-    background:#e6f0fb; color:#1c5cab; font-size:.82rem; font-weight:600; white-space:nowrap; }}
-.eco-pill.cinza {{ background:#f0efec; color:{TINTA_2}; }}
+.eco-hero {{ background: linear-gradient(115deg, #0B1F3A 0%, #16407a 55%, #2a78d6 100%); border:none;
+    border-radius:18px; padding:1.15rem 1.5rem; display:flex; justify-content:space-between; align-items:center;
+    gap:1rem; margin-bottom:1rem; box-shadow: 0 6px 18px rgba(11,31,58,.18); flex-wrap: wrap; position:relative;
+    overflow:hidden; }}
+.eco-hero::after {{ content:""; position:absolute; right:-60px; top:-60px; width:220px; height:220px; border-radius:50%;
+    background: radial-gradient(circle, rgba(255,255,255,.18) 0%, rgba(255,255,255,0) 70%); }}
+.eco-hero h1 {{ font-size:1.65rem; margin:0; padding:0; color:#ffffff !important; }}
+.eco-hero h1 a {{ display:none; }}
+.eco-hero p {{ margin:.15rem 0 0; color:#d6e4f7; font-size:.92rem; }}
+.eco-pill {{ display:inline-flex; align-items:center; gap:.35rem; padding:.3rem .75rem; border-radius:999px;
+    background:rgba(255,255,255,.16); color:#ffffff; font-size:.82rem; font-weight:700; white-space:nowrap;
+    border:1px solid rgba(255,255,255,.28); }}
+.eco-pill.cinza {{ background:rgba(255,255,255,.10); color:#e6ecf5; }}
 
 /* ---------- Cards de indicador ---------- */
 .eco-kpis {{ display:grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap:.8rem; margin:.3rem 0 1rem; }}
@@ -83,10 +88,18 @@ h1, h2, h3 {{ letter-spacing: -0.01em; color:{TINTA}; }}
 .eco-kpi .val {{ font-size:1.6rem; font-weight:750; color:{TINTA}; margin:.25rem 0 .1rem; line-height:1.15; }}
 .eco-kpi .det {{ font-size:.78rem; color:{TINTA_2}; min-height:1.1rem; }}
 /* navegação por estrutura (grupos e telas de cada pasta) */
-div[class*="st-key-nav_mod_"] {{ background:#fff; border:1px solid {BORDA}; border-radius:16px;
-    padding:.7rem .8rem .55rem; margin:.2rem 0 1rem; box-shadow: 0 1px 2px rgba(11,31,58,.04); gap:.45rem; }}
+div[class*="st-key-nav_mod_"] {{ background: linear-gradient(180deg, #eef4fd 0%, #ffffff 100%);
+    border:1px solid #cfe0f7; border-top:4px solid #2a78d6; border-radius:16px;
+    padding:.7rem .8rem .55rem; margin:.2rem 0 1rem; box-shadow: 0 3px 10px rgba(42,120,214,.10); gap:.45rem; }}
 div[class*="st-key-nav_mod_"] [data-testid="stButtonGroup"] {{ flex-wrap: wrap; }}
-div[class*="st-key-nav_mod_"] [data-testid="stButtonGroup"] button {{ font-weight:600; }}
+div[class*="st-key-nav_mod_"] [data-testid="stButtonGroup"] button {{ font-weight:650; border-color:#cfe0f7; }}
+div[class*="st-key-nav_mod_"] [data-testid="stButtonGroup"] button:hover {{ border-color:#2a78d6; color:#1c5cab; }}
+div[class*="st-key-nav_mod_"] button[data-testid="stBaseButton-segmented_controlActive"],
+div[class*="st-key-nav_mod_"] button[data-testid="stBaseButton-pillsActive"] {{
+    background: linear-gradient(135deg, #1c5cab 0%, #2a78d6 100%) !important; color:#ffffff !important;
+    border-color:#1c5cab !important; box-shadow: 0 2px 8px rgba(42,120,214,.35); }}
+div[class*="st-key-nav_mod_"] button[data-testid="stBaseButton-segmented_controlActive"] p,
+div[class*="st-key-nav_mod_"] button[data-testid="stBaseButton-pillsActive"] p {{ color:#ffffff !important; }}
 div[class*="st-key-nav_mod_"] [data-testid="stElementContainer"]:first-child [data-testid="stButtonGroup"] button {{
     min-height:2.6rem; padding:0 1.1rem; }}
 
@@ -134,8 +147,9 @@ div[class*="st-key-kpib_"] button {{ opacity:0 !important; cursor:pointer; borde
 .eco-selo i {{ font-style:normal; font-weight:800; }}
 
 /* ---------- Seções e cartões genéricos ---------- */
-.eco-secao {{ margin: 1.2rem 0 .4rem; }}
-.eco-secao h3 {{ font-size:1.1rem; margin:0; }}
+.eco-secao {{ margin: 1.2rem 0 .5rem; padding:.45rem .8rem; border-left:5px solid #2a78d6; border-radius:10px;
+    background: linear-gradient(90deg, #e6f0fb 0%, rgba(230,240,251,0) 85%); }}
+.eco-secao h3 {{ font-size:1.1rem; margin:0; color:#0B1F3A; }}
 .eco-secao p {{ color:{TINTA_2}; font-size:.85rem; margin:.1rem 0 0; }}
 .eco-base {{ background:#fff; border:1px solid {BORDA}; border-radius:14px; padding:.9rem 1rem; height:100%; }}
 .eco-base h4 {{ font-size:1rem; margin:0 0 .15rem; }}

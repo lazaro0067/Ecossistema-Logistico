@@ -75,7 +75,7 @@ def _tab_itens(d: pd.DataFrame) -> pd.DataFrame:
 
 
 def render_estoque(usuario: dict, operacao_id: int) -> None:
-    st.markdown("##### 💰 Financeiro › **🏬 Estoque** (02.05.02 — saldo inicial × saldo final)")
+    st.markdown("##### 💰 Financeiro › **🏬 Estoque**")
     op = ui.visao_acompanhamento(usuario, operacao_id, "estoque_valor")
     meses = ev.meses(op)
     if not meses:
@@ -233,7 +233,7 @@ def _fmt(v, tipo) -> str:
 
 
 def render_dre(usuario: dict, operacao_id: int) -> None:
-    st.markdown("##### 💰 Financeiro › **📑 DRE** — apuração do resultado")
+    st.markdown("##### 💰 Financeiro › **📑 DRE**")
     op = ui.visao_acompanhamento(usuario, operacao_id, "dre")
     meses = sorted(set(fs.meses(op, "venda")) | set(ev.meses(op)), reverse=True)
     if not meses:

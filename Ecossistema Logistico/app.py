@@ -243,6 +243,22 @@ def _op_do_link() -> int | None:
     return op["id"] if op else operacoes_repo.resolver_por_texto(str(valor))
 
 
+def _rn_logado(op: int) -> dict | None:
+    """RN logado no Portal Comercial (sessão ou acesso lembrado ?r=) e liberado nesta revenda."""
+    from services import portal_rn_service as prn
+
+    rn = st.session_state.get("rn")
+    if not rn and st.query_params.get("r"):
+        rn = prn.por_token(st.query_params.get("r"))
+        if rn:
+            st.session_state["rn"] = rn
+        else:
+            del st.query_params["r"]
+    if rn and op not in rn.get("operacoes", []):
+        return None
+    return rn
+
+
 def paginas_publicas() -> bool:
     """Links somente leitura do sistema original: ?modo=comercial e ?visualizacao=ressuprimento."""
     modo, vis = st.query_params.get("modo"), st.query_params.get("visualizacao")
@@ -265,7 +281,11 @@ def paginas_publicas() -> bool:
         st.session_state.operacao_nome = link["revenda"]
         from modules.componentes import portal_app
 
-        portal_app.render(op, link["revenda"])
+        rn = _rn_logado(op)
+        if not rn:
+            portal_app.tela_login(op, link["revenda"])
+            return True
+        portal_app.render(op, link["revenda"], rn)
         from core import versao
 
         versao.mostrar()

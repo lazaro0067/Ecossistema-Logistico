@@ -669,6 +669,30 @@ CREATE TABLE IF NOT EXISTS obz_resp (
     PRIMARY KEY (area, conta)
 );
 
+CREATE TABLE IF NOT EXISTS portal_rn (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    cpf           TEXT UNIQUE NOT NULL,
+    nome          TEXT,
+    operacoes     TEXT,
+    senha_hash    TEXT,
+    ativo         INTEGER DEFAULT 1,
+    criado_por    TEXT,
+    criado_em     TEXT,
+    ultimo_acesso TEXT
+);
+
+CREATE TABLE IF NOT EXISTS notas_cli_prod_mes (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id  INTEGER NOT NULL REFERENCES operacoes(id),
+    mes          TEXT NOT NULL,
+    operacao_cod TEXT,
+    status       TEXT,
+    cliente      TEXT,
+    produto      TEXT,
+    valor        REAL,
+    hl           REAL
+);
+
 CREATE TABLE IF NOT EXISTS agendamentos_descarga (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     operacao_id INTEGER NOT NULL REFERENCES operacoes(id),
@@ -1158,6 +1182,7 @@ MIGRACOES: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS ix_obz_tend ON obz_tend(operacao_id, mes);
     """),
     ("035_obz_areas", "ALTER TABLE obz_departamentos ADD COLUMN area TEXT;"),
+    ("036_cli_prod", "CREATE INDEX IF NOT EXISTS ix_cli_prod ON notas_cli_prod_mes(operacao_id, mes);"),
 ]
 
 

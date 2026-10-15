@@ -137,7 +137,7 @@ def _top(df: pd.DataFrame, rotulo: str, n: int = 30) -> pd.DataFrame:
 
 # --- Faturamento (vendas) ----------------------------------------------------------------------------
 def render_faturamento(usuario: dict, operacao_id: int, titulo: str = "📈 Vendas › **💵 Faturamento**") -> None:
-    st.markdown(f"##### {titulo} (03.02.37 vendas)")
+    st.markdown(f"##### {titulo}")
     op = ui.visao_acompanhamento(usuario, operacao_id, "faturamento")
     meses = fs.meses(op, "venda")
     if not meses:
@@ -201,22 +201,17 @@ def render_faturamento(usuario: dict, operacao_id: int, titulo: str = "📈 Vend
     tema.secao("🧾 Por operação", "Todas as operações das notas no período — a coluna “Conta em” mostra a visão.")
     ui.tabela(_vis_operacoes(df, grupos), baixar="faturamento_por_operacao")
     m_de, m_ate = de[:7], ate[:7]
-    c1, c2 = st.columns(2)
-    with c1:
-        tema.secao("🏆 Produtos (venda)")
-        ui.tabela(_top(fs.produto_combinado(op, "venda", m_de, m_ate, status, grupos["venda"], grupos["hl"]),
-                       "Produto"),
-                  baixar="faturamento_produtos")
-    with c2:
-        tema.secao("👥 Clientes (venda)")
-        ui.tabela(_top(fs.cliente_combinado(op, "venda", m_de, m_ate, status, grupos["venda"], grupos["hl"]),
-                       "Cliente"),
-                  baixar="faturamento_clientes")
+    tema.secao("🏆 Produtos (venda)")
+    ui.tabela(_top(fs.produto_combinado(op, "venda", m_de, m_ate, status, grupos["venda"], grupos["hl"]),
+                   "Produto"), baixar="faturamento_produtos")
+    tema.secao("👥 Clientes (venda)")
+    ui.tabela(_top(fs.cliente_combinado(op, "venda", m_de, m_ate, status, grupos["venda"], grupos["hl"]),
+                   "Cliente"), baixar="faturamento_clientes")
 
 
 # --- Compras (investimento em mercadoria) -----------------------------------------------------------------
 def render_compras(usuario: dict, operacao_id: int) -> None:
-    st.markdown("##### 💰 Financeiro › **🛒 Compras** (03.02.37 compra)")
+    st.markdown("##### 💰 Financeiro › **🛒 Compras**")
     op = ui.visao_acompanhamento(usuario, operacao_id, "compras")
     meses = fs.meses(op, "compra")
     if not meses:
@@ -342,8 +337,109 @@ def top_bottom(mg: pd.DataFrame, chave: str) -> None:
             ui.tabela(_vis_margem(d, "Produto", "produto"), baixar=f"margem_{titulo[2:].strip().lower()}")
 
 
+_CSS_FLUXO = """
+<style>
+.fx { display:flex; align-items:stretch; gap:.35rem; flex-wrap:wrap; margin:.4rem 0 1rem; }
+.fx .b { flex:1 1 150px; background:#fff; border:1px solid #dfe5ee; border-radius:14px; padding:.7rem .85rem;
+    border-top:5px solid var(--c); box-shadow:0 2px 6px rgba(11,31,58,.06); }
+.fx .b .t { font-size:.78rem; font-weight:800; color:#52514e; text-transform:uppercase; letter-spacing:.03em; }
+.fx .b .v { font-size:1.2rem; font-weight:900; color:#0B1F3A; margin:.2rem 0 .1rem; }
+.fx .b .m { font-size:.76rem; color:#6b6a65; }
+.fx .op { display:flex; align-items:center; font-size:1.5rem; font-weight:900; color:#2a78d6; padding:0 .1rem; }
+.fx .b.res { background:linear-gradient(135deg,#0B1F3A 0%,#2a78d6 100%); border:none; }
+.fx .b.res .t, .fx .b.res .m { color:#d6e4f7; } .fx .b.res .v { color:#fff; }
+</style>
+"""
+
+
+def _fluxo(op: int, de: str, ate: str, meses: list[str], venda: float) -> None:
+    """Início + Compra − Fim = CMV · Venda − CMV = Resultado (pelo estoque 02.05.02)."""
+    import html as _h
+
+    from services import estoque_valor_service as ev
+
+    ms = sorted(m for m in meses if de <= m <= ate) or [de]
+    ini = ev.cmv_real(op, ms[0])
+    fim = ev.cmv_real(op, ms[-1])
+    compras = sum(ev.cmv_real(op, m)["compras"] for m in ms) if len(ms) > 1 else ini["compras"]
+    ok = ini["ok"] and fim["ok"]
+    ei, ef = ini["ei"], fim["ef"]
+    cmv = ei + compras - ef if ok else None
+    res = venda - cmv if cmv is not None else None
+    e = _h.escape
+
+    def caixa(t, v, m, cor, res=False):
+        return (f'<div class="b{" res" if res else ""}" style="--c:{cor}"><div class="t">{e(t)}</div>'
+                f'<div class="v">{e(_m(v))}</div><div class="m">{e(m)}</div></div>')
+
+    def op_(x):
+        return f'<div class="op">{x}</div>'
+
+    hl_c = f"{_n(ini['compras_hl'])} HL comprados" if len(ms) == 1 else "compras do período"
+    pct = _p(_div(res, venda) * 100 if res is not None and venda else None)
+    linha1 = (caixa("📦 Início", ei if ok else None, f"estoque inicial · {_n(ini['ei_hl'])} HL" if ok
+                    else "suba o 02.05.02", "#9aa3b2") + op_("+")
+              + caixa("🛒 Compra", compras, hl_c, "#2a78d6") + op_("−")
+              + caixa("🏬 Fim", ef if ok else None, f"estoque final · {_n(fim['ef_hl'])} HL" if ok
+                      else "suba o 02.05.02", "#9aa3b2") + op_("=")
+              + caixa("🧮 CMV", cmv, "custo da mercadoria vendida", "#eda100"))
+    linha2 = (caixa("💵 Venda", venda, "faturamento (operações de venda)", "#1baf7a") + op_("−")
+              + caixa("🧮 CMV", cmv, "início + compra − fim", "#eda100") + op_("=")
+              + caixa("💰 Resultado", res, f"lucro bruto real · margem {pct}", "#0B1F3A", True))
+    html = [f'<div class="fx">{linha1}</div><div class="fx">{linha2}</div>']
+    tema.secao("🔄 Início + Compra − Fim = CMV · Venda − CMV = Resultado",
+               "Lucro bruto real pelo estoque (02.05.02 saldo inicial e final) e pelas notas de compra e venda.")
+    st.markdown(_CSS_FLUXO + "".join(html), unsafe_allow_html=True)
+    if not ok:
+        st.caption("📦 Para fechar a conta, suba o 02.05.02 (saldo inicial e saldo final) em 🏛️ › 📥 Relatórios.")
+
+
+def _clientes_lucro(op: int, de: str, ate: str) -> None:
+    tema.secao("👥 Clientes que deram menos lucro para a revenda",
+               "Lucro = venda − HL (venda + bonificação) × custo/HL de cada produto comprado. Inclui o efeito da "
+               "bonificação dada ao cliente.")
+    cl = fs.lucro_clientes(op, de, ate)
+    if cl.empty:
+        st.info("Suba de novo a 03.02.37 vendas do período (esta versão passou a guardar cliente × produto) para ver o "
+                "lucro por cliente.")
+        return
+    ordem = st.segmented_control("Ordenar por", ["Lucro (R$)", "Margem %"], default="Lucro (R$)",
+                                 key="cli_lucro_ordem") or "Lucro (R$)"
+    base = cl if ordem == "Lucro (R$)" else cl[cl["venda"] >= cl["venda"].quantile(.25)]
+    col = "lucro" if ordem == "Lucro (R$)" else "margem_pct"
+    pior = base.nsmallest(20, col)
+    neg = cl[cl["lucro"] < 0]
+    tema.kpis([
+        {"titulo": "Clientes com prejuízo", "valor": _n(len(neg)), "icone": "🔻",
+         "status": "critico" if len(neg) else "bom", "detalhe": f"{_m(neg['lucro'].sum())} de lucro negativo"},
+        {"titulo": "Lucro dos 20 piores", "valor": _m(pior["lucro"].sum()), "icone": "📉", "status": "atencao",
+         "detalhe": f"venda {_m(pior['venda'].sum())}"},
+        {"titulo": "Clientes analisados", "valor": _n(len(cl)), "icone": "👥", "status": "info",
+         "detalhe": f"margem média {_p(_div(cl['lucro'].sum(), cl['venda'].sum()) * 100 if cl['venda'].sum() else None)}"},
+    ], key="kp_cli_lucro")
+    rot = [f"{str(n or c)[:26]}" for c, n in zip(pior["cliente"], pior["nome"])]
+    graficos.mostrar(graficos.barras_h(rot, pior[col].round(1 if col == "margem_pct" else 0),
+                                       cores=["#c0392b" if v < 0 else "#eda100" for v in pior["lucro"]],
+                                       textos=[_p(v) if col == "margem_pct" else _m(v) for v in pior[col]],
+                                       titulo=f"20 clientes com menor {ordem.lower()}"), key="g_cli_lucro")
+    vis = pd.DataFrame({"Cliente": pior["cliente"].astype(str) + " · " + pior["nome"].fillna(""),
+                        "Venda (R$)": pior["venda"].map(_m), "HL (c/ bonif.)": pior["hl"].map(lambda v: _n(v, 1)),
+                        "Custo (R$)": pior["cmv"].map(_m), "Lucro (R$)": pior["lucro"].map(_m),
+                        "Margem %": pior["margem_pct"].map(_p), "Lucro/HL": pior["lucro_hl"].map(_m),
+                        "Produtos": pior["produtos"].map(_n)}).reset_index(drop=True)
+    vis.loc[len(vis)] = ["TOTAL (20)", _m(pior["venda"].sum()), _n(pior["hl"].sum(), 1), _m(pior["cmv"].sum()),
+                         _m(pior["lucro"].sum()), _p(_div(pior["lucro"].sum(), pior["venda"].sum()) * 100
+                                                    if pior["venda"].sum() else None), "", ""]
+    ui.tabela(vis, baixar="clientes_menor_lucro")
+    with st.expander("📋 Todos os clientes (do menor para o maior lucro)"):
+        ui.tabela(pd.DataFrame({"Cliente": cl["cliente"].astype(str) + " · " + cl["nome"].fillna(""),
+                                "Venda (R$)": cl["venda"].map(_m), "Custo (R$)": cl["cmv"].map(_m),
+                                "Lucro (R$)": cl["lucro"].map(_m), "Margem %": cl["margem_pct"].map(_p)}),
+                  baixar="clientes_lucro_todos", height=600)
+
+
 def render_margem(usuario: dict, operacao_id: int) -> None:
-    st.markdown("##### 💰 Financeiro › **📊 Resumo & Lucro Bruto** (03.02.37 vendas × 03.02.37 compra)")
+    st.markdown("##### 💰 Financeiro › **📊 Resumo & Lucro Bruto**")
     op = ui.visao_acompanhamento(usuario, operacao_id, "margem")
     meses = fs.meses(op, "venda")
     if not meses or not fs.meses(op, "compra"):
@@ -402,18 +498,7 @@ def render_margem(usuario: dict, operacao_id: int) -> None:
                                 "Venda": sem["venda"].map(_m), "HL": sem["hl_venda"].map(lambda v: _n(v, 1))})
          if len(sem) else None},
     ], key="kp_margem")
-    if de == ate:  # um mês: lucro bruto real pelo estoque (02.05.02)
-        from services import estoque_valor_service as ev
-
-        c = ev.cmv_real(op, de)
-        if c["ok"]:
-            lb_real = mg["venda"].sum() - c["cmv"]
-            st.success(f"📦 **Lucro bruto real (pelo estoque): {_m(lb_real)}** — margem "
-                       f"{_p(_div(lb_real, mg['venda'].sum()) * 100)} · CMV real {_m(c['cmv'])} = estoque inicial "
-                       f"{_m(c['ei'])} + compras {_m(c['compras'])} − estoque final {_m(c['ef'])}. "
-                       f"(O lucro bruto acima é pelo custo de compra de cada produto.)")
-        else:
-            st.caption("📦 Suba o 02.05.02 (saldo inicial e final) para ver o lucro bruto real pelo estoque.")
+    _fluxo(op, de, ate, meses, float(mg["venda"].sum()))
     if de != ate:  # mais de um mês: lucro bruto mês a mês
         linhas = []
         for m in sorted(x for x in meses if de <= x <= ate):
@@ -443,6 +528,7 @@ def render_margem(usuario: dict, operacao_id: int) -> None:
 
     tema.secao("🏆 Top 10 e 🔻 Bottom 10 por produto")
     top_bottom(mg, "mg")
+    _clientes_lucro(op, de, ate)
 
     tema.secao("🧩 Abertura da margem")
     ab = ui._escolha("mg_abertura", list(_ABERTURAS), "tipo", formatar=_ABERTURAS.get, pills=True)
