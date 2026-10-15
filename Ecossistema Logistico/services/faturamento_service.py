@@ -52,15 +52,46 @@ POS = {2: "operacao_cod", 3: "tipo_movto", 5: "dt_operacao", 6: "emissao", 7: "n
        26: "mapa"}
 
 
-def ler_0302037(bruto: bytes) -> pd.DataFrame:
-    """Lê o 03.02.37 (vendas ou compra) só com as colunas usadas e já calcula o HL de cada item."""
-    from services.produtividade_entrega_service import _ler_csv, _n
+LINHAS_LOTE = 150_000  # linhas lidas por vez — o arquivo do ano inteiro nunca fica todo na memória
 
-    cab = _ler_csv(bruto, nrows=0)
-    if len(cab.columns) < 27 or "qtde" not in _n(cab.columns[19]) or "total" not in _n(cab.columns[25]):
-        raise RegraNegocioError("Este arquivo não parece o 03.02.37: esperava “Qtde” na coluna T e “Total” na "
-                                "coluna Z.")
-    df = _ler_csv(bruto, usecols=list(POS))
+
+def _fonte(arquivo, nome: str):
+    """Abre o CSV para leitura em fluxo: dentro do .zip lê direto do compactado, sem descompactar tudo na memória.
+    Devolve (abrir, tamanho) — abrir() dá um novo fluxo binário a cada chamada."""
+    import zipfile
+
+    f = io.BytesIO(arquivo) if isinstance(arquivo, (bytes, bytearray)) else arquivo
+    f.seek(0)
+    inicio = f.read(4)
+    f.seek(0)
+    if str(nome).lower().endswith(".zip") or inicio[:2] == b"PK":
+        try:
+            z = zipfile.ZipFile(f)
+        except zipfile.BadZipFile as e:
+            raise RegraNegocioError("O .zip está corrompido ou incompleto — compacte de novo e suba outra vez.") from e
+        csvs = [n for n in z.namelist() if n.lower().endswith((".csv", ".txt"))]
+        if not csvs:
+            raise RegraNegocioError("O .zip não tem nenhum arquivo .csv dentro.")
+        return (lambda: z.open(csvs[0])), z.getinfo(csvs[0]).file_size
+
+    def abrir():  # o arquivo enviado é reaproveitado (o pandas não fecha arquivo que recebe aberto)
+        f.seek(0)
+        return f
+    f.seek(0, 2)
+    tam = f.tell()
+    f.seek(0)
+    return abrir, tam
+
+
+def _codificacao(amostra: bytes) -> str:
+    try:
+        amostra.decode("utf-8")
+        return "utf-8-sig"
+    except UnicodeDecodeError as e:
+        return "utf-8-sig" if e.start >= len(amostra) - 4 else "latin1"
+
+
+def _preparar(df: pd.DataFrame, fat: pd.DataFrame) -> pd.DataFrame:
     df.columns = [POS[i] for i in sorted(POS)]
     for c in df.columns:
         df[c] = df[c].astype(str).str.strip()
@@ -72,13 +103,94 @@ def ler_0302037(bruto: bytes) -> pd.DataFrame:
     for c in ("dt_operacao", "emissao"):
         df[c] = pd.to_datetime(df[c], format="%d/%m/%Y", errors="coerce").dt.strftime("%Y-%m-%d")
     df["cod"] = pd.to_numeric(df["produto"].str.replace(r"\D", "", regex=True), errors="coerce")
-    fat = query_df("SELECT cod, fator_hl FROM produtos")
-    fat["cod"] = pd.to_numeric(fat["cod"], errors="coerce")
-    df = df.merge(fat.dropna().drop_duplicates("cod"), on="cod", how="left")
+    df = df.merge(fat, on="cod", how="left")
     litros = df["unidade"].str.lower().isin(["l", "lt", "lts", "litro", "litros"])
     df["hl"] = (df["qtde"] * df["fator_hl"].fillna(0.0)).where(~litros, df["qtde"] / 100)
     df["sem_fator"] = ~litros & df["fator_hl"].isna()
     return df
+
+
+def ler_0302037_meses(arquivo, nome: str, coluna_data: str, progresso=None):
+    """Lê o 03.02.37 (vendas ou compra) em lotes e devolve, mês a mês, as linhas já com o HL calculado.
+    Serve para o arquivo do ano inteiro: só um mês de cada vez fica na memória."""
+    import pickle
+    import tempfile
+
+    from services.produtividade_entrega_service import _n
+
+    def avisar(frac, texto):
+        if progresso:
+            progresso(max(0.0, min(frac, 1.0)), texto)
+
+    abrir, tamanho = _fonte(arquivo, nome)
+    fluxo = abrir()
+    amostra = fluxo.read(2_000_000)
+    if not isinstance(fluxo, io.BytesIO):
+        fluxo.close()
+    enc = _codificacao(amostra)
+    try:
+        cab = pd.read_csv(io.BytesIO(amostra), sep=";", dtype=str, encoding=enc, nrows=0,
+                          encoding_errors="replace")
+    except Exception as e:
+        raise RegraNegocioError("Não consegui ler o arquivo — confira se é o 03.02.37 exportado em CSV.") from e
+    if len(cab.columns) < 27 or "qtde" not in _n(cab.columns[19]) or "total" not in _n(cab.columns[25]):
+        raise RegraNegocioError("Este arquivo não parece o 03.02.37: esperava “Qtde” na coluna T e “Total” na "
+                                "coluna Z.")
+    fat = query_df("SELECT cod, fator_hl FROM produtos")
+    fat["cod"] = pd.to_numeric(fat["cod"], errors="coerce")
+    fat = fat.dropna().drop_duplicates("cod")
+    fluxo = abrir()
+    with tempfile.TemporaryDirectory(prefix="0302037_") as pasta:
+        partes: dict[str, list[str]] = {}
+        lidas = 0
+        try:
+            leitor = pd.read_csv(fluxo, sep=";", dtype=str, usecols=list(POS), chunksize=LINHAS_LOTE, encoding=enc,
+                                 encoding_errors="replace", on_bad_lines="skip", low_memory=False)
+            for n, lote in enumerate(leitor):
+                d = _preparar(lote, fat)
+                d = d[d[coluna_data].notna()]
+                lidas += len(lote)
+                for mes, g in d.groupby(d[coluna_data].str[:7]):
+                    caminho = f"{pasta}/{mes}_{n}.pkl"
+                    with open(caminho, "wb") as fh:
+                        pickle.dump(g, fh, protocol=pickle.HIGHEST_PROTOCOL)
+                    partes.setdefault(mes, []).append(caminho)
+                pos = fluxo.tell() if hasattr(fluxo, "tell") else 0
+                avisar(.5 * (pos / tamanho if tamanho else 0),
+                       f"Lendo o arquivo… {lidas:,} linhas".replace(",", "."))
+        except RegraNegocioError:
+            raise
+        except Exception as e:
+            raise RegraNegocioError(f"Erro ao ler o arquivo na linha ~{lidas:,}: {e}".replace(",", ".")) from e
+        finally:
+            try:
+                fluxo.close() if not isinstance(fluxo, io.BytesIO) else None
+            except Exception:
+                pass
+        if not partes:
+            raise RegraNegocioError("Nenhuma nota com data válida no arquivo.")
+        meses_ = sorted(partes)
+        for k, mes in enumerate(meses_):
+            avisar(.5 + .5 * k / len(meses_), f"Gravando {mes[5:]}/{mes[:4]} ({k + 1} de {len(meses_)} meses)…")
+            dfs = []
+            for caminho in partes[mes]:
+                with open(caminho, "rb") as fh:
+                    dfs.append(pickle.load(fh))
+            yield mes, pd.concat(dfs, ignore_index=True)
+            del dfs
+        avisar(1.0, f"Pronto: {lidas:,} linhas em {len(meses_)} mês(es).".replace(",", "."))
+
+
+def ler_0302037(bruto: bytes) -> pd.DataFrame:
+    """Lê o 03.02.37 inteiro (para arquivos pequenos e testes)."""
+    partes = [df for _, df in ler_0302037_meses(bruto, "arquivo.csv", "emissao")]
+    return pd.concat(partes, ignore_index=True)
+
+
+def somar_resultados(rs: list[dict], sem_fator: set) -> dict:
+    return {"de": min(r["de"] for r in rs), "ate": max(r["ate"] for r in rs), "valor": sum(r["valor"] for r in rs),
+            "hl": sum(r["hl"] for r in rs), "itens": sum(r["itens"] for r in rs), "sem_fator": len(sem_fator),
+            "meses": len(rs)}
 
 
 def gravar_resumo(df: pd.DataFrame, operacao_id: int, origem: str, coluna_data: str) -> dict:
@@ -132,14 +244,18 @@ def gravar_resumo(df: pd.DataFrame, operacao_id: int, origem: str, coluna_data: 
             "hl": float(d["hl"].sum()), "itens": len(d), "sem_fator": int(d.loc[d["sem_fator"], "produto"].nunique())}
 
 
-def importar_compra(conteudo: bytes, nome: str, operacao_id: int, usuario: str = "") -> dict:
-    from services.produtividade_entrega_service import _abrir, _log
+def importar_compra(conteudo, nome: str, operacao_id: int, usuario: str = "", progresso=None) -> dict:
+    """03.02.37 compra (data = coluna F). Aceita o arquivo do ano inteiro (de preferência em .zip)."""
+    from services.produtividade_entrega_service import _log
 
     if operacoes_repo.e_consolidada(operacao_id):
         raise RegraNegocioError("Escolha uma revenda (não a visão consolidada) para subir a 03.02.37 compra.")
-    df = ler_0302037(_abrir(conteudo, nome))
-    r = gravar_resumo(df, operacao_id, "compra", "dt_operacao")
-    _log(operacao_id, "notas_compra", len(df), nome, usuario)
+    rs, sem = [], set()
+    for _, df in ler_0302037_meses(conteudo, nome, "dt_operacao", progresso):
+        rs.append(gravar_resumo(df, operacao_id, "compra", "dt_operacao"))
+        sem |= set(df.loc[df["sem_fator"], "produto"])
+    r = somar_resultados(rs, sem)
+    _log(operacao_id, "notas_compra", r["itens"], nome, usuario)
     return r
 
 

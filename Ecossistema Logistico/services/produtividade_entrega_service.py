@@ -162,24 +162,28 @@ def _classificacao(t: str) -> str:
 
 
 # --- Importação: 03.02.37 vendas ------------------------------------------------------------------
-def importar_notas(conteudo: bytes, nome: str, operacao_id: int, usuario: str = "") -> dict:
-    """03.02.37 vendas: alimenta a Produtividade Entrega (HL por mapa) e o Faturamento (R$ e HL por dia)."""
+def importar_notas(conteudo, nome: str, operacao_id: int, usuario: str = "", progresso=None) -> dict:
+    """03.02.37 vendas (data = coluna G): alimenta a Produtividade Entrega (HL por mapa) e o Faturamento (R$ e HL
+    por dia). Aceita o arquivo do ano inteiro (de preferência em .zip) — grava um mês de cada vez."""
     from services import faturamento_service as fs
 
     if operacoes_repo.e_consolidada(operacao_id):
         raise RegraNegocioError("Escolha uma revenda (não a visão consolidada) para subir a 03.02.37 vendas.")
-    df = fs.ler_0302037(_abrir(conteudo, nome))
-    df["mapa"] = df["mapa"].map(_mapa)
-    ent = df[df["emissao"].notna() & (df["mapa"] != "")].rename(columns={"emissao": "data"})
-    if not ent.empty:
-        agg = (ent.groupby(["data", "mapa", "operacao_cod", "tipo_movto", "status"], as_index=False)
-                  .agg(hl=("hl", "sum"), qtde=("qtde", "sum"), notas=("nota", "nunique"),
-                       clientes=("cliente", "nunique"), valor=("valor", "sum")))
-        _gravar("entregas_notas", pd.Series([operacao_id] * len(agg)), agg)
-    r = fs.gravar_resumo(df, operacao_id, "venda", "emissao")
-    _log(operacao_id, "entregas_notas", len(df), nome, usuario)
-    return {"itens": len(df), "mapas": int(ent["mapa"].nunique()) if not ent.empty else 0, "de": r["de"],
-            "ate": r["ate"], "hl": r["hl"], "valor": r["valor"], "sem_fator": r["sem_fator"]}
+    rs, sem, mapas = [], set(), 0
+    for _, df in fs.ler_0302037_meses(conteudo, nome, "emissao", progresso):
+        df["mapa"] = df["mapa"].map(_mapa)
+        ent = df[df["emissao"].notna() & (df["mapa"] != "")].rename(columns={"emissao": "data"})
+        if not ent.empty:
+            agg = (ent.groupby(["data", "mapa", "operacao_cod", "tipo_movto", "status"], as_index=False)
+                      .agg(hl=("hl", "sum"), qtde=("qtde", "sum"), notas=("nota", "nunique"),
+                           clientes=("cliente", "nunique"), valor=("valor", "sum")))
+            _gravar("entregas_notas", pd.Series([operacao_id] * len(agg)), agg)
+            mapas += int(ent["mapa"].nunique())
+        rs.append(fs.gravar_resumo(df, operacao_id, "venda", "emissao"))
+        sem |= set(df.loc[df["sem_fator"], "produto"])
+    r = fs.somar_resultados(rs, sem)
+    _log(operacao_id, "entregas_notas", r["itens"], nome, usuario)
+    return {**r, "mapas": mapas}
 
 
 # --- Consulta --------------------------------------------------------------------------------------

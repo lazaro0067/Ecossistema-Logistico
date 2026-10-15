@@ -173,6 +173,11 @@ div[class*="st-key-kpib_"] button {{ opacity:0 !important; cursor:pointer; borde
 .stTabs [data-baseweb="tab-highlight"] {{ background-color: {AZUL}; }}
 [data-testid="stToolbarActions"], [data-testid="stAppDeployButton"] {{ display: none !important; }}
 header[data-testid="stHeader"] {{ background: transparent; }}
+/* caixa de envio de arquivo em português (o texto padrão do Streamlit é em inglês) */
+[data-testid="stFileUploaderDropzoneInstructions"] small,
+[data-testid="stFileUploaderDropzoneInstructions"] span {{ display: none !important; }}
+[data-testid="stFileUploaderDropzoneInstructions"]::after {{
+  content: "Arraste o arquivo aqui · até 1 GB"; font-size: .85rem; color: #5b6575; }}
 
 
 

@@ -18,6 +18,10 @@ from services import produtividade_entrega_service as pe
 from services.erros import RegraNegocioError
 
 
+LIMITE_TXT = ("📦 Limite de 1 GB por arquivo (CSV ou .zip). Ano inteiro? Compacte o CSV em .zip — 1,6 GB vira cerca "
+              "de 60 MB, sobe rápido e é lido mês a mês.")
+
+
 def _quando(v) -> str:
     return dt.datetime.fromisoformat(v).strftime("%d/%m/%Y %H:%M") if v else "nunca"
 
@@ -31,13 +35,27 @@ def _card(titulo: str, ultima: str, texto: str, chave: str, tipos: list[str], ac
         st.markdown(f"**{titulo}**  \nÚltima carga: {ultima}")
         st.caption(texto)
         arq = st.file_uploader(titulo, type=tipos, key=f"rel_up_{chave}", label_visibility="collapsed")
+        st.caption(LIMITE_TXT)
+        if arq is not None:
+            mb = arq.size / 1024 ** 2
+            grande = mb > 150 and not arq.name.lower().endswith(".zip")
+            st.caption(f"📄 {arq.name} · {ui.numero(mb, 1)} MB"
+                       + (" — dica: em .zip ele sobe bem mais rápido." if grande else ""))
         if arq is not None and st.button("Gravar", key=f"rel_gravar_{chave}", type="primary"):
+            barra = st.progress(0.0, text="Preparando a leitura…")
             try:
-                with st.spinner("Lendo o arquivo e gravando..."):
-                    msg = acao(arq)
+                msg = acao(arq, lambda f, t: barra.progress(f, text=t))
             except RegraNegocioError as e:
-                st.error(str(e))
+                barra.empty()
+                st.error(f"❌ Não foi possível gravar: {e}")
+            except MemoryError:
+                barra.empty()
+                st.error("❌ O arquivo é grande demais para ler sem compactar. Compacte em .zip e suba de novo.")
+            except Exception as e:  # noqa: BLE001 — mostra em português em vez de travar a tela
+                barra.empty()
+                st.error(f"❌ Erro inesperado ao ler o arquivo: {e}. Confira se é o relatório certo, em CSV ou .zip.")
             else:
+                barra.empty()
                 ui.avisar(msg)
                 st.rerun()
 
@@ -54,23 +72,23 @@ def render(usuario: dict, operacao_id: int) -> None:
     ult = fs.ultimas(operacao_id)
     quem = usuario.get("nome", "")
 
-    def pcd(arq):
+    def pcd(arq, _prog=None):
         r = pe.importar_pcd(arq.getvalue(), arq.name, operacao_id, quem)
         return f"{r['linhas']} mapas gravados ({_d(r['de'])} a {_d(r['ate'])})."
 
-    def vendas(arq):
-        r = pe.importar_notas(arq.getvalue(), arq.name, operacao_id, quem)
-        msg = (f"03.02.37 vendas: {ui.numero(r['itens'])} itens · {r['mapas']} mapas · {ui.numero(r['hl'])} HL · "
+    def vendas(arq, prog=None):
+        r = pe.importar_notas(arq, arq.name, operacao_id, quem, prog)
+        msg = (f"03.02.37 vendas gravada: {ui.numero(r['itens'])} itens · {r['meses']} mês(es) · {r['mapas']} mapas · "
+               f"{ui.numero(r['hl'])} HL · {ui.moeda(r['valor'])} ({_d(r['de'])} a {_d(r['ate'])}).")
+        return msg + (f" {r['sem_fator']} produto(s) sem fator HL na 01.11." if r["sem_fator"] else "")
+
+    def compra(arq, prog=None):
+        r = fs.importar_compra(arq, arq.name, operacao_id, quem, prog)
+        msg = (f"03.02.37 compra gravada: {ui.numero(r['itens'])} itens · {r['meses']} mês(es) · {ui.numero(r['hl'])} HL · "
                f"{ui.moeda(r['valor'])} ({_d(r['de'])} a {_d(r['ate'])}).")
         return msg + (f" {r['sem_fator']} produto(s) sem fator HL na 01.11." if r["sem_fator"] else "")
 
-    def compra(arq):
-        r = fs.importar_compra(arq.getvalue(), arq.name, operacao_id, quem)
-        msg = (f"03.02.37 compra: {ui.numero(r['itens'])} itens · {ui.numero(r['hl'])} HL · {ui.moeda(r['valor'])} "
-               f"({_d(r['de'])} a {_d(r['ate'])}).")
-        return msg + (f" {r['sem_fator']} produto(s) sem fator HL na 01.11." if r["sem_fator"] else "")
-
-    def operacoes(arq):
+    def operacoes(arq, _prog=None):
         return f"{fs.importar_operacoes(arq.getvalue(), arq.name)} operações atualizadas."
 
     c1, c2 = st.columns(2)
