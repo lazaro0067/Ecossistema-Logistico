@@ -58,13 +58,14 @@ def render(usuario: dict, operacao_id: int) -> None:
     ini, fim = f"{de}-01", pd.Period(ate).end_time.strftime("%Y-%m-%d")
     lista = [m for m in meses if de <= m <= ate]
     origem = {"carreto": "venda", "frete": "compra"}.get(tela)
-    faltam = []
+    resumo = []
     for o in ([origem] if origem else ["venda", "compra"]):
-        faltam += [f"{ui.nome_mes(m)} ({'vendas' if o == 'venda' else 'compra'})"
-                   for m in rs.sem_base_dia(operacao_id, o, ini, fim)]
-    if faltam:
-        st.warning("Para calcular pelo produto e dia, suba de novo o 03.02.37 destes meses em 📥 Relatórios: "
-                   + ", ".join(faltam) + ".")
+        resumo += [f"{ui.nome_mes(m)} ({'vendas' if o == 'venda' else 'compra'})"
+                   for m in rs.meses_resumo(operacao_id, o, ini, fim)]
+    if resumo:
+        st.caption("📊 Calculado pelo 03.02.37 que já está no sistema (resumo do mês) em: " + ", ".join(resumo)
+                   + ". Carreto = caixas do mês × carreto do período; frete por fábrica repartido pelo HL comprado de "
+                   "cada fábrica no mês. Os meses subidos de novo passam a usar o detalhe por dia e produto.")
     tm = rs.tabelas_mes(operacao_id)
     sem_tab = [m for m in lista if m not in set(tm["mes"])]
     if sem_tab:
@@ -87,7 +88,7 @@ def _carreto(op: int, ini: str, fim: str) -> None:
     c["qtde_com"] = c["qtde"].where(c["tarifa"].notna(), 0.0)
     por_prod = (c.groupby("produto", as_index=False)
                  .agg(descricao=("descricao", "first"), qtde=("qtde", "sum"), hl=("hl", "sum"),
-                      valor=("valor", "sum"), qtde_com=("qtde_com", "sum"), unidades=("unidades", _juntar),
+                      valor=("valor", "sum"), qtde_com=("qtde_com", "sum"),
                       tem=("tarifa", lambda s: s.notna().any())))
     por_prod["tarifa"] = [_div(v, q) if t else None for v, q, t in
                           zip(por_prod["valor"], por_prod["qtde_com"], por_prod["tem"])]
@@ -95,7 +96,7 @@ def _carreto(op: int, ini: str, fim: str) -> None:
     sem_p = por_prod[~por_prod["tem"]]
     tema.kpis([
         {"titulo": "Remuneração carreto", "valor": _m(tot), "icone": "💰", "status": "bom",
-         "detalhe": f"{c['data'].nunique()} dia(s) de entrega"},
+         "detalhe": "carreto da tabela do mês — igual para todas as fábricas"},
         {"titulo": "Caixas entregues (com tarifa)", "valor": _n(cx), "icone": "📦", "status": "info",
          "detalhe": f"{_n(hl, 1)} HL"},
         {"titulo": "Carreto médio", "valor": _t(_div(tot, cx)) + "/cx", "icone": "🧮", "status": "info",
@@ -104,15 +105,19 @@ def _carreto(op: int, ini: str, fim: str) -> None:
          "status": "atencao" if len(sem_p) else "bom", "detalhe": f"{_n(sem['qtde'].sum())} cx sem remuneração",
          "dados": _tab_prod(sem_p) if len(sem_p) else None},
     ], key="kp_ra_car")
-    dia = c.groupby("data", as_index=False)[["valor", "qtde"]].sum()
-    fig = go.Figure(go.Bar(x=pd.to_datetime(dia["data"]).dt.strftime("%d/%m"), y=dia["valor"], marker_color=VERDE,
+    por_mes = (c["base"] == "mês").any() or c["data"].str[:7].nunique() > 1
+    dia = (c.assign(data=c["data"].str[:7]) if por_mes else c).groupby("data", as_index=False)[["valor", "qtde"]].sum()
+    eixo = dia["data"].map(ui.nome_mes) if por_mes else pd.to_datetime(dia["data"]).dt.strftime("%d/%m")
+    fig = go.Figure(go.Bar(x=eixo, y=dia["valor"], marker_color=VERDE,
                            text=[ui.compacto(v) for v in dia["valor"]], textposition="outside",
                            customdata=dia["qtde"], hovertemplate="%{x}<br>R$ %{y:,.2f}<br>%{customdata:,.0f} cx"
                                                                  "<extra></extra>"))
-    graficos.mostrar(graficos._layout(fig, "Carreto por dia (R$)", 320, legenda=False), key="ra_g_car_dia")
+    graficos.mostrar(graficos._layout(fig, f"Carreto por {'mês' if por_mes else 'dia'} (R$)", 320, legenda=False),
+                     key="ra_g_car_dia")
     if c["fora_vig"].any():
         st.caption("ℹ️ Alguns dias usaram a tabela de um mês anterior (o mês não tem tabela da Ambev subida).")
-    tema.secao("📦 Carreto por produto", "Caixas entregues × carreto da Ambev (R$/cx) vigente em cada dia.")
+    tema.secao("📦 Carreto por produto", "Caixas entregues × carreto da Ambev (R$/cx) do período — o mesmo em "
+               "qualquer fábrica.")
     ui.tabela(_tab_prod(por_prod[por_prod["tem"]]), baixar="remun_carreto_produto")
     if len(sem_p):
         with st.expander(f"⚠️ {len(sem_p)} produto(s) entregues sem tarifa de carreto"):
@@ -140,7 +145,8 @@ def _frete(op: int, ini: str, fim: str) -> None:
         st.info("Nenhuma compra no período (03.02.37 compra, operações de compra).")
         return
     nomes = rs.nomes_fornecedores(op)
-    f["fab"] = [f"{c} · {nomes.get(c, '') or 'Fábrica'}" for c in f["fornecedor"]]
+    f["fab"] = [f"{c} · {nomes.get(c, '') or 'Fábrica'}" if c else "Sem tabela da fábrica (resumo do mês)"
+                for c in f["fornecedor"]]
     fab = (f.groupby(["fab", "fornecedor"], as_index=False)
             .agg(unidade=("unidade_nome", "first"), unidade_cod=("unidade_cod", "first"), qtde=("qtde", "sum"),
                  hl=("hl", "sum"), valor=("valor", "sum")))
