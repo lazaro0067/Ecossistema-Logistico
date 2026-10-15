@@ -212,10 +212,17 @@ def gravar_resumo(df: pd.DataFrame, operacao_id: int, origem: str, coluna_data: 
     cli = (d.groupby(["mes", "operacao_cod", "status", "cliente"], as_index=False)
              .agg(nome=("nome_cliente", "first"),
                   valor=("valor", "sum"), hl=("hl", "sum"), notas=("nota", "nunique")))
+    # produto por dia (compra: por fornecedor/fábrica) — base da Remuneração Ambev (tarifa vigente no dia)
+    pdia = d.assign(produto=d["produto"].astype(str).str.replace(r"\D", "", regex=True).str.lstrip("0"),
+                    cliente=d["cliente"].map(cod) if origem == "compra" else "")
+    pdia = (pdia.groupby(["data", "operacao_cod", "status", "cliente", "produto"], as_index=False)
+                .agg(descricao=("descricao", "first"), qtde=("qtde", "sum"), hl=("hl", "sum")))
     agora = tempo.agora().strftime("%Y-%m-%d %H:%M:%S")
     with get_conn() as conn:
         for data in dia["data"].unique():
             conn.execute("DELETE FROM notas_dia WHERE operacao_id = ? AND origem = ? AND data = ?",
+                         (operacao_id, origem, data))
+            conn.execute("DELETE FROM notas_prod_dia WHERE operacao_id = ? AND origem = ? AND data = ?",
                          (operacao_id, origem, data))
         for mes in prod["mes"].unique():
             # o mês do produto é regravado com o que veio no arquivo (o arquivo traz o mês inteiro ou o parcial)
@@ -235,8 +242,11 @@ def gravar_resumo(df: pd.DataFrame, operacao_id: int, origem: str, coluna_data: 
             cols = list(cp.columns)
             conn.executemany(f"INSERT INTO notas_cli_prod_mes ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
                              [tuple(_py(v) for v in r) for r in cp.itertuples(index=False)])
-        for tabela, tab in (("notas_dia", dia), ("notas_produto_mes", prod), ("notas_cliente_mes", cli)):
-            tab = tab.assign(operacao_id=operacao_id, origem=origem, importado_em=agora)
+        for tabela, tab in (("notas_dia", dia), ("notas_produto_mes", prod), ("notas_cliente_mes", cli),
+                            ("notas_prod_dia", pdia)):
+            tab = tab.assign(operacao_id=operacao_id, origem=origem)
+            if tabela != "notas_prod_dia":
+                tab = tab.assign(importado_em=agora)
             cols = list(tab.columns)
             conn.executemany(f"INSERT INTO {tabela} ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
                              [tuple(_py(v) for v in r) for r in tab.itertuples(index=False)])

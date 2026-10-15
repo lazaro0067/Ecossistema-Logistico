@@ -841,6 +841,50 @@ CREATE TABLE IF NOT EXISTS obz_just_mes (
     PRIMARY KEY (operacao_id, mes)
 );
 
+CREATE TABLE IF NOT EXISTS notas_prod_dia (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id  INTEGER NOT NULL,
+    origem       TEXT NOT NULL,
+    data         TEXT NOT NULL,
+    operacao_cod TEXT,
+    status       TEXT,
+    cliente      TEXT,
+    produto      TEXT,
+    descricao    TEXT,
+    qtde         REAL,
+    hl           REAL
+);
+
+CREATE TABLE IF NOT EXISTS remun_tabela (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id   INTEGER NOT NULL,
+    unidade_cod   TEXT NOT NULL,
+    unidade_nome  TEXT,
+    produto       TEXT NOT NULL,
+    descricao     TEXT,
+    ini           TEXT NOT NULL,
+    fim           TEXT,
+    carreto       REAL,
+    frete         REAL,
+    arquivo       TEXT,
+    importado_por TEXT,
+    importado_em  TEXT
+);
+
+CREATE TABLE IF NOT EXISTS remun_fabrica_map (
+    operacao_id INTEGER NOT NULL,
+    unidade_cod TEXT NOT NULL,
+    fornecedor  TEXT,
+    PRIMARY KEY (operacao_id, unidade_cod)
+);
+
+CREATE TABLE IF NOT EXISTS remun_config (
+    operacao_id INTEGER NOT NULL,
+    chave       TEXT NOT NULL,
+    valor       TEXT,
+    PRIMARY KEY (operacao_id, chave)
+);
+
 CREATE TABLE IF NOT EXISTS obz_tend_abertura (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     operacao_id   INTEGER NOT NULL,
@@ -1460,6 +1504,10 @@ MIGRACOES: list[tuple[str, str]] = [
     ("041_obz_just", """
         CREATE INDEX IF NOT EXISTS ix_obz_just ON obz_just(operacao_id, mes);
         CREATE INDEX IF NOT EXISTS ix_obz_tend_ab ON obz_tend_abertura(operacao_id, mes);
+    """),
+    ("042_remun_ambev", """
+        CREATE INDEX IF NOT EXISTS ix_notas_prod_dia ON notas_prod_dia(operacao_id, origem, data);
+        CREATE INDEX IF NOT EXISTS ix_remun_tab ON remun_tabela(operacao_id, unidade_cod, produto, ini);
     """),
 ]
 
