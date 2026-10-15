@@ -809,6 +809,48 @@ CREATE TABLE IF NOT EXISTS grade_config (
     limite_pct  REAL DEFAULT 5
 );
 
+CREATE TABLE IF NOT EXISTS obz_just (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id  INTEGER NOT NULL,
+    mes          TEXT NOT NULL,
+    conta        TEXT NOT NULL,
+    depto        TEXT NOT NULL,
+    plan         REAL,
+    fechamento   REAL,
+    disp         REAL,
+    disp_pct     REAL,
+    texto        TEXT,
+    acao         TEXT,
+    status       TEXT DEFAULT 'aguardando',
+    por          TEXT,
+    por_id       INTEGER,
+    em           TEXT,
+    aprovador    TEXT,
+    aprovado_em  TEXT,
+    comentario   TEXT,
+    UNIQUE (operacao_id, mes, conta, depto)
+);
+
+CREATE TABLE IF NOT EXISTS obz_just_mes (
+    operacao_id  INTEGER NOT NULL,
+    mes          TEXT NOT NULL,
+    prazo        TEXT,
+    limite_pct   REAL DEFAULT 5,
+    definido_por TEXT,
+    definido_em  TEXT,
+    PRIMARY KEY (operacao_id, mes)
+);
+
+CREATE TABLE IF NOT EXISTS obz_tend_abertura (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id   INTEGER NOT NULL,
+    mes           TEXT NOT NULL,
+    ate           TEXT NOT NULL,
+    justificativa TEXT,
+    aberto_por    TEXT,
+    em            TEXT
+);
+
 CREATE TABLE IF NOT EXISTS obz_capex (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     operacao_id     INTEGER NOT NULL,
@@ -1414,6 +1456,10 @@ MIGRACOES: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS ix_grade_itens ON grade_check_itens(check_id);
         CREATE INDEX IF NOT EXISTS ix_grade_checks ON grade_checks(operacao_id, data);
         CREATE INDEX IF NOT EXISTS ix_vend_cal ON vendas_calendario(operacao_id, mes);
+    """),
+    ("041_obz_just", """
+        CREATE INDEX IF NOT EXISTS ix_obz_just ON obz_just(operacao_id, mes);
+        CREATE INDEX IF NOT EXISTS ix_obz_tend_ab ON obz_tend_abertura(operacao_id, mes);
     """),
 ]
 

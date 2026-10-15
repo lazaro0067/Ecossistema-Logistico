@@ -289,7 +289,14 @@ def _obz_abas() -> dict:
 
     return {"obz_gestao": obz.render_gestao, "obz_tend": obz.render_tend, "obz_aprov": obz.render_aprovacao,
             "obz_reuniao": obz.render_reuniao, "obz_plan": obz.render_plan, "obz_real": obz.render_real,
-            "obz_cad": obz.render_cadastros, "obz_rshl": _rshl, "obz_sim": _sim, "obz_capex": _capex}
+            "obz_cad": obz.render_cadastros, "obz_rshl": _rshl, "obz_sim": _sim, "obz_capex": _capex,
+            "obz_just": _just}
+
+
+def _just(usuario: dict, operacao_id: int) -> None:
+    from modules.financeiro import obz_just
+
+    obz_just.render(usuario, operacao_id)
 
 
 def _capex(usuario: dict, operacao_id: int) -> None:

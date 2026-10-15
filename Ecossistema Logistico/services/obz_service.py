@@ -537,6 +537,16 @@ def base(operacao_id: int, mes: str) -> pd.DataFrame:
     df["subdono"] = [sdi.get((c, d)) for c, d in zip(df["conta"], df["depto"])]
     nd = nomes_deptos()
     df["nome_depto"] = df["depto"].map(lambda d: nd.get(d) or f"Depto {d}")
+    # justificativas da aba 📝 Justificar Dispersão (valem para o painel, os alertas e a reunião)
+    trecho, p = operacoes_repo.filtro("operacao_id", operacao_id)
+    js = query_df(f"SELECT conta, depto, texto, status FROM obz_just WHERE {trecho} AND mes = ? "
+                  "AND status <> 'reprovada'", (*p, mes))
+    df["just_status"] = None
+    if not js.empty:
+        jm = {(c, d): (t, st) for c, d, t, st in zip(js["conta"], js["depto"], js["texto"], js["status"])}
+        df["justificativa"] = [jm[(c, d)][0] if (c, d) in jm else j
+                               for c, d, j in zip(df["conta"], df["depto"], df["justificativa"])]
+        df["just_status"] = [jm.get((c, d), (None, None))[1] for c, d in zip(df["conta"], df["depto"])]
     return df.sort_values(["pacote", "conta", "depto"]).reset_index(drop=True)
 
 
@@ -547,6 +557,11 @@ def salvar_tend(operacao_id: int, mes: str, conta: str, depto: str, valor: float
         raise RegraNegocioError("Escolha uma revenda para lançar tendências.")
     if not pode_lancar(usuario, conta, depto):
         raise RegraNegocioError("Você não está cadastrado como dono, sub-dono ou lançador desta conta.")
+    from services import obz_just_service
+
+    aberta, motivo = obz_just_service.tend_aberta(operacao_id, mes)
+    if not aberta:
+        raise RegraNegocioError(f"Tendência de {nome_mes(mes)} fechada — {motivo}. Só o dono do financeiro reabre.")
     c = query_one("SELECT limite_pct FROM obz_contas WHERE codigo = ?", (str(conta),))
     limite = float(c["limite_pct"]) if c and c["limite_pct"] is not None else limite_padrao()
     disp = float(valor) - float(plan or 0)
@@ -783,7 +798,7 @@ def alertar_dispersoes(operacao_id: int, meses_: list[str]) -> int:
                 motoristas_repo.criar_notificacao(
                     uid, "obz", chave, f"⚠️ OBZ {nome_mes(mes)}: {len(itens)} conta(s) acima do plan — justificar",
                     f"O {fonte} passou do plan em {_brl(total)}. {lista}"
-                    + (" …" if len(itens) > 5 else "") + " Abra Financeiro › Tendência para justificar.",
+                    + (" …" if len(itens) > 5 else "") + " Abra Financeiro › 📝 Justificar Dispersão e clique no ✏️.",
                     "financeiro", agora() + ":00")
                 novos += 1
         return novos

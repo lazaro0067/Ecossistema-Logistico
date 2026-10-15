@@ -182,7 +182,29 @@ def render_tend(usuario: dict, operacao_id: int) -> None:
         return
     if _sem_dados(operacao_id):
         return
-    mes = _seletor_mes(operacao_id, "obz_t_mes")
+    from services import obz_just_service as js
+
+    from core import tempo
+
+    hoje = tempo.hoje()
+    prox = [(hoje.replace(day=1) + dt.timedelta(days=32 * k)).strftime("%Y-%m") for k in (2, 1)]
+    meses = sorted(set(obz.meses(operacao_id)) | set(prox) | {hoje.strftime("%Y-%m")}, reverse=True)
+    # padrão: o mês que ainda está aberto (prazo = dia 15 do mês anterior)
+    abertos = [m for m in sorted(meses) if js.tend_aberta(operacao_id, m)[0]]
+    c1, c2 = st.columns([1, 3])
+    mes = c1.selectbox("Mês da tendência", meses, index=meses.index(abertos[0]) if abertos else 0, key="obz_t_mes2",
+                       format_func=ui.nome_mes)
+    aberta, motivo = js.tend_aberta(operacao_id, mes)
+    (c2.success if aberta and motivo.startswith("🟢") else c2.warning if aberta else c2.error)(
+        f"**{obz.nome_mes(mes)}** · {motivo}")
+    if not aberta and js.pode_configurar(usuario):
+        with st.expander("🔓 Reabrir a tendência deste mês (dono do financeiro)"):
+            with st.form(f"obz_t_reabrir_{mes}"):
+                r1, r2 = st.columns([1, 3])
+                ate = r1.date_input("Aberta até", value=hoje + dt.timedelta(days=2), format="DD/MM/YYYY")
+                jus = r2.text_input("Justificativa da reabertura")
+                if st.form_submit_button("🔓 Reabrir", type="primary"):
+                    ui.acao(js.reabrir_tend, operacao_id, mes, ate, jus, usuario, sucesso="Tendência reaberta.")
     b = obz.base(operacao_id, mes)
     if b.empty:
         st.info("Sem contas para este mês (suba o plan ou o realizado).")
@@ -192,12 +214,36 @@ def render_tend(usuario: dict, operacao_id: int) -> None:
         st.warning("Você não é dono, sub-dono nem lançador de nenhuma conta. Peça o cadastro em ⚙️ Cadastros OBZ.")
         return
     a_justificar = minhas[minhas["critica"] & (minhas["desfavoravel"] > 0) & minhas["justificativa"].isna()]
-    if not a_justificar.empty:
-        st.warning(f"⚠️ **{len(a_justificar)} conta(s) suas passaram do plan** em {obz.nome_mes(mes)} "
-                   f"({ui.moeda(a_justificar['disp'].sum())} acima) — escreva a justificativa de cada uma e lance.")
-    so_crit = st.toggle("Mostrar só as críticas", key="obz_t_crit", value=not a_justificar.empty)
+    lanc = int(minhas["tend_lancada"].sum())
+    tema.kpis([
+        {"titulo": "Minhas contas", "valor": ui.numero(len(minhas)), "icone": "📋", "status": "info",
+         "detalhe": f"plan {ui.moeda(minhas['plan'].sum())}"},
+        {"titulo": "Tendências lançadas", "valor": f"{lanc}/{len(minhas)}", "icone": "✅",
+         "status": "bom" if lanc == len(minhas) else "atencao",
+         "detalhe": f"{lanc / len(minhas) * 100:.0f}% feito" if len(minhas) else ""},
+        {"titulo": "Tend total", "valor": ui.moeda(minhas["tend"].sum()), "icone": "🔮", "status": "info",
+         "detalhe": f"dispersão {ui.moeda(minhas['tend'].sum() - minhas['plan'].sum())}"},
+        {"titulo": "Críticas sem justificativa", "valor": ui.numero(len(a_justificar)), "icone": "🚨",
+         "status": "critico" if len(a_justificar) else "bom", "detalhe": "acima do limite"},
+        {"titulo": "Aguardando aprovação", "valor": ui.numero((minhas["status"] == "aguardando").sum()), "icone": "🕒",
+         "status": "info"},
+    ], key="kp_obz_tend")
+    st.progress(lanc / len(minhas) if len(minhas) else 1.0, text=f"{lanc} de {len(minhas)} tendências lançadas")
+    f1, f2, f3 = st.columns([1.4, 1.2, 1.2])
+    areas_t = sorted(obz.enriquecer(minhas)["area"].dropna().unique()) if not minhas.empty else []
+    sel_a = f1.multiselect("Departamento", areas_t, key="obz_t_area", placeholder="Todos")
+    so_pend = f2.toggle("Só as não lançadas", key="obz_t_pend")
+    so_crit = f3.toggle("Só as críticas", key="obz_t_crit", value=not a_justificar.empty)
+    if sel_a:
+        mm = obz.enriquecer(minhas)
+        minhas = minhas[mm["area"].isin(sel_a).values]
+    if so_pend:
+        minhas = minhas[~minhas["tend_lancada"]]
     if so_crit:
         minhas = minhas[minhas["critica"]]
+    if minhas.empty:
+        st.info("Nenhuma conta com esses filtros.")
+        return
     st.caption(f"💡 Tend sugerida = fechamento de {obz.nome_mes(obz.mes_anterior(mes))} (sem ele, o plan); se o real do "
                f"mês já passou disso, o próprio real. Dispersão ≥ limite da conta (padrão {obz.limite_padrao():.0f}%) é crítica: escreva a "
                "justificativa — vai para aprovação do financeiro.")
@@ -211,7 +257,8 @@ def render_tend(usuario: dict, operacao_id: int) -> None:
         "Status": minhas["status"].map(obz.STATUS)}).reset_index(drop=True)
     din = st.column_config.NumberColumn
     editado = st.data_editor(ed, hide_index=True, key=f"obz_t_ed_{mes}", **ui.LARGURA,
-                             disabled=[c for c in ed.columns if c not in ("Tend", "Justificativa")],
+                             disabled=[c for c in ed.columns if c not in ("Tend", "Justificativa")] if aberta
+                             else list(ed.columns),
                              column_order=["farol", "Conta", "Depto", "Plan", "Real até agora", "Fech. anterior",
                                            "Sugestão", "Tend", "Justificativa", "Status"],
                              column_config={"farol": st.column_config.TextColumn("", width="small"),
@@ -220,6 +267,9 @@ def render_tend(usuario: dict, operacao_id: int) -> None:
                                             "Tend": din("Tend ✏️", format="R$ %.2f"),
                                             "Justificativa": st.column_config.TextColumn("Justificativa ✏️",
                                                                                          width="large")})
+    if not aberta:
+        st.caption("🔒 Fora do prazo — consulta apenas. O dono do financeiro pode reabrir com justificativa.")
+        return
     b1, b2, _ = st.columns([1, 1, 2])
     salvar = b1.button("💾 Lançar tendências", type="primary", key="obz_t_salvar")
     aceitar = b2.button("💡 Lançar todas as sugestões", key="obz_t_aceitar",
@@ -297,6 +347,7 @@ def render_reuniao(usuario: dict, operacao_id: int) -> None:
         return
     mes = _seletor_mes(op, "obz_r_mes")
     b = obz.base(op, mes)
+    _insumos_justificativas(op, mes)
     neg, pos = obz.top_dispersoes(b)
     for titulo, d in (("🔴 Top 10 dispersões negativas (acima do plano)", neg),
                       ("🟢 Top 10 dispersões positivas (abaixo do plano / economia)", pos)):
@@ -356,6 +407,28 @@ def render_reuniao(usuario: dict, operacao_id: int) -> None:
         with st.expander(f"🗓️ {r['data']} · {r['participantes'] or ''}"):
             st.write(r["ata"])
             st.caption(f"Registrada por {r['criado_por']}")
+
+
+def _insumos_justificativas(op: int, mes: str) -> None:
+    """Justificativas aprovadas (aba ✏️ Justificar Dispersão) — o insumo da reunião."""
+    from services import obz_just_service as js
+
+    ap = js.aprovadas(op, mes)
+    lista = js.lista(op, mes)
+    pend = int(lista["j_status"].isin(["pendente", "reprovada", "aguardando"]).sum()) if not lista.empty else 0
+    tema.secao("📝 Insumos da reunião — justificativas aprovadas",
+               "O que cada dono explicou sobre as dispersões do mês (aprovado pelo financeiro) e a ação proposta.")
+    if pend:
+        st.warning(f"Ainda há {pend} dispersão(ões) sem justificativa aprovada — veja em ✏️ Justificar Dispersão.")
+    if ap.empty:
+        st.info("Nenhuma justificativa aprovada neste mês ainda.")
+        return
+    vis = pd.DataFrame({"": ["🔴" if d > 0 else "🟢" for d in ap["disp"]],
+                        "Conta": ap["conta"].astype(str) + " · " + ap["nome_conta"].fillna(""),
+                        "Plan": ap["plan"].map(_m), "Real": ap["fechamento"].map(_m), "Dispersão": ap["disp"].map(_m),
+                        "Disp. %": ap["disp_pct"].map(_p), "Justificativa": ap["texto"],
+                        "Ação proposta": ap["acao"].fillna("—"), "Dono": ap["por"].fillna("")})
+    ui.tabela(vis, baixar=f"insumos_reuniao_{mes}")
 
 
 # --- 🎯 Plan -------------------------------------------------------------------------------------------------

@@ -106,6 +106,7 @@ MODULOS = {
         "obz_sim": "🧮 Simulador OBZ (orçamento do ano)",
         "obz_capex": "🏗️ Gestão de Capex",
         "obz_tend": "📝 Lançar Tendências",
+        "obz_just": "✏️ Justificar Dispersão",
         "obz_aprov": "✔️ Justificativas & Aprovação",
         "obz_reuniao": "🗓️ Reunião & Ações",
         "obz_plan": "🎯 Plan (metas)",
@@ -182,7 +183,8 @@ GRUPOS_ABAS = {
     "financeiro": {
         "💳 Contas": ["diario", "contas", "vencimentos"],
         "📊 Caixa & Saúde": ["fluxo", "analise"],
-        "🎯 Gestão OBZ": ["obz_gestao", "obz_rshl", "obz_tend", "obz_aprov", "obz_reuniao"],
+        "🎯 Gestão OBZ": ["obz_gestao", "obz_rshl", "obz_tend", "obz_just", "obz_aprov",
+                          "obz_reuniao"],
         "🧮 Planejamento & orçamento": ["obz_sim", "obz_capex"],
         "⚙️ OBZ: bases & cadastros": ["obz_plan", "obz_real", "obz_cad"],
         "📒 OBZ manual": ["painel", "lancamentos"],
