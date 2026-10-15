@@ -681,6 +681,17 @@ CREATE TABLE IF NOT EXISTS portal_rn (
     ultimo_acesso TEXT
 );
 
+CREATE TABLE IF NOT EXISTS dre_manual (
+    operacao_id     INTEGER NOT NULL,
+    mes             TEXT NOT NULL,
+    conta_corrente  REAL DEFAULT 0,
+    pis_cofins      REAL DEFAULT 0,
+    icms            REAL DEFAULT 0,
+    atualizado_por  TEXT,
+    atualizado_em   TEXT,
+    PRIMARY KEY (operacao_id, mes)
+);
+
 CREATE TABLE IF NOT EXISTS notas_cli_prod_mes (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     operacao_id  INTEGER NOT NULL REFERENCES operacoes(id),
@@ -1183,6 +1194,10 @@ MIGRACOES: list[tuple[str, str]] = [
     """),
     ("035_obz_areas", "ALTER TABLE obz_departamentos ADD COLUMN area TEXT;"),
     ("036_cli_prod", "CREATE INDEX IF NOT EXISTS ix_cli_prod ON notas_cli_prod_mes(operacao_id, mes);"),
+    ("037_obz_bonif", """
+        UPDATE obz_contas SET no_obz = 0, pacote = 'Bonificações'
+         WHERE LOWER(nome) LIKE '%bonif%' OR LOWER(nome) LIKE '%amostra%';
+    """),
 ]
 
 

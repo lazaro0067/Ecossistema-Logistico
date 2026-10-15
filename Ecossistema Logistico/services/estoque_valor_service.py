@@ -186,13 +186,15 @@ def comparativo(operacao_id: int, mes: str, so_cmv: bool = False) -> tuple[pd.Da
     return out, {"inicial": o_ini, "final": o_fim}
 
 
-def cmv_real(operacao_id: int, mes: str) -> dict:
-    """CMV = estoque inicial + compras − estoque final (R$ e HL), com os depósitos marcados para o CMV."""
+def cmv_periodo(operacao_id: int, meses_: list[str]) -> dict:
+    """CMV = estoque inicial do 1º mês + compras do período − estoque final do último mês (R$ e HL), com os
+    depósitos marcados para o CMV. É o mesmo número no 📊 Resumo & Lucro Bruto e no 📑 DRE."""
     from services import faturamento_service as fs
 
-    ini, o_ini = saldo(operacao_id, mes, "inicial", True)
-    fim, o_fim = saldo(operacao_id, mes, "final", True)
-    de, ate = fs.periodo_mes(mes)
+    ms = sorted(meses_)
+    ini, o_ini = saldo(operacao_id, ms[0], "inicial", True)
+    fim, o_fim = saldo(operacao_id, ms[-1], "final", True)
+    de, ate = fs.periodo_mes(ms[0])[0], fs.periodo_mes(ms[-1])[1]
     dc = fs.dia_df(operacao_id, "compra", de, ate, fs.STATUS_PADRAO["compra"])
     comp = fs.combinar(dc, fs.operacoes_do_setor("compra"), fs.operacoes_do_setor("hl_compra"))
     ok = not ini.empty and not fim.empty
@@ -203,9 +205,14 @@ def cmv_real(operacao_id: int, mes: str) -> dict:
             "cmv": ei + comp["valor"] - ef if ok else None, "cmv_hl": ei_hl + comp["hl"] - ef_hl if ok else None}
 
 
+def cmv_real(operacao_id: int, mes: str) -> dict:
+    return cmv_periodo(operacao_id, [mes])
+
+
 # --- DRE ---------------------------------------------------------------------------------------------
-def obz(operacao_id: int, mes: str) -> pd.DataFrame:
-    """Despesas do mês por pacote: 🎯 Gestão OBZ (16.03.01); sem ele, o OBZ manual antigo."""
+def obz(operacao_id: int, mes: str) -> pd.DataFrame | None:
+    """Despesas do mês por departamento do OBZ (16.03.01 / Base OBZ); sem ele, o OBZ manual antigo.
+    None = nenhum dos dois tem o mês."""
     from services import obz_service
 
     novo = obz_service.despesas_dre(operacao_id, mes)
@@ -214,26 +221,71 @@ def obz(operacao_id: int, mes: str) -> pd.DataFrame:
     trecho, p = operacoes_repo.filtro("operacao_id", operacao_id)
     df = query_df(f"SELECT pacote, SUM(orcado) AS orcado, SUM(realizado) AS realizado FROM financeiro_obz "
                   f"WHERE {trecho} AND mes_ano = ? GROUP BY pacote ORDER BY pacote", (*p, mes))
+    if df.empty:
+        return None
     for c in ("orcado", "realizado"):
         df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
     return df
 
 
-def dre_mes(operacao_id: int, mes: str) -> dict:
+CAMPOS_MANUAIS = {"icms": "ICMS", "pis_cofins": "PIS/COFINS", "conta_corrente": "Conta corrente"}
+
+
+def manual(operacao_id: int, meses_: list[str]) -> dict:
+    """Valores digitados no DRE (somados nos meses e, na visão consolidada, nas revendas)."""
+    trecho, p = operacoes_repo.filtro("operacao_id", operacao_id)
+    ph = ", ".join("?" * len(meses_))
+    r = query_one(f"SELECT SUM(icms) AS icms, SUM(pis_cofins) AS pis_cofins, SUM(conta_corrente) AS conta_corrente, "
+                  f"COUNT(*) AS n FROM dre_manual WHERE {trecho} AND mes IN ({ph})", (*p, *meses_))
+    out = {k: float(r[k] or 0.0) if r else 0.0 for k in CAMPOS_MANUAIS}
+    out["preenchido"] = bool(r and r["n"])
+    return out
+
+
+def salvar_manual(operacao_id: int, mes: str, valores: dict, usuario: str = "") -> None:
+    if operacoes_repo.e_consolidada(operacao_id):
+        raise RegraNegocioError("Escolha uma revenda (não a visão consolidada) para lançar os valores do DRE.")
+    v = {k: float(valores.get(k) or 0.0) for k in CAMPOS_MANUAIS}
+    execute("""INSERT INTO dre_manual (operacao_id, mes, conta_corrente, pis_cofins, icms, atualizado_por, atualizado_em)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(operacao_id, mes) DO UPDATE SET conta_corrente = excluded.conta_corrente,
+                 pis_cofins = excluded.pis_cofins, icms = excluded.icms, atualizado_por = excluded.atualizado_por,
+                 atualizado_em = excluded.atualizado_em""",
+            (operacao_id, mes, v["conta_corrente"], v["pis_cofins"], v["icms"], usuario,
+             tempo.agora().strftime("%Y-%m-%d %H:%M")))
+
+
+def dre_periodo(operacao_id: int, meses_: list[str]) -> dict:
+    """DRE de um mês ou de vários (o total do ano). Receita = só as operações de R$ de venda (⚙️ Cadastros);
+    CMV = cmv_periodo (o mesmo do Resumo & Lucro Bruto); despesas = OBZ por departamento."""
     from services import faturamento_service as fs
 
-    de, ate = fs.periodo_mes(mes)
+    ms = sorted(meses_)
+    de, ate = fs.periodo_mes(ms[0])[0], fs.periodo_mes(ms[-1])[1]
     dv = fs.dia_df(operacao_id, "venda", de, ate, fs.STATUS_PADRAO["venda"])
-    v = fs.combinar(dv, fs.operacoes_do_setor("fat_venda"), fs.operacoes_do_setor("hl_venda"))
+    ops_venda = fs.operacoes_do_setor("fat_venda")
+    v = fs.combinar(dv, ops_venda, fs.operacoes_do_setor("hl_venda"))
     b = fs.totais(fs.separar(dv, {"b": fs.operacoes_do_setor("fat_bonif")})["b"])
-    c = cmv_real(operacao_id, mes)
-    ob = obz(operacao_id, mes)
-    desp = float(ob["realizado"].sum()) if not ob.empty else None
-    receita = v["valor"]
+    c = cmv_periodo(operacao_id, ms)
+    obs = [obz(operacao_id, m) for m in ms]
+    tem = [o for o in obs if o is not None]
+    ob = (pd.concat(tem).groupby("pacote", as_index=False)[["orcado", "realizado"]].sum()
+          .sort_values("realizado", ascending=False).reset_index(drop=True)) if tem else \
+        pd.DataFrame(columns=["pacote", "orcado", "realizado"])
+    desp = float(ob["realizado"].sum()) if tem else None
+    man = manual(operacao_id, ms)
+    receita_bruta = v["valor"]  # total das notas (coluna Z) das operações de venda filtradas
+    receita = receita_bruta - man["icms"] - man["pis_cofins"]
     lucro = receita - c["cmv"] if c["cmv"] is not None else None
-    return {"mes": mes, "receita_bruta": v["valor_bruto"], "descontos": v["desconto"], "receita": receita,
-            "hl": v["hl"], "bonif": b["valor"], "bonif_hl": b["hl"], **c, "lucro_bruto": lucro,
-            "despesas": desp, "obz": ob, "resultado": (lucro - desp) if lucro is not None and desp is not None else None}
+    resultado = lucro - desp + man["conta_corrente"] if lucro is not None and desp is not None else None
+    return {"mes": ms[-1], "meses": ms, "ops_venda": ops_venda, "receita_bruta": receita_bruta,
+            "descontos": v["desconto"], "receita": receita, "hl": v["hl"], "bonif": b["valor"], "bonif_hl": b["hl"],
+            **c, **man, "lucro_bruto": lucro, "despesas": desp, "obz_meses": len(tem), "obz": ob,
+            "orcado": float(ob["orcado"].sum()) if tem else None, "resultado": resultado}
+
+
+def dre_mes(operacao_id: int, mes: str) -> dict:
+    return dre_periodo(operacao_id, [mes])
 
 
 def ultimo_saldo(operacao_id: int) -> dict:

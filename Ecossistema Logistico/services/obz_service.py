@@ -78,6 +78,11 @@ _PACOTES = [
 ]
 
 
+def e_bonificacao(nome) -> bool:
+    n = _n(nome)
+    return "bonif" in n or "amostra" in n
+
+
 def pacote_padrao(codigo: str, nome: str) -> tuple[str, str, int]:
     """(pacote, natureza, entra no OBZ)"""
     c, n = str(codigo), " " + _n(nome)
@@ -85,6 +90,8 @@ def pacote_padrao(codigo: str, nome: str) -> tuple[str, str, int]:
         return "Patrimonial", "despesa", 0
     if c in ("4008", "4009") or "compras a prazo" in n:
         return "Compras de mercadoria", "despesa", 0
+    if "bonif" in n or "amostra" in n:  # bonificação é comercial — não entra no OBZ/financeiro
+        return "Bonificações", "despesa", 0
     if c.startswith("7") or "rendimento" in n or "receita" in n:
         return "Receitas financeiras", "receita", 1
     if c.startswith("6"):
@@ -355,7 +362,8 @@ def _gravar_real(operacao_id: int, d: pd.DataFrame, nome: str, usuario: str) -> 
         conn.executemany(f"INSERT INTO obz_real_lanc ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
                          [tuple(_py(v) for v in r) for r in lan.itertuples(index=False)])
     _log(operacao_id, "obz_real", len(d), nome, usuario)
-    return {"lancamentos": len(d), "contas": d["conta"].nunique(), "deptos": d["depto"].nunique(),
+    alertas = alertar_dispersoes(operacao_id, sorted(g["mes"].unique()))
+    return {"alertas": alertas, "lancamentos": len(d), "contas": d["conta"].nunique(), "deptos": d["depto"].nunique(),
             "meses": sorted(g["mes"].unique()), "debito": float(d["debito"].sum()), "credito": float(d["credito"].sum())}
 
 
@@ -555,6 +563,8 @@ def salvar_tend(operacao_id: int, mes: str, conta: str, depto: str, valor: float
              quem if critica else None, quando if critica else None, status))
     if critica:
         _avisar_aprovadores(operacao_id, mes, conta, depto, disp, quem)
+    if disp > 0 and plan:
+        alertar_dispersoes(operacao_id, [mes])
     return status
 
 
@@ -565,7 +575,7 @@ def _avisar_aprovadores(operacao_id, mes, conta, depto, disp, quem) -> None:
         for uid in usuarios_papel("aprovador"):
             motoristas_repo.criar_notificacao(uid, "obz", f"obz:{operacao_id}:{mes}:{conta}:{depto}:{agora()}",
                                               f"🎯 OBZ: justificativa para aprovar ({nome_mes(mes)})",
-                                              f"Conta {conta} · depto {depto} · dispersão R$ {disp:,.2f} — lançada "
+                                              f"Conta {conta} · depto {depto} · dispersão {_brl(disp)} — lançada "
                                               f"por {quem}.", "financeiro", agora() + ":00")
     except Exception:
         pass
@@ -678,26 +688,101 @@ def salvar_reuniao(operacao_id: int, mes: str, data: str, participantes: str, at
 
 # --- Para o DRE ------------------------------------------------------------------------------------------
 def despesas_dre(operacao_id: int, mes: str) -> pd.DataFrame | None:
-    """Despesas líquidas do mês por pacote (despesa − receita), contas do OBZ. None = sem realizado."""
+    """Despesas líquidas do mês por departamento do OBZ (despesa − receita), só contas do OBZ (sem bonificação).
+    Coluna "pacote" = departamento (mantém o nome para quem já usa). None = sem realizado."""
     rl = real_df(operacao_id, mes, mes)
     if rl.empty:
         return None
     ct = contas()
-    rl = rl.merge(ct[["codigo", "pacote", "natureza", "no_obz"]], left_on="conta", right_on="codigo", how="left")
-    rl = rl[rl["no_obz"].fillna(1).astype(int) == 1]
-    rl["liq"] = [v if n != "receita" else -v for v, n in zip(rl["valor"], rl["natureza"])]
+    obz_ok = set(ct.loc[ct["no_obz"].fillna(1).astype(int) == 1, "codigo"])
+    nat = dict(zip(ct["codigo"], ct["natureza"]))
+    mp = _mapas()
+
+    def _agrupa(x):
+        x = x[x["conta"].isin(obz_ok)].copy()
+        if x.empty:
+            return pd.Series(dtype=float)
+        x["liq"] = [v if nat.get(c) != "receita" else -v for v, c in zip(x["valor"], x["conta"])]
+        x["pacote"] = [area_de(c, d, mp) for c, d in zip(x["conta"], x["depto"])]
+        return x.groupby("pacote")["liq"].sum()
+
+    r_ = _agrupa(rl)
     pl = plan_df(operacao_id, mes, mes)
-    pl = pl.merge(ct[["codigo", "pacote", "natureza"]], left_on="conta", right_on="codigo", how="left") \
-        if not pl.empty else pl
-    if not pl.empty:
-        pl["liq"] = [v if n != "receita" else -v for v, n in zip(pl["valor"], pl["natureza"])]
-    g = rl.groupby("pacote", as_index=False)["liq"].sum().rename(columns={"liq": "realizado"})
-    if not pl.empty:
-        g = g.merge(pl.groupby("pacote", as_index=False)["liq"].sum().rename(columns={"liq": "orcado"}), on="pacote",
-                    how="outer").fillna(0.0)
-    else:
-        g["orcado"] = 0.0
+    p_ = _agrupa(pl) if not pl.empty else pd.Series(dtype=float)
+    idx = sorted(set(r_.index) | set(p_.index))
+    g = pd.DataFrame({"pacote": idx, "realizado": [float(r_.get(i, 0.0)) for i in idx],
+                      "orcado": [float(p_.get(i, 0.0)) for i in idx]})
     return g.sort_values("realizado", ascending=False).reset_index(drop=True)
+
+
+# --- Alertas de dispersão para os donos ---------------------------------------------------------------------
+def _brl(v: float, casas: int = 2) -> str:
+    return f"R$ {v:,.{casas}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _uid_gestor() -> dict:
+    g = query_df("SELECT id, usuario_id FROM gestores WHERE usuario_id IS NOT NULL")
+    return {int(a): int(b) for a, b in zip(g["id"], g["usuario_id"])}
+
+
+def alertar_dispersoes(operacao_id: int, meses_: list[str]) -> int:
+    """Cada conta com real/tend acima do plan (dispersão crítica desfavorável) e sem justificativa vira alerta para o
+    dono do departamento, o sub-dono da conta e o dono da conta — um aviso por pessoa e mês, com as contas.
+    Sem dono cadastrado, avisa os aprovadores do financeiro. Devolve quantos avisos novos foram criados."""
+    try:
+        from repositories import motoristas_repo
+
+        if operacoes_repo.e_consolidada(operacao_id):
+            return 0
+        atual = mes_atual()
+        ug = _uid_gestor()
+        ar = areas()
+        dono_area = {n: ug.get(int(g)) for n, g in zip(ar["nome"], ar["dono_gestor_id"]) if pd.notna(g)}
+        rp = query_df("SELECT area, conta, gestor_id FROM obz_resp")
+        sub_conta = {(a, c): ug.get(int(g)) for a, c, g in zip(rp["area"], rp["conta"], rp["gestor_id"]) if pd.notna(g)}
+        sd = subdonos()
+        sub_old = {(c, d): int(u) for c, d, u in zip(sd["conta"], sd["depto"], sd["usuario_id"]) if pd.notna(u)}
+        ct = contas()
+        dono_conta = {c: int(u) for c, u in zip(ct["codigo"], ct["dono_id"]) if pd.notna(u)}
+        aprov = usuarios_papel("aprovador")
+        if not aprov:  # sem aprovador cadastrado: o Master recebe
+            from config.settings import PERFIL_MASTER
+
+            aprov = [int(x) for x in query_df("SELECT id FROM usuarios WHERE perfil = ? AND ativo = 1",
+                                              (PERFIL_MASTER,))["id"]]
+        mp = _mapas()
+        novos = 0
+        for mes in meses_:
+            if mes > atual:
+                continue
+            b = base(operacao_id, mes)
+            if b.empty:
+                continue
+            b = b[b["critica"] & (b["desfavoravel"] > 0) & b["justificativa"].isna()]
+            por_uid: dict[int, list] = {}
+            for r in b.itertuples(index=False):
+                area = area_de(r.conta, r.depto, mp)
+                uids = {u for u in (dono_area.get(area), sub_conta.get((area, r.conta)), sub_old.get((r.conta, r.depto)),
+                                    dono_conta.get(r.conta)) if u} or set(aprov)
+                for u in uids:
+                    por_uid.setdefault(u, []).append((r.conta, r.nome_conta, area, float(r.disp)))
+            for uid, itens in por_uid.items():
+                total = sum(x[3] for x in itens)
+                chave = f"obz-disp:{operacao_id}:{mes}:{len(itens)}:{round(total)}"
+                if motoristas_repo.ultima_notificacao(uid, chave):
+                    continue
+                itens.sort(key=lambda x: -x[3])
+                lista = "; ".join(f"{c} {str(n or '')[:28]} ({a}) +{_brl(v, 0)}" for c, n, a, v in itens[:5])
+                fonte = "realizado" if fechado(mes) else "tendência"
+                motoristas_repo.criar_notificacao(
+                    uid, "obz", chave, f"⚠️ OBZ {nome_mes(mes)}: {len(itens)} conta(s) acima do plan — justificar",
+                    f"O {fonte} passou do plan em {_brl(total)}. {lista}"
+                    + (" …" if len(itens) > 5 else "") + " Abra Financeiro › Tendência para justificar.",
+                    "financeiro", agora() + ":00")
+                novos += 1
+        return novos
+    except Exception:
+        return 0
 
 
 # --- Base OBZ (planilha com uma aba por departamento) ---------------------------------------------------------
@@ -773,11 +858,14 @@ def importar_base(conteudo: bytes, nome: str, operacao_id: int, ano: str, usuari
                                THEN excluded.nome ELSE obz_departamentos.nome END""", (d, a, a))
     cad = set(contas()["codigo"])
     for it in todos:
+        bonif = e_bonificacao(it["nome"])
         if it["conta"] not in cad:
-            salvar_conta(it["conta"], it["nome"], pacote=it["vbz"], no_obz=True)
+            salvar_conta(it["conta"], it["nome"], pacote="Bonificações" if bonif else it["vbz"], no_obz=not bonif)
             cad.add(it["conta"])
-        else:
-            execute("UPDATE obz_contas SET no_obz = 1 WHERE codigo = ?", (it["conta"],))
+        elif not bonif:
+            execute("""UPDATE obz_contas SET no_obz = 1 WHERE codigo = ?
+                       AND LOWER(COALESCE(nome, '')) NOT LIKE '%bonif%'
+                       AND LOWER(COALESCE(nome, '')) NOT LIKE '%amostra%'""", (it["conta"],))
     with get_conn() as conn:
         for it in todos:
             conn.execute("""INSERT INTO obz_mapa (conta, depto, area, vbz) VALUES (?, ?, ?, ?)
@@ -827,6 +915,8 @@ def importar_base(conteudo: bytes, nome: str, operacao_id: int, ano: str, usuari
     from services.produtividade_entrega_service import _log
 
     _log(operacao_id, "obz_base", len(todos), nome, usuario)
+    res["alertas"] = alertar_dispersoes(operacao_id, sorted(set(meses_plan) | set(res["meses_historico"])
+                                                            | set((res["real"] or {}).get("meses", []))))
     return res
 
 

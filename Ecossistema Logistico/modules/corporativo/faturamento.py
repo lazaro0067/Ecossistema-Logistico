@@ -352,19 +352,12 @@ _CSS_FLUXO = """
 """
 
 
-def _fluxo(op: int, de: str, ate: str, meses: list[str], venda: float) -> None:
-    """Início + Compra − Fim = CMV · Venda − CMV = Resultado (pelo estoque 02.05.02)."""
+def _fluxo(c: dict, venda: float, um_mes: bool) -> None:
+    """Início + Compra − Fim = CMV · Venda − CMV = Resultado (pelo estoque 02.05.02) — o mesmo cálculo do DRE."""
     import html as _h
 
-    from services import estoque_valor_service as ev
-
-    ms = sorted(m for m in meses if de <= m <= ate) or [de]
-    ini = ev.cmv_real(op, ms[0])
-    fim = ev.cmv_real(op, ms[-1])
-    compras = sum(ev.cmv_real(op, m)["compras"] for m in ms) if len(ms) > 1 else ini["compras"]
-    ok = ini["ok"] and fim["ok"]
-    ei, ef = ini["ei"], fim["ef"]
-    cmv = ei + compras - ef if ok else None
+    ok, ei, ef, compras, cmv = c["ok"], c["ei"], c["ef"], c["compras"], c["cmv"]
+    ini = fim = c
     res = venda - cmv if cmv is not None else None
     e = _h.escape
 
@@ -375,7 +368,7 @@ def _fluxo(op: int, de: str, ate: str, meses: list[str], venda: float) -> None:
     def op_(x):
         return f'<div class="op">{x}</div>'
 
-    hl_c = f"{_n(ini['compras_hl'])} HL comprados" if len(ms) == 1 else "compras do período"
+    hl_c = f"{_n(c['compras_hl'])} HL comprados" if um_mes else f"compras do período · {_n(c['compras_hl'])} HL"
     pct = _p(_div(res, venda) * 100 if res is not None and venda else None)
     linha1 = (caixa("📦 Início", ei if ok else None, f"estoque inicial · {_n(ini['ei_hl'])} HL" if ok
                     else "suba o 02.05.02", "#9aa3b2") + op_("+")
@@ -475,19 +468,31 @@ def render_margem(usuario: dict, operacao_id: int) -> None:
     dc = fs.dia_df(op, "compra", m_de, m_ate, fs.STATUS_PADRAO["compra"])
     bonif = fs.totais(fs.separar(dv, {"b": fs.operacoes_do_setor("fat_bonif")})["b"])
     compra = fs.combinar(dc, fs.operacoes_do_setor("compra"), fs.operacoes_do_setor("hl_compra"))
+    venda = fs.combinar(dv, fs.operacoes_do_setor("fat_venda"), fs.operacoes_do_setor("hl_venda"))
+    from services import estoque_valor_service as ev
+
+    ms = sorted(x for x in meses if de <= x <= ate) or [de]
+    cr = ev.cmv_periodo(op, ms)  # CMV pelo estoque — o mesmo do 📑 DRE
+    if cr["ok"]:
+        cmv_k, lucro_k = cr["cmv"], venda["valor"] - cr["cmv"]
+        det_cmv = f"início + compra − fim (igual ao DRE) · por custo de produto: {_m(t['cmv'])}"
+    else:
+        cmv_k, lucro_k = t["cmv"], t["margem"]
+        det_cmv = f"pelo custo de compra dos produtos (sem 02.05.02) · {_m(_div(t['cmv'], t['hl_venda']))}/HL"
+    pct = _div(lucro_k, venda["valor"]) * 100 if venda["valor"] else None
     tema.secao(f"🧾 Resumo · {rotulo}")
     tema.kpis([
-        {"titulo": "Vendas (R$)", "valor": _m(mg["venda"].sum()), "icone": "💵", "status": "info",
-         "detalhe": f"{_n(mg['hl_venda'].sum())} HL (venda + bonificação)"},
+        {"titulo": "Vendas (R$)", "valor": _m(venda["valor"]), "icone": "💵", "status": "info",
+         "detalhe": f"{_n(venda['hl'])} HL (venda + bonificação)"},
         {"titulo": "Bonificação concedida", "valor": _m(bonif["valor"]), "icone": "🎁", "status": "info",
          "detalhe": f"{_n(bonif['hl'])} HL · entra no HL, não no R$"},
         {"titulo": "Compras (investido)", "valor": _m(compra["valor"]), "icone": "🛒", "status": "info",
          "detalhe": f"{_n(compra['hl'])} HL · {_m(compra['rs_hl'])} por HL"},
-        {"titulo": "Custo da mercadoria vendida", "valor": _m(t["cmv"]), "icone": "📦", "status": "info",
-         "detalhe": f"{_m(_div(t['cmv'], t['hl_venda']))} por HL vendido"},
-        {"titulo": "Lucro bruto", "valor": _m(t["margem"]), "icone": "💰",
+        {"titulo": "Custo da mercadoria vendida", "valor": _m(cmv_k), "icone": "📦", "status": "info",
+         "detalhe": det_cmv},
+        {"titulo": "Lucro bruto", "valor": _m(lucro_k), "icone": "💰",
          "status": "neutro" if pct is None else "bom" if pct >= 20 else "atencao" if pct >= 10 else "critico",
-         "detalhe": f"margem {_p(pct)} · {_m(_div(t['margem'], t['hl_venda']))} por HL"},
+         "detalhe": f"margem {_p(pct)} · {_m(_div(lucro_k, venda['hl']))} por HL"},
         {"titulo": "Produtos com margem negativa", "valor": _n((com["margem"] < 0).sum()), "icone": "🔻",
          "status": "critico" if (com["margem"] < 0).any() else "bom",
          "detalhe": f"{_m(com.loc[com['margem'] < 0, 'margem'].sum())} de margem negativa",
@@ -498,16 +503,22 @@ def render_margem(usuario: dict, operacao_id: int) -> None:
                                 "Venda": sem["venda"].map(_m), "HL": sem["hl_venda"].map(lambda v: _n(v, 1))})
          if len(sem) else None},
     ], key="kp_margem")
-    _fluxo(op, de, ate, meses, float(mg["venda"].sum()))
+    _fluxo(cr, float(venda["valor"]), len(ms) == 1)
     if de != ate:  # mais de um mês: lucro bruto mês a mês
         linhas = []
         for m in sorted(x for x in meses if de <= x <= ate):
-            mm = fs.margem(op, m, m)
-            c_ = mm[mm["cmv"].notna()] if not mm.empty else mm
-            if c_.empty:
-                continue
-            linhas.append({"Mês": f"{ui.nome_mes(m)}", "venda": c_["venda"].sum(), "cmv": c_["cmv"].sum(),
-                           "margem": c_["margem"].sum(), "hl": c_["hl_venda"].sum()})
+            d0, d1 = fs.periodo_mes(m)
+            vm = fs.combinar(fs.dia_df(op, "venda", d0, d1, fs.STATUS_PADRAO["venda"]),
+                             fs.operacoes_do_setor("fat_venda"), fs.operacoes_do_setor("hl_venda"))
+            cm = ev.cmv_real(op, m)["cmv"]
+            if cm is None:  # sem 02.05.02 no mês: custo de compra por produto
+                mm = fs.margem(op, m, m)
+                c_ = mm[mm["cmv"].notna()] if not mm.empty else mm
+                if c_.empty:
+                    continue
+                cm = float(c_["cmv"].sum())
+            linhas.append({"Mês": f"{ui.nome_mes(m)}", "venda": vm["valor"], "cmv": cm,
+                           "margem": vm["valor"] - cm, "hl": vm["hl"]})
         if linhas:
             lm = pd.DataFrame(linhas)
             graficos.mostrar(graficos.barras(lm["Mês"], {"Vendas (R$ mil)": (lm["venda"] / 1000).round(1),

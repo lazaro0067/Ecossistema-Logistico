@@ -191,7 +191,11 @@ def render_tend(usuario: dict, operacao_id: int) -> None:
     if minhas.empty:
         st.warning("Você não é dono, sub-dono nem lançador de nenhuma conta. Peça o cadastro em ⚙️ Cadastros OBZ.")
         return
-    so_crit = st.toggle("Mostrar só as críticas", key="obz_t_crit")
+    a_justificar = minhas[minhas["critica"] & (minhas["desfavoravel"] > 0) & minhas["justificativa"].isna()]
+    if not a_justificar.empty:
+        st.warning(f"⚠️ **{len(a_justificar)} conta(s) suas passaram do plan** em {obz.nome_mes(mes)} "
+                   f"({ui.moeda(a_justificar['disp'].sum())} acima) — escreva a justificativa de cada uma e lance.")
+    so_crit = st.toggle("Mostrar só as críticas", key="obz_t_crit", value=not a_justificar.empty)
     if so_crit:
         minhas = minhas[minhas["critica"]]
     st.caption(f"💡 Tend sugerida = fechamento de {obz.nome_mes(obz.mes_anterior(mes))} (sem ele, o plan); se o real do "

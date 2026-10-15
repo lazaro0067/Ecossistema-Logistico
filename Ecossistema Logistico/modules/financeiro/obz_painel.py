@@ -196,6 +196,28 @@ def _abrir(*nivel: str) -> None:
     st.rerun()
 
 
+def _ir_conta(chave: str, grupo: str) -> None:
+    v = st.session_state.get(chave)
+    if v:
+        st.session_state["obz_nivel"] = [grupo, v]
+    if chave == "obz_d_sel":
+        st.session_state[chave] = ""
+
+
+def _busca_conta(sel: pd.DataFrame, grupo: str, atual: str | None) -> None:
+    """Seletor de conta que fica visível também dentro da conta — para pesquisar outra sem voltar."""
+    ct = sel.groupby(["conta", "nome_conta"], as_index=False)["desfavoravel"].sum()
+    ct = ct.sort_values("desfavoravel", ascending=False)
+    nomes = dict(zip(ct["conta"].astype(str), ct["nome_conta"].fillna("")))
+    chave = "obz_c_sel" if atual else "obz_d_sel"
+    opcoes = list(nomes) if atual else [""] + list(nomes)
+    if atual and st.session_state.get(chave) != atual and atual in nomes:
+        st.session_state[chave] = atual
+    st.selectbox("🔎 Pesquisar conta" if atual else "🔎 Abrir conta", opcoes, key=chave,
+                 format_func=lambda c: "— escolha —" if not c else f"{c} · {nomes.get(c, '')}",
+                 on_change=_ir_conta, args=(chave, grupo))
+
+
 def render(usuario: dict, operacao_id: int) -> None:
     op = ui.visao_acompanhamento(usuario, operacao_id, "obz_painel")
     if obz.contas().empty:
@@ -296,11 +318,7 @@ def render(usuario: dict, operacao_id: int) -> None:
             fig = _linha_mes(op, mes[:4], nivel[0])
             if fig is not None:
                 graficos.mostrar(fig, key="obz_d_lin")
-        conta = st.selectbox("🔎 Abrir conta", [""] + ct["conta"].astype(str).tolist(), key="obz_d_sel",
-                             format_func=lambda c: "— escolha —" if not c else
-                             f"{c} · {ct.set_index('conta').at[c, 'nome_conta']}")
-        if conta:
-            _abrir(nivel[0], conta)
+        _busca_conta(sel, nivel[0], None)
         ui.tabela(_tabela(sel), baixar=f"obz_{nivel[0]}_{mes}")
         return
 
@@ -308,6 +326,7 @@ def render(usuario: dict, operacao_id: int) -> None:
     conta = nivel[1]
     c = sel[sel["conta"].astype(str) == conta]
     nome = c["nome_conta"].iloc[0] if not c.empty else ""
+    _busca_conta(sel, nivel[0], conta)
     st.markdown(f"### 🧾 {conta} · {nome}  \n{nivel[0]} · VBZ **{c['vbz'].iloc[0] if not c.empty else '—'}** · "
                 f"responsável **{c['responsavel'].iloc[0] if not c.empty else '—'}**")
     _kpis(c, rotulo, "obz_ct")
