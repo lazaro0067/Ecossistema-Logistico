@@ -14,8 +14,21 @@ _PLANO = {
     "gente": ("👥 Gente", "Quadro, absenteísmo, turnover, horas extras e treinamentos por revenda.", "gente"),
     "seguranca": ("🦺 Segurança", "Acidentes, incidentes, DDS, inspeções e dias sem acidente.", "gente"),
     "gestao": ("📊 Gestão", "Painel único com os principais indicadores de todas as áreas (farol do grupo).", None),
-    "planejamento": ("🗓️ Planejamento", "Orçamento, metas anuais e plano de ação por área.", None),
 }
+
+
+def _planejamento(usuario: dict, operacao_id: int) -> None:
+    """🗓️ Planejamento: capex do próximo ano e o orçamento (simulador OBZ)."""
+    from modules.financeiro import capex, obz_sim
+
+    tema.secao("🗓️ Planejamento do próximo ano",
+               "Capex (investimentos) e orçamento OBZ — o capex aprovado entra no simulador como custo mensal.")
+    aba = ui._escolha("corp_plan_aba", ["capex", "orcamento"], "capex", pills=True,
+                      formatar={"capex": "🏗️ Gestão de Capex", "orcamento": "🧮 Orçamento (Simulador OBZ)"}.get)
+    if aba == "capex":
+        capex.render(usuario, operacao_id)
+    else:
+        obz_sim.render(usuario, operacao_id)
 
 
 def _em_construcao(usuario: dict, aba: str) -> None:
@@ -38,5 +51,6 @@ def render(usuario: dict, operacao_id: int) -> None:
     abas.update({"prod_entrega": prod_entrega.render, "faturamento": faturamento.render_faturamento,
                  "compras": faturamento.render_compras, "margem": faturamento.render_margem,
                  "vendas_fin": lambda u, o: faturamento.render_faturamento(u, o, "💰 Financeiro › **💵 Vendas**"), "relatorios": relatorios.render, "cadastros": cadastros.render,
-                 "estoque_valor": estoque_dre.render_estoque, "dre": estoque_dre.render_dre})
+                 "estoque_valor": estoque_dre.render_estoque, "dre": estoque_dre.render_dre,
+                 "planejamento": _planejamento})
     ui.abas_modulo(usuario, "corporativo", abas, usuario, operacao_id)

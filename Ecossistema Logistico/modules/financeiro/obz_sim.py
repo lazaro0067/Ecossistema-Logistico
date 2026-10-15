@@ -9,14 +9,14 @@ import pandas as pd
 import streamlit as st
 
 from core import graficos, tema, ui
-from modules.financeiro.obz_painel import AZUL, CINZA, VERDE, VERMELHO, _mk
+from modules.financeiro.obz_painel import AZUL, VERDE, VERMELHO, _clicavel, _mk
 from repositories import operacoes_repo
 from services import obz_service as obz
 from services import obz_sim_service as sim
 from services.erros import RegraNegocioError
 
 _MESES = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
-_ABAS = {"resumo": "📊 Resumo", "premissas": "1️⃣ Premissas", "volume": "2️⃣ Volume & equipe",
+_ABAS = {"resumo": "📊 Resumo", "premissas": "1️⃣ Premissas", "volume": "2️⃣ Volume & gente (QLP)",
          "contas": "3️⃣ Contas & departamentos", "inic": "4️⃣ Iniciativas & capex", "criticas": "💬 Críticas",
          "reunioes": "🗓️ Reuniões", "historico": "🕒 Histórico"}
 _CSS = """<style>
@@ -164,7 +164,7 @@ def _resumo(s: dict, usuario: dict) -> None:
     ra = sim.resumo_areas(s["id"])
     hb, hp = sim.hl_totais(s["id"])
     base, calc, fin = float(ra["base"].sum()), float(ra["calculado"].sum()), float(ra["final"].sum())
-    cap = sim.capex(s["id"])
+    cap, cap_imp = sim.capex(s["id"]), sim.capex_impacto(s["id"])
     pend = sim.pendencias_revisao(s["id"])
     rs_b, rs_p = (base / hb if hb else None), (fin / hp if hp else None)
     tema.kpis([
@@ -177,45 +177,89 @@ def _resumo(s: dict, usuario: dict) -> None:
          else "atencao", "detalhe": f"histórico {_m(rs_b)}/HL"},
         {"titulo": f"HL {s['ano']}", "valor": ui.numero(hp), "icone": "🍺", "status": "info",
          "detalhe": f"{_p((hp / hb - 1) * 100 if hb else None)} vs {s['ano_base']}"},
-        {"titulo": "Capex previsto", "valor": _mk(cap), "icone": "🏗️", "status": "info", "detalhe": "investimento"},
+        {"titulo": "Capex aprovado", "valor": _mk(cap), "icone": "🏗️", "status": "info",
+         "detalhe": f"impacto no resultado {_mk(cap_imp)}"},
         {"titulo": "Críticas sem decisão", "valor": ui.numero(pend), "icone": "💬",
          "status": "atencao" if pend else "bom", "detalhe": f"calculado {_mk(calc)}"},
     ], key="kp_sim")
     if ra.empty:
         st.info("Sem contas no simulador.")
         return
+    v = sim.mensal_area(s["id"])
+    meses_ = [f"{s['ano']}-{m:02d}" for m in range(1, 13)]
+    li = sim.linhas(s["id"])
+    base_area = (li.assign(b=li["base_ano"] * li["sinal"]).groupby("area")["b"].sum()) if not li.empty else {}
     a1, a2 = st.columns([1.3, 1])
     with a1:
         fig = go.Figure()
-        fig.add_bar(y=ra["area"], x=ra["base"], name=f"Histórico {s['ano_base']}", orientation="h", marker_color="#c9d3e3")
-        fig.add_bar(y=ra["area"], x=ra["final"], name=f"Orçamento {s['ano']}", orientation="h",
+        fig.add_bar(y=ra["area"], x=ra["base"], name=f"Histórico {s['ano_base']}", orientation="h",
+                    marker_color="#c9d3e3", customdata=ra["area"])
+        fig.add_bar(y=ra["area"], x=ra["final"], name=f"Orçamento {s['ano']}", orientation="h", customdata=ra["area"],
                     marker_color=[VERMELHO if f > b * 1.08 else AZUL for f, b in zip(ra["final"], ra["base"])])
         fig.update_layout(barmode="group")
         fig.update_yaxes(autorange="reversed")
-        graficos.mostrar(graficos._layout(fig, "Por departamento", max(300, 40 * len(ra) + 80)), key="sim_g_area")
+        clic = _clicavel(graficos._layout(fig, "Por departamento (clique para abrir)", max(300, 40 * len(ra) + 80)),
+                         "sim_g_area")
+        if clic in set(ra["area"]):
+            st.session_state["sim_area_sel"] = clic
     with a2:
-        v = sim.valores_mensais(s["id"], final=True)
-        li = sim.linhas(s["id"])
-        sinal = dict(zip(zip(li["conta"], li["depto"]), li["sinal"]))
-        v["liq"] = [x * sinal.get((c, d), 1.0) for c, d, x in zip(v["conta"], v["depto"], v["valor"])]
-        mens = v.groupby("mes")["liq"].sum()
+        mens = v.groupby("mes")["liq"].sum().reindex(meses_).fillna(0.0)
         vol = sim.volume(s["id"])
-        x = [_MESES[int(m[5:]) - 1] for m in mens.index]
+        x = [_MESES[int(m[5:]) - 1] for m in meses_]
         fig = go.Figure()
         fig.add_bar(x=x, y=mens.values, name="Orçamento (R$)", marker_color=AZUL)
         fig.add_scatter(x=x, y=[base / 12] * len(x), name="Média histórica", mode="lines",
                         line=dict(color="#0B1F3A", dash="dot"))
-        hlp = dict(zip([_MESES[int(m[5:]) - 1] for m in vol["mes"]], vol["hl_plan"]))
-        fig.add_scatter(x=x, y=[hlp.get(k) for k in x], name="HL", yaxis="y2", mode="lines+markers",
+        fig.add_scatter(x=x, y=list(vol["hl_plan"]), name="HL", yaxis="y2", mode="lines+markers",
                         line=dict(color=VERDE))
         fig.update_layout(yaxis2=dict(overlaying="y", side="right", showgrid=False))
         graficos.mostrar(graficos._layout(fig, "Mês a mês", 340), key="sim_g_mes")
-    vis = pd.DataFrame({"Departamento": ra["area"], f"Histórico {s['ano_base']}": ra["base"].map(_m),
-                        "Calculado": ra["calculado"].map(_m), f"Orçamento {s['ano']}": ra["final"].map(_m),
-                        "Var. %": ra["var_pct"].map(_p),
-                        "R$/HL": (ra["final"] / hp if hp else ra["final"] * 0).map(_m)})
-    vis.loc[len(vis)] = ["TOTAL", _m(base), _m(calc), _m(fin), _p((fin / base - 1) * 100 if base else None), _m(rs_p)]
-    ui.tabela(vis, baixar=f"orcamento_{s['ano']}_departamentos")
+
+    tema.secao("🏢 Departamentos mês a mês", "Escolha o departamento (ou clique na barra) para abrir as contas mês a mês.")
+    piv = v.pivot_table(index="area", columns="mes", values="liq", aggfunc="sum").reindex(columns=meses_).fillna(0.0)
+    piv = piv.loc[ra["area"][ra["area"].isin(piv.index)]]
+    ui.tabela(_tabela_mensal(piv, "Departamento", base_area), baixar=f"orcamento_{s['ano']}_departamentos_mensal")
+    areas = list(piv.index)
+    if not areas:
+        return
+    atual = st.session_state.get("sim_area_sel")
+    area = st.selectbox("🔎 Abrir departamento", areas, index=areas.index(atual) if atual in areas else 0,
+                        key="sim_area_box")
+    st.session_state["sim_area_sel"] = area
+    va = v[v["area"] == area].assign(rot=lambda x: x["conta"] + " · " + x["nome_conta"].fillna("").str[:34])
+    pc = va.pivot_table(index="rot", columns="mes", values="liq", aggfunc="sum").reindex(columns=meses_).fillna(0.0)
+    pc = pc.loc[pc.sum(axis=1).abs().sort_values(ascending=False).index]
+    la = li[li["area"] == area].assign(rot=lambda x: x["conta"] + " · " + x["nome_conta"].fillna("").str[:34],
+                                       b=lambda x: x["base_ano"] * x["sinal"])
+    tema.secao(f"🧾 {area} — contas mês a mês")
+    ui.tabela(_tabela_mensal(pc, "Conta", la.groupby("rot")["b"].sum()), baixar=f"orcamento_{s['ano']}_{area}_contas")
+    contas_ = list(pc.index)
+    if contas_:
+        ct = st.selectbox("🔎 Ver a conta por centro de custo (depto)", contas_, key="sim_ct_box")
+        vc = va[va["rot"] == ct]
+        nd = obz.nomes_deptos()
+        vc = vc.assign(dep=vc["depto"].map(lambda d: obz.rotulo_depto(d, nd)))
+        pd_ = vc.pivot_table(index="dep", columns="mes", values="liq", aggfunc="sum").reindex(columns=meses_).fillna(0.0)
+        ui.tabela(_tabela_mensal(pd_, "Depto", None), baixar=f"orcamento_{s['ano']}_{ct[:10]}")
+
+
+def _tabela_mensal(piv: pd.DataFrame, nome: str, base) -> pd.DataFrame:
+    """Linhas × 12 meses + total (+ histórico e variação quando houver base) e a linha TOTAL."""
+    out = pd.DataFrame({nome: list(piv.index)})
+    for m in piv.columns:
+        out[_MESES[int(m[5:]) - 1]] = [_mk(x) for x in piv[m]]
+    tot = piv.sum(axis=1)
+    out["Total"] = [_m(x) for x in tot]
+    if base is not None:
+        b = [float(base.get(k, 0.0)) if hasattr(base, "get") else 0.0 for k in piv.index]
+        out["Histórico"] = [_m(x) for x in b]
+        out["Var. %"] = [_p((t / x - 1) * 100) if x else "—" for t, x in zip(tot, b)]
+    linha = ["TOTAL", *[_mk(piv[m].sum()) for m in piv.columns], _m(tot.sum())]
+    if base is not None:
+        bt = sum(float(base.get(k, 0.0)) for k in piv.index) if hasattr(base, "get") else 0.0
+        linha += [_m(bt), _p((tot.sum() / bt - 1) * 100) if bt else "—"]
+    out.loc[len(out)] = linha
+    return out
 
 
 # --- 1️⃣ Premissas ------------------------------------------------------------------------------------------------
@@ -235,14 +279,12 @@ def _premissas(s: dict, usuario: dict) -> None:
                                  help="Inflação de fretes — aplicada sobre o custo por HL")
         ins = c[3].number_input("Insumos (%)", value=float(pm["insumos"]), step=.1, disabled=not ed,
                                 help="Combustível, pneus, peças, materiais — sobre o custo por HL")
-        st.markdown("**👥 Pessoal**")
+        st.markdown("**👥 Pessoal — dissídio**")
         d = st.columns(3)
         dmes = d[0].selectbox("Mês do dissídio (negociado)", list(range(1, 13)), index=int(pm["dissidio_mes"]) - 1,
                               format_func=lambda m: _MESES[m - 1], disabled=not ed)
         dpct = d[1].number_input("% negociado no dissídio", value=float(pm["dissidio_pct"]), step=.1, disabled=not ed)
-        elas = d[2].number_input("Equipe acompanha o volume (%)", value=float(pm["elasticidade"]), step=5.0,
-                                 disabled=not ed, help="Nos departamentos operacionais sem equipe informada: quanto do "
-                                                       "crescimento de HL vira crescimento de equipe")
+        d[2].caption("O quadro (QLP) de cada departamento é informado na aba 2️⃣ e acompanha o volume de HL.")
         st.markdown("**📚 Base (histórico do ano atual)**")
         base = st.radio("Como anualizar o histórico", ["media", "ytd_plan"], index=0 if pm["base"] == "media" else 1,
                         horizontal=True, disabled=not ed,
@@ -250,68 +292,97 @@ def _premissas(s: dict, usuario: dict) -> None:
                                      "ytd_plan": f"Realizado de {s['ano_base']} + plan dos meses que faltam"}.get)
         if st.form_submit_button("💾 Salvar e recalcular", type="primary", disabled=not ed):
             ui.acao(sim.salvar_premissas, s["id"], {"ipca": ipca, "aluguel": alug, "fretes": fret, "insumos": ins,
-                                                    "dissidio_mes": dmes, "dissidio_pct": dpct, "elasticidade": elas,
-                                                    "base": base}, usuario, sucesso="Premissas salvas e contas recalculadas.")
+                                                    "dissidio_mes": dmes, "dissidio_pct": dpct, "base": base}, usuario,
+                    sucesso="Premissas salvas e contas recalculadas.")
     st.markdown("**Como cada conta é projetada**")
     ui.tabela(pd.DataFrame({"Driver": list(sim.DRIVERS.values()), "Cálculo mensal": [
-        "base × (1 + dissídio a partir do mês negociado) × fator de equipe (HL do mês ÷ produtividade)",
+        "base × (1 + dissídio a partir do mês negociado) × (QLP do mês ÷ QLP de hoje)",
         "base × (HL do mês ÷ HL médio do ano atual) × (1 + fretes)",
         "base × (HL do mês ÷ HL médio do ano atual) × (1 + insumos)", "base × (1 + aluguel)", "base × (1 + IPCA)",
         "base × (1 + IPCA)", "igual à base"]}))
 
 
-# --- 2️⃣ Volume & equipe -------------------------------------------------------------------------------------------
+# --- 2️⃣ Volume & gente ---------------------------------------------------------------------------------------------
 def _volume(s: dict, usuario: dict) -> None:
     ed = s["status"] == "rascunho" and sim.pode_montar(usuario)
     vol = sim.volume(s["id"])
-    tema.secao("🍺 Volume de HL mês a mês", f"HL base = vendido em {s['ano_base']} (mês sem dado usa a média). "
-                                            "Edite o HL planejado de cada mês.")
+    tema.secao("🍺 Volume de HL mês a mês",
+               f"HL {s['ano_base']} vem da 03.02.37 vendas; mês sem venda carregada fica vazio — preencha à mão. "
+               f"Depois ajuste o HL planejado de {s['ano']}.")
+    faltam = vol[vol["hl_base"].isna()]
+    if len(faltam):
+        st.warning(f"⚠️ {len(faltam)} mês(es) de {s['ano_base']} sem volume: "
+                   + ", ".join(_MESES[int(m[5:]) - 1] for m in faltam["mes"])
+                   + ". Preencha o HL na tabela (fica marcado como ✏️ manual).")
     if ed:
-        c1, c2, _ = st.columns([1, 1, 2])
+        c1, c2, _ = st.columns([1, 1.2, 2])
         cr = c1.number_input("Crescimento sobre o histórico (%)", value=0.0, step=1.0, key="sim_vol_cr")
-        if c2.button("Aplicar em todos os meses", key="sim_vol_ap"):
+        if c2.button("Aplicar no HL planejado", key="sim_vol_ap"):
             ui.acao(sim.salvar_volume, s["id"], vol.assign(hl_plan=vol["hl_base"] * (1 + cr / 100)), usuario,
-                    sucesso="Volume atualizado.")
-    tab = vol.assign(Mês=[_MESES[int(m[5:]) - 1] + "/" + m[:4] for m in vol["mes"]])
+                    sucesso="Volume planejado atualizado.")
+    fonte = {"vendas": "📥 03.02.37 vendas", "manual": "✏️ manual"}
+    tab = vol.assign(Mês=[_MESES[int(m[5:]) - 1] + "/" + m[:4] for m in vol["mes"]],
+                     Origem=[fonte.get(f) or ("≈ média — confira" if pd.notna(b) else "⚠️ sem dado — preencha")
+                             for f, b in zip(vol["fonte"], vol["hl_base"])],
+                     Var=[(p / b - 1) * 100 if pd.notna(p) and pd.notna(b) and b else None
+                          for b, p in zip(vol["hl_base"], vol["hl_plan"])])
     din = st.column_config.NumberColumn
-    novo = st.data_editor(tab, hide_index=True, key=f"sim_vol_{s['id']}", **ui.LARGURA,
-                          disabled=[c for c in tab.columns if c != "hl_plan"] if ed else list(tab.columns),
-                          column_order=["Mês", "hl_base", "hl_plan"],
-                          column_config={"hl_base": din(f"HL {s['ano_base']}", format="%.0f"),
-                                         "hl_plan": din(f"HL {s['ano']} ✏️", format="%.0f")})
+    novo = st.data_editor(tab, hide_index=True, key=f"sim_vol_{s['id']}", **ui.LARGURA, height=13 * 35 + 3,
+                          disabled=[c for c in tab.columns if c not in ("hl_base", "hl_plan")] if ed
+                          else list(tab.columns),
+                          column_order=["Mês", "hl_base", "Origem", "hl_plan", "Var"],
+                          column_config={"hl_base": din(f"HL {s['ano_base']} ✏️", format="%.0f"),
+                                         "hl_plan": din(f"HL {s['ano']} ✏️", format="%.0f"),
+                                         "Var": din("Var. %", format="%.1f%%")})
+    hb, hp = float(vol["hl_base"].sum()), float(vol["hl_plan"].sum())
+    ui.tabela(pd.DataFrame({"": ["TOTAL DO ANO"], f"HL {s['ano_base']}": [ui.numero(hb)],
+                            f"HL {s['ano']}": [ui.numero(hp)], "Var. %": [_p((hp / hb - 1) * 100 if hb else None)],
+                            "Média/mês": [f"{ui.numero(hb / max(vol['hl_base'].notna().sum(), 1))} → "
+                                          f"{ui.numero(hp / max(vol['hl_plan'].notna().sum(), 1))}"]}))
     if ed and st.button("💾 Salvar volume e recalcular", type="primary", key="sim_vol_s"):
         ui.acao(sim.salvar_volume, s["id"], novo, usuario, sucesso="Volume salvo e contas recalculadas.")
-    hb, hp = sim.hl_totais(s["id"])
-    st.caption(f"Total: {ui.numero(hb)} HL em {s['ano_base']} → {ui.numero(hp)} HL em {s['ano']} "
-               f"({_p((hp / hb - 1) * 100 if hb else None)}).")
 
-    tema.secao("👥 Equipe pelo HL (desdobrada)",
-               "Para os departamentos que acompanham o volume: informe a equipe de hoje e a produtividade alvo "
-               "(HL por pessoa no mês) — a equipe necessária de cada mês = HL do mês ÷ produtividade, e o custo de "
-               "pessoal acompanha. Sem equipe informada, usa o % das premissas.")
-    eq = sim.equipe(s["id"])
-    hl_med_b = float(pd.to_numeric(vol["hl_base"], errors="coerce").mean() or 0)
-    eq["acompanha"] = eq["acompanha"].fillna(0).astype(int) == 1
-    eq["hl_pessoa"] = [hl_med_b / float(e) if pd.notna(e) and e else None for e in eq["equipe_atual"]]
-    novo = st.data_editor(eq, hide_index=True, key=f"sim_eq_{s['id']}", **ui.LARGURA,
-                          disabled=["area", "hl_pessoa"] if ed else list(eq.columns),
-                          column_order=["area", "acompanha", "equipe_atual", "hl_pessoa", "produtividade"],
+    tema.secao("👥 Gente — QLP por departamento",
+               "Informe o QLP de hoje (quadro de pessoas) de cada departamento. O sistema calcula quanto cada pessoa "
+               "custa (pessoal do histórico ÷ QLP) e projeta o QLP de cada mês proporcional ao crescimento do HL — "
+               "em todos os departamentos. Se já souber o quadro de "
+               f"{s['ano']}, preencha o QLP planejado (fixo no ano).")
+    g = sim.gente(s["id"])
+    if g.empty:
+        st.info("Sem departamentos.")
+        return
+    tab = g[["area", "equipe_atual", "custo_base", "custo_pessoa_mes", "qlp_plan", "qlp_medio", "custo_plan"]]
+    novo = st.data_editor(tab, hide_index=True, key=f"sim_eq_{s['id']}", **ui.LARGURA,
+                          height=(len(tab) + 1) * 35 + 3,
+                          disabled=[c for c in tab.columns if c not in ("equipe_atual", "qlp_plan")] if ed
+                          else list(tab.columns),
                           column_config={"area": "Departamento",
-                                         "acompanha": st.column_config.CheckboxColumn("Acompanha o HL ✏️"),
-                                         "equipe_atual": din("Equipe hoje (pessoas) ✏️", format="%.0f"),
-                                         "hl_pessoa": din("HL/pessoa hoje", format="%.0f"),
-                                         "produtividade": din("Produtividade alvo (HL/pessoa) ✏️", format="%.0f")})
-    if ed and st.button("💾 Salvar equipe e recalcular", type="primary", key="sim_eq_s"):
-        ui.acao(sim.salvar_equipe, s["id"], novo, usuario, sucesso="Equipe salva e pessoal recalculado.")
-    proj = eq[eq["acompanha"] & eq["equipe_atual"].notna() & eq["produtividade"].notna()]
-    if not proj.empty:
-        linhas = []
-        for r in proj.itertuples(index=False):
-            linhas.append({"Departamento": r.area, "Hoje": int(r.equipe_atual),
-                           **{_MESES[int(m[5:]) - 1]: round(float(h) / float(r.produtividade), 1)
-                              for m, h in zip(vol["mes"], vol["hl_plan"]) if pd.notna(h)}})
-        st.markdown("**Equipe necessária por mês (HL do mês ÷ produtividade alvo)**")
-        ui.tabela(pd.DataFrame(linhas), baixar=f"equipe_{s['ano']}")
+                                         "equipe_atual": din("QLP hoje ✏️", format="%.0f"),
+                                         "custo_base": din(f"Pessoal {s['ano_base']}", format="R$ %.0f"),
+                                         "custo_pessoa_mes": din("Custo/pessoa/mês", format="R$ %.0f"),
+                                         "qlp_plan": din(f"QLP planejado {s['ano']} ✏️ (opcional)", format="%.0f"),
+                                         "qlp_medio": din("QLP médio projetado", format="%.1f"),
+                                         "custo_plan": din(f"Pessoal {s['ano']}", format="R$ %.0f")})
+    qt, qp = g["equipe_atual"].sum(), g["qlp_medio"].sum()
+    ui.tabela(pd.DataFrame({"": ["TOTAL"], "QLP hoje": [ui.numero(qt)], "QLP médio projetado": [ui.numero(qp, 1)],
+                            f"Pessoal {s['ano_base']}": [_m(g["custo_base"].sum())],
+                            f"Pessoal {s['ano']}": [_m(g["custo_plan"].sum())],
+                            "Var. %": [_p((g["custo_plan"].sum() / g["custo_base"].sum() - 1) * 100
+                                          if g["custo_base"].sum() else None)]}))
+    if ed and st.button("💾 Salvar QLP e recalcular", type="primary", key="sim_eq_s"):
+        ui.acao(sim.salvar_equipe, s["id"], novo, usuario, sucesso="QLP salvo e pessoal recalculado.")
+    sem = g[g["equipe_atual"].isna()]
+    if len(sem):
+        st.caption(f"Sem QLP informado: {', '.join(sem['area'])} — o custo de pessoal deles acompanha o HL, mas sem o "
+                   "custo por pessoa.")
+    qm = sim.qlp_mensal(s["id"])
+    if not qm.empty:
+        st.markdown(f"**QLP projetado por mês em {s['ano']}**")
+        out = pd.DataFrame({"Departamento": qm["area"], "Hoje": qm["hoje"].map(lambda x: ui.numero(x))})
+        for m in range(1, 13):
+            out[_MESES[m - 1]] = qm[m].map(lambda x: ui.numero(x, 1))
+        out.loc[len(out)] = ["TOTAL", ui.numero(qm["hoje"].sum()), *[ui.numero(qm[m].sum(), 1) for m in range(1, 13)]]
+        ui.tabela(out, baixar=f"qlp_{s['ano']}")
 
 
 # --- 3️⃣ Contas ----------------------------------------------------------------------------------------------------
@@ -348,6 +419,9 @@ def _contas(s: dict, usuario: dict) -> None:
                                          "Base": din(format="R$ %.0f"), "Calculado": din(format="R$ %.0f"),
                                          "Final": din(format="R$ %.0f"), "Var %": din(format="%.1f%%"),
                                          "R$/HL": din(format="R$ %.2f")})
+    t = v.assign(b=v["base_ano"] * v["sinal"], f=v["final_ano"] * v["sinal"])
+    st.caption(f"Total do filtro: histórico {_m(t['b'].sum())} → orçamento {_m(t['f'].sum())} "
+               f"({_p((t['f'].sum() / t['b'].sum() - 1) * 100 if t['b'].sum() else None)}).")
     st.caption("Drivers: " + " · ".join(f"**{k}** = {v_}" for k, v_ in sim.DRIVERS.items()))
     if ed and st.button("💾 Salvar drivers e recalcular", type="primary", key="sim_ct_s"):
         mud = {int(i): d for i, d, o in zip(novo["id"], novo["driver"], tab["driver"]) if d != o}
@@ -356,48 +430,77 @@ def _contas(s: dict, usuario: dict) -> None:
 
 # --- 4️⃣ Iniciativas & capex -----------------------------------------------------------------------------------------
 def _iniciativas(s: dict, usuario: dict) -> None:
+    from services import capex_service as cx
+
     ed = s["status"] == "rascunho" and sim.pode_montar(usuario)
-    st.caption("O que vai planejar para o ano: **despesas novas** (contratações, contratos, projetos), **economias** "
-               "(cortes, renegociações) e **capex** (investimentos — fica à parte do OBZ). Despesa e economia entram na "
-               "conta escolhida, a partir do mês de início (por mês se recorrente).")
+    tema.secao("📌 Iniciativas do ano", "Despesas novas (contratações, contratos, projetos) e economias (cortes, "
+                                       "renegociações) — entram na conta escolhida a partir do mês de início.")
     ini = sim.iniciativas(s["id"])
+    ini = ini[ini["tipo"].isin(sim.TIPOS_INIC)] if not ini.empty else ini
     li = sim.linhas(s["id"])
     ct = obz.contas(so_obz=True)
     opc_ct = [f"{c} · {n}" for c, n in zip(ct["codigo"], ct["nome"].fillna(""))]
-    rot_ct = {c: f"{c} · {n}" for c, n in zip(ct["codigo"], ct["nome"].fillna(""))}
+    rot_ct = dict(zip(ct["codigo"], opc_ct))
     areas = sorted(li["area"].dropna().unique()) if not li.empty else []
     tipos_rot = {v: k for k, v in sim.TIPOS_INIC.items()}
-    tab = pd.DataFrame({"tipo": [sim.TIPOS_INIC.get(t, t) for t in ini["tipo"]] if not ini.empty else [],
-                        "descricao": ini["descricao"] if not ini.empty else [],
-                        "area": ini["area"] if not ini.empty else [],
-                        "conta": [rot_ct.get(c, c) for c in ini["conta"]] if not ini.empty else [],
-                        "mes_ini": [_MESES[int(m) - 1] for m in ini["mes_ini"]] if not ini.empty else [],
-                        "valor": ini["valor"] if not ini.empty else [],
-                        "recorrente": (ini["recorrente"].astype(int) == 1) if not ini.empty else []})
+    tab = pd.DataFrame({
+        "tipo": pd.Series([sim.TIPOS_INIC.get(t, t) for t in ini["tipo"]] if not ini.empty else [], dtype="object"),
+        "descricao": pd.Series(list(ini["descricao"]) if not ini.empty else [], dtype="object"),
+        "area": pd.Series(list(ini["area"]) if not ini.empty else [], dtype="object"),
+        "conta": pd.Series([rot_ct.get(c, c) for c in ini["conta"]] if not ini.empty else [], dtype="object"),
+        "mes_ini": pd.Series([_MESES[int(m) - 1] for m in ini["mes_ini"]] if not ini.empty else [], dtype="object"),
+        "valor": pd.Series(list(ini["valor"]) if not ini.empty else [], dtype="float64"),
+        "recorrente": pd.Series(list(ini["recorrente"].astype(int) == 1) if not ini.empty else [], dtype="bool")})
     novo = st.data_editor(tab, hide_index=True, num_rows="dynamic" if ed else "fixed", key=f"sim_ini_{s['id']}",
                           **ui.LARGURA, disabled=not ed,
                           column_config={
-                              "tipo": st.column_config.SelectboxColumn("Tipo ✏️", options=list(sim.TIPOS_INIC.values()),
-                                                                       required=True),
+                              "tipo": st.column_config.SelectboxColumn("Tipo ✏️", options=list(sim.TIPOS_INIC.values())),
                               "descricao": st.column_config.TextColumn("Descrição ✏️", width="large"),
                               "area": st.column_config.SelectboxColumn("Departamento ✏️", options=areas),
-                              "conta": st.column_config.SelectboxColumn("Conta (despesa/economia) ✏️", options=opc_ct,
-                                                                        width="large"),
+                              "conta": st.column_config.SelectboxColumn("Conta ✏️", options=opc_ct, width="large"),
                               "mes_ini": st.column_config.SelectboxColumn("Início ✏️", options=_MESES),
-                              "valor": st.column_config.NumberColumn("Valor ✏️ (R$/mês · capex = total)",
-                                                                     format="R$ %.2f"),
+                              "valor": st.column_config.NumberColumn("Valor por mês ✏️", format="R$ %.2f"),
                               "recorrente": st.column_config.CheckboxColumn("Todo mês ✏️")})
     if ed and st.button("💾 Salvar iniciativas e recalcular", type="primary", key="sim_ini_s"):
-        dados = novo.assign(tipo=novo["tipo"].map(tipos_rot),
+        dados = novo.assign(tipo=novo["tipo"].map(lambda x: tipos_rot.get(x, "despesa")),
                             conta=novo["conta"].map(lambda x: str(x).split(" · ")[0] if isinstance(x, str) else None),
                             mes_ini=novo["mes_ini"].map(lambda x: _MESES.index(x) + 1 if x in _MESES else 1))
         ui.acao(sim.salvar_iniciativas, s["id"], dados, usuario, sucesso="Iniciativas salvas e orçamento recalculado.")
     if not ini.empty:
-        g = ini.assign(anual=[abs(v) * ((13 - int(m)) if r else 1) if t != "capex" else abs(v)
-                              for v, m, r, t in zip(ini["valor"], ini["mes_ini"], ini["recorrente"], ini["tipo"])])
-        tema.kpis([{"titulo": sim.TIPOS_INIC[t], "valor": _m(g.loc[g["tipo"] == t, "anual"].sum()), "icone": "",
+        g = ini.assign(anual=[abs(v) * ((13 - int(m)) if r else 1)
+                              for v, m, r in zip(ini["valor"], ini["mes_ini"], ini["recorrente"])])
+        tema.kpis([{"titulo": rot, "valor": _m(g.loc[g["tipo"] == t, "anual"].sum()), "icone": "",
                     "status": "info", "detalhe": f"{int((g['tipo'] == t).sum())} item(ns) no ano"}
-                   for t in sim.TIPOS_INIC], key="kp_sim_ini")
+                   for t, rot in sim.TIPOS_INIC.items()], key="kp_sim_ini")
+
+    tema.secao("🏗️ Capex do ano", f"Os projetos aprovados na 🏗️ Gestão de Capex de {s['ano']} entram aqui como custo "
+                                  "mensal (depreciação, juros, leasing, custo operacional − economia).")
+    cr = cx.resumo(s["operacao_id"], s["ano"])
+    if cr.empty:
+        st.info(f"Nenhum projeto de capex para {s['ano']}. Cadastre em Gestão Corporativa › 🗓️ Planejamento › 🏗️ "
+                "Capex (ou Financeiro › 🏗️ Gestão de Capex).")
+        return
+    ap = cr[cr["status"].isin(cx.ENTRA_NO_ORCAMENTO)]
+    tema.kpis([
+        {"titulo": "Projetos aprovados", "valor": ui.numero(len(ap)), "icone": "✔️", "status": "info",
+         "detalhe": f"de {len(cr)} cadastrados"},
+        {"titulo": "Investimento aprovado", "valor": _mk(ap["valor"].sum()), "icone": "🏗️", "status": "info",
+         "detalhe": f"desembolso no ano {_mk(ap['desembolso_ano'].sum())}"},
+        {"titulo": "Impacto no orçamento", "valor": _mk(ap["impacto_ano"].sum()), "icone": "📉", "status": "info",
+         "detalhe": "entra nas contas dos projetos"},
+        {"titulo": "Aguardando aprovação", "valor": ui.numero((cr["status"] == "proposto").sum()), "icone": "📝",
+         "status": "atencao" if (cr["status"] == "proposto").any() else "bom",
+         "detalhe": _mk(cr.loc[cr["status"] == "proposto", "valor"].sum())},
+    ], key="kp_sim_capex")
+    sem_conta = ap[ap["conta"].isna()]
+    if len(sem_conta):
+        st.warning(f"{len(sem_conta)} projeto(s) aprovado(s) sem conta do OBZ — o custo deles não entra no orçamento: "
+                   + ", ".join(sem_conta["nome"]))
+    ui.tabela(pd.DataFrame({"Projeto": cr["nome"], "Departamento": cr["area"], "Status": cr["status"].map(cx.STATUS),
+                            "Investimento": cr["valor"].map(_m), "Impacto no ano": cr["impacto_ano"].map(_m)}))
+    if ed:
+        if st.button("🔄 Recalcular com o capex atual", key="sim_cx_rec"):
+            ui.acao(sim.calcular, s["id"], sucesso="Orçamento recalculado com o capex aprovado.")
 
 
 # --- 💬 Críticas ------------------------------------------------------------------------------------------------------

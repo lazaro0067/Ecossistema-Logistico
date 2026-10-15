@@ -766,6 +766,46 @@ CREATE TABLE IF NOT EXISTS obz_sim_valor (
     PRIMARY KEY (sim_id, conta, depto, mes)
 );
 
+CREATE TABLE IF NOT EXISTS obz_capex (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id     INTEGER NOT NULL,
+    ano             TEXT NOT NULL,
+    codigo          TEXT,
+    nome            TEXT NOT NULL,
+    area            TEXT,
+    conta           TEXT,
+    conta_juros     TEXT,
+    categoria       TEXT,
+    tipo            TEXT,
+    prioridade      TEXT,
+    justificativa   TEXT,
+    valor           REAL DEFAULT 0,
+    mes_ini         INTEGER DEFAULT 1,
+    forma           TEXT DEFAULT 'avista',
+    parcelas        INTEGER DEFAULT 1,
+    taxa_aa         REAL DEFAULT 0,
+    vida_util       REAL DEFAULT 5,
+    opex_mensal     REAL DEFAULT 0,
+    economia_mensal REAL DEFAULT 0,
+    responsavel     TEXT,
+    status          TEXT DEFAULT 'proposto',
+    valor_realizado REAL,
+    comentario      TEXT,
+    criado_por      TEXT,
+    criado_em       TEXT,
+    atualizado_por  TEXT,
+    atualizado_em   TEXT
+);
+
+CREATE TABLE IF NOT EXISTS obz_capex_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    capex_id    INTEGER NOT NULL,
+    status      TEXT,
+    usuario     TEXT,
+    em          TEXT,
+    comentario  TEXT
+);
+
 CREATE TABLE IF NOT EXISTS obz_sim_inic (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     sim_id      INTEGER NOT NULL,
@@ -1321,6 +1361,11 @@ MIGRACOES: list[tuple[str, str]] = [
     ("038_obz_sim", """
         CREATE INDEX IF NOT EXISTS ix_sim_linha ON obz_sim_linha(sim_id);
         CREATE INDEX IF NOT EXISTS ix_sim_log ON obz_sim_log(sim_id);
+    """),
+    ("039_sim_qlp", """
+        ALTER TABLE obz_sim_equipe ADD COLUMN qlp_plan REAL;
+        ALTER TABLE obz_sim_volume ADD COLUMN fonte TEXT;
+        CREATE INDEX IF NOT EXISTS ix_capex ON obz_capex(operacao_id, ano);
     """),
 ]
 

@@ -5,11 +5,12 @@ de departamento → revisão do financeiro (aprova/reprova cada crítica) → di
 
 Cálculo por conta × departamento × mês:
   base mensal = média do realizado do ano atual (ou real YTD + plan dos meses que faltam ÷ 12)
-  pessoal  = base × (1 + dissídio a partir do mês negociado) × fator de equipe (HL do mês ÷ produtividade)
+  pessoal  = base × (1 + dissídio a partir do mês negociado) × (QLP do mês ÷ QLP de hoje) — o QLP acompanha o HL
   fretes   = base × (HL do mês ÷ HL médio do ano atual) × (1 + inflação de fretes)
   insumos  = base × (HL do mês ÷ HL médio) × (1 + inflação de insumos)
   aluguel  = base × (1 + reajuste do aluguel)        ipca / receita = base × (1 + IPCA)        manual = base
-  + iniciativas (despesas novas / economias) · capex fica à parte (investimento).
+  + iniciativas (despesas novas / economias) + impacto mensal do capex aprovado (depreciação, juros, leasing,
+    opex − economia) — 🏗️ Gestão de Capex.
 """
 import json
 
@@ -40,9 +41,9 @@ DRIVERS = {
     "receita": "💰 Receita (IPCA)",
     "manual": "✋ Manual (igual ao histórico)",
 }
-TIPOS_INIC = {"despesa": "➕ Despesa nova", "economia": "➖ Economia / corte", "capex": "🏗️ Capex (investimento)"}
+TIPOS_INIC = {"despesa": "➕ Despesa nova", "economia": "➖ Economia / corte"}
 PREMISSAS_PADRAO = {"ipca": 4.5, "aluguel": 4.5, "fretes": 6.0, "insumos": 5.0, "dissidio_mes": 5,
-                    "dissidio_pct": 5.0, "elasticidade": 50.0, "crescimento_volume": 0.0, "base": "media"}
+                    "dissidio_pct": 5.0, "crescimento_volume": 0.0, "base": "media"}
 _CHAVES = [
     ("pessoal", ("salario", "ferias", " 13", "13o", "rescis", "inss", "fgts", "plano saude", "odonto", "alimenta",
                  "ticket", "vale ", "seguro de vida", "uniforme", "epi", "exame", "estagi", "aprendiz",
@@ -166,16 +167,14 @@ def criar(operacao_id: int, ano: str, nome: str, usuario: dict, premissas: dict 
                          [(sim_id, c, d, obz.area_de(c, d, mp), driver_padrao(nome_c.get(c, ""), nat.get(c)))
                           for c, d in pares.itertuples(index=False)])
         hl = obz.hl_mensal(operacao_id, base_ano)
-        med = sum(hl.values()) / len(hl) if hl else 0.0
         cresc = float((premissas or {}).get("crescimento_volume", 0) or 0)
         for m in range(1, 13):
-            hb = float(hl.get(f"{base_ano}-{m:02d}") or med)
-            conn.execute("INSERT INTO obz_sim_volume (sim_id, mes, hl_base, hl_plan) VALUES (?, ?, ?, ?)",
-                         (sim_id, f"{ano}-{m:02d}", hb or None, round(hb * (1 + cresc / 100), 2) if hb else None))
-        variaveis = ("entrega", "armaz", "puxada", "frota", "logist", "distrib")
+            hb = hl.get(f"{base_ano}-{m:02d}")  # mês sem venda carregada fica vazio — preenche manual
+            conn.execute("INSERT INTO obz_sim_volume (sim_id, mes, hl_base, hl_plan, fonte) VALUES (?, ?, ?, ?, ?)",
+                         (sim_id, f"{ano}-{m:02d}", round(float(hb), 2) if hb else None,
+                          round(float(hb) * (1 + cresc / 100), 2) if hb else None, "vendas" if hb else None))
         for a in sorted({obz.area_de(c, d, mp) for c, d in pares.itertuples(index=False)}):
-            conn.execute("INSERT INTO obz_sim_equipe (sim_id, area, acompanha) VALUES (?, ?, ?)",
-                         (sim_id, a, 1 if any(k in obz._n(a) for k in variaveis) else 0))
+            conn.execute("INSERT INTO obz_sim_equipe (sim_id, area, acompanha) VALUES (?, ?, 1)", (sim_id, a))
     _log(sim_id, "rascunho", "Simulador criado a partir do histórico de " + base_ano, usuario)
     calcular(sim_id)
     return sim_id
@@ -212,33 +211,90 @@ def salvar_premissas(sim_id: int, premissas: dict, usuario: dict) -> None:
 
 
 def volume(sim_id: int) -> pd.DataFrame:
-    return query_df("SELECT mes, hl_base, hl_plan FROM obz_sim_volume WHERE sim_id = ? ORDER BY mes", (int(sim_id),))
+    df = query_df("SELECT mes, hl_base, hl_plan, fonte FROM obz_sim_volume WHERE sim_id = ? ORDER BY mes",
+                  (int(sim_id),))
+    for c in ("hl_base", "hl_plan"):
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df
 
 
 def salvar_volume(sim_id: int, df: pd.DataFrame, usuario: dict) -> None:
+    """Grava HL base (meses sem venda carregada são preenchidos à mão) e HL planejado."""
     _editavel(buscar(sim_id), usuario)
+    atual = volume(sim_id).set_index("mes")
     with get_conn() as conn:
-        for m, h in zip(df["mes"], df["hl_plan"]):
-            conn.execute("UPDATE obz_sim_volume SET hl_plan = ? WHERE sim_id = ? AND mes = ?",
-                         (float(h) if pd.notna(h) else None, int(sim_id), m))
+        for m, hb, hp in zip(df["mes"], df["hl_base"], df["hl_plan"]):
+            hb = float(hb) if pd.notna(hb) else None
+            ant = atual.at[m, "hl_base"] if m in atual.index else None
+            fonte = atual.at[m, "fonte"] if m in atual.index else None
+            if hb is not None and (pd.isna(ant) or abs(hb - float(ant)) >= 0.005):
+                fonte = "manual"
+            conn.execute("UPDATE obz_sim_volume SET hl_base = ?, hl_plan = ?, fonte = ? WHERE sim_id = ? AND mes = ?",
+                         (hb, float(hp) if pd.notna(hp) else None, fonte if hb is not None else None, int(sim_id), m))
     calcular(sim_id)
 
 
 def equipe(sim_id: int) -> pd.DataFrame:
-    return query_df("SELECT area, equipe_atual, produtividade, acompanha FROM obz_sim_equipe WHERE sim_id = ? "
-                    "ORDER BY area", (int(sim_id),))
+    df = query_df("SELECT area, equipe_atual, qlp_plan FROM obz_sim_equipe WHERE sim_id = ? ORDER BY area",
+                  (int(sim_id),))
+    for c in ("equipe_atual", "qlp_plan"):
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df
 
 
 def salvar_equipe(sim_id: int, df: pd.DataFrame, usuario: dict) -> None:
+    """QLP de hoje (obrigatório para enxergar o custo por pessoa) e QLP planejado (opcional — sem ele o QLP
+    acompanha o volume de HL)."""
     _editavel(buscar(sim_id), usuario)
     with get_conn() as conn:
         for r in df.itertuples(index=False):
-            conn.execute("""UPDATE obz_sim_equipe SET equipe_atual = ?, produtividade = ?, acompanha = ?
-                            WHERE sim_id = ? AND area = ?""",
+            conn.execute("UPDATE obz_sim_equipe SET equipe_atual = ?, qlp_plan = ? WHERE sim_id = ? AND area = ?",
                          (float(r.equipe_atual) if pd.notna(r.equipe_atual) else None,
-                          float(r.produtividade) if pd.notna(r.produtividade) else None, 1 if r.acompanha else 0,
-                          int(sim_id), r.area))
+                          float(r.qlp_plan) if pd.notna(r.qlp_plan) else None, int(sim_id), r.area))
     calcular(sim_id)
+
+
+def _razao_volume(sim_id: int) -> tuple[dict, float]:
+    """{mês 1–12: HL planejado ÷ HL médio do ano atual} e o HL médio."""
+    vol = volume(sim_id)
+    hb = vol["hl_base"].dropna()
+    hl_med = float(hb.mean()) if len(hb) else 0.0
+    plan = {int(m[5:]): (float(h) if pd.notna(h) else (float(b) if pd.notna(b) else hl_med))
+            for m, b, h in zip(vol["mes"], vol["hl_base"], vol["hl_plan"])}
+    return {m: (plan.get(m, hl_med) / hl_med) if hl_med else 1.0 for m in range(1, 13)}, hl_med
+
+
+def qlp_mensal(sim_id: int) -> pd.DataFrame:
+    """QLP projetado por departamento e mês: o planejado (se informado) ou o de hoje × crescimento do HL."""
+    razao, _ = _razao_volume(sim_id)
+    eq = equipe(sim_id)
+    linhas = []
+    for r in eq.itertuples(index=False):
+        if pd.isna(r.equipe_atual) or not r.equipe_atual:
+            continue
+        linhas.append({"area": r.area, "hoje": float(r.equipe_atual),
+                       **{m: float(r.qlp_plan) if pd.notna(r.qlp_plan) else float(r.equipe_atual) * razao[m]
+                          for m in range(1, 13)}})
+    return pd.DataFrame(linhas)
+
+
+def gente(sim_id: int) -> pd.DataFrame:
+    """Por departamento: QLP de hoje, custo de pessoal (histórico), custo por pessoa, QLP projetado e custo projetado."""
+    li = linhas(sim_id)
+    eq = equipe(sim_id)
+    if li.empty:
+        return eq
+    pes = li[li["driver"] == "pessoal"].assign(b=lambda x: x["base_ano"] * x["sinal"],
+                                                c=lambda x: x["final_ano"] * x["sinal"])
+    g = pes.groupby("area")[["b", "c"]].sum()
+    qm = qlp_mensal(sim_id)
+    qm = qm.set_index("area") if not qm.empty else pd.DataFrame()
+    eq["custo_base"] = eq["area"].map(g["b"]).fillna(0.0)
+    eq["custo_plan"] = eq["area"].map(g["c"]).fillna(0.0)
+    eq["custo_pessoa_mes"] = [cb / 12 / q if pd.notna(q) and q else None for cb, q in zip(eq["custo_base"],
+                                                                                          eq["equipe_atual"])]
+    eq["qlp_medio"] = [float(qm.loc[a, list(range(1, 13))].mean()) if a in qm.index else None for a in eq["area"]]
+    return eq
 
 
 def iniciativas(sim_id: int) -> pd.DataFrame:
@@ -297,21 +353,16 @@ def calcular(sim_id: int) -> None:
     s = buscar(sim_id)
     pm = s["premissas"]
     base, _ = _base_mensal(s)
-    vol = volume(sim_id)
-    hb = vol["hl_base"].dropna()
-    hl_med = float(hb.mean()) if len(hb) else 0.0
-    hl_plan = {int(m[5:]): (float(h) if pd.notna(h) else hl_med) for m, h in zip(vol["mes"], vol["hl_plan"])}
-    razao = {m: (hl_plan.get(m, hl_med) / hl_med) if hl_med else 1.0 for m in range(1, 13)}
+    razao, _ = _razao_volume(sim_id)
     eq = equipe(sim_id).set_index("area")
-    elast = float(pm["elasticidade"] or 0) / 100
 
     def fator_equipe(area: str, m: int) -> float:
-        if area not in eq.index or not int(eq.at[area, "acompanha"] or 0):
-            return 1.0
-        atual, prod = eq.at[area, "equipe_atual"], eq.at[area, "produtividade"]
-        if pd.notna(atual) and atual and pd.notna(prod) and prod:
-            return max(hl_plan.get(m, hl_med) / float(prod), 0.0) / float(atual)
-        return 1.0 + (razao[m] - 1.0) * elast
+        """Todos os departamentos: QLP planejado ÷ QLP de hoje; sem QLP planejado, acompanha o HL."""
+        if area in eq.index:
+            hoje, plan = eq.at[area, "equipe_atual"], eq.at[area, "qlp_plan"]
+            if pd.notna(hoje) and hoje and pd.notna(plan):
+                return float(plan) / float(hoje)
+        return razao[m]
 
     pct = {k: float(pm.get(k) or 0) / 100 for k in ("ipca", "aluguel", "fretes", "insumos", "dissidio_pct")}
     mes_dis = int(pm.get("dissidio_mes") or 1)
@@ -346,13 +397,19 @@ def calcular(sim_id: int) -> None:
             dep_area[a] = c
     extra: dict = {}
     for r in ini.itertuples(index=False):
-        if r.tipo == "capex" or not r.conta:
+        if r.tipo not in TIPOS_INIC or not r.conta:
             continue
         dep = dep_area.get(r.area, "0")
         sinal = -1.0 if r.tipo == "economia" else 1.0
         for m in range(int(r.mes_ini or 1), 13 if r.recorrente else int(r.mes_ini or 1) + 1):
             k = (r.conta, dep, f"{ano}-{m:02d}")
             extra[k] = extra.get(k, 0.0) + sinal * abs(float(r.valor or 0))
+    # capex aprovado: depreciação / juros / leasing / opex − economia na conta do projeto
+    from services import capex_service
+
+    for area, conta, mes, v, _ in capex_service.impactos_orcamento(s["operacao_id"], ano):
+        k = (obz._cod(conta), dep_area.get(area, "0"), mes)
+        extra[k] = extra.get(k, 0.0) + v
     novos_pares = {(c, d) for c, d, _ in extra} - set(zip(linhas["conta"], linhas["depto"]))
     with get_conn() as conn:
         for c, d in novos_pares:
@@ -451,8 +508,29 @@ def hl_totais(sim_id: int) -> tuple[float, float]:
 
 
 def capex(sim_id: int) -> float:
-    i = iniciativas(sim_id)
-    return float(i.loc[i["tipo"] == "capex", "valor"].abs().sum()) if not i.empty else 0.0
+    """Investimento aprovado na 🏗️ Gestão de Capex para o ano do simulador."""
+    from services import capex_service
+
+    s = buscar(sim_id)
+    return capex_service.total_aprovado(s["operacao_id"], s["ano"])
+
+
+def capex_impacto(sim_id: int) -> float:
+    from services import capex_service
+
+    s = buscar(sim_id)
+    return float(sum(v for *_, v, _ in capex_service.impactos_orcamento(s["operacao_id"], s["ano"])))
+
+
+def mensal_area(sim_id: int) -> pd.DataFrame:
+    """Valor final (líquido: receita reduz) por departamento × mês, com o histórico mensal médio."""
+    v = valores_mensais(sim_id, final=True)
+    li = linhas(sim_id)
+    if v.empty or li.empty:
+        return pd.DataFrame()
+    v = v.merge(li[["conta", "depto", "area", "nome_conta", "sinal"]], on=["conta", "depto"], how="left")
+    v["liq"] = v["valor"] * v["sinal"].fillna(1.0)
+    return v
 
 
 # --- Críticas -----------------------------------------------------------------------------------------------------
@@ -674,8 +752,9 @@ def pauta_sugerida(sim_id: int, etapa: str) -> str:
         linhas_p += ["1. Premissas macro: IPCA {ipca}%, aluguel {aluguel}%, fretes {fretes}%, insumos {insumos}%"
                      .format(**pm),
                      f"2. Dissídio: {pm['dissidio_pct']}% a partir do mês {pm['dissidio_mes']}",
-                     "3. Volume de HL mês a mês e crescimento de equipe pelo HL",
-                     "4. Iniciativas, novos gastos e capex previstos", "5. Cronograma das etapas e responsáveis"]
+                     "3. Volume de HL mês a mês e QLP por departamento (acompanha o HL)",
+                     "4. Iniciativas, novos gastos e capex aprovado (🏗️ Gestão de Capex)",
+                     "5. Cronograma das etapas e responsáveis"]
     elif etapa in ("critica_conta", "critica_depto", "revisao_fin"):
         top = li.assign(dif=(li["final_ano"] - li["base_ano"]) * li["sinal"]).nlargest(5, "dif")
         linhas_p.append("Maiores aumentos vs histórico:")
@@ -687,7 +766,8 @@ def pauta_sugerida(sim_id: int, etapa: str) -> str:
         linhas_p.append("Por departamento:")
         linhas_p += [f"  • {r.area}: {m(r.base)} → {m(r.final)} ({pct(r.var_pct)})" if pd.notna(r.var_pct)
                      else f"  • {r.area}: {m(r.final)}" for r in ra.itertuples()]
-        linhas_p += [f"Capex previsto: {m(capex(sim_id))}", "Riscos, premissas e decisões"]
+        linhas_p += [f"Capex aprovado: {m(capex(sim_id))} · impacto no resultado: {m(capex_impacto(sim_id))}",
+                     "Riscos, premissas e decisões"]
     else:
         linhas_p += ["1. Plan publicado por conta e departamento (mês a mês)",
                      "2. Metas de R$/HL por departamento", "3. Rotina mensal: tendência, dispersão e justificativas",
