@@ -352,14 +352,17 @@ def _carreto_unico(tab: pd.DataFrame) -> pd.DataFrame:
     return t.drop_duplicates(["mes", "produto", "ini"], keep="last")
 
 
-def _tarifa_media_mes(produtos: list[str], tab_mes: pd.DataFrame, campo: str, mes: str) -> pd.Series:
-    """Tarifa do período (mês): média dos dias do mês, cada dia com a vigência dele."""
-    if not produtos or tab_mes.empty:
-        return pd.Series(dtype=float)
-    dias = pd.date_range(f"{mes}-01", pd.Period(mes).end_time.normalize()).strftime("%Y-%m-%d")
-    grade = pd.DataFrame([(d, p_) for p_ in produtos for d in dias], columns=["data", "produto"])
-    r = _tarifa(grade, tab_mes.assign(mes=mes), campo)
-    return r.groupby("produto")["tarifa"].mean()
+def _tarifas_meio(tab: pd.DataFrame, campo: str, mes: str) -> tuple[pd.Series, bool]:
+    """Uma tarifa por produto no mês: a vigência que vale no MEIO do mês (dia 15) — maior início ≤ dia 15; produto
+    que só começa depois do dia 15 usa a primeira vigência dele. Devolve (produto → tarifa, tabela é do mês)."""
+    tm, do_mes = _tab_mes(tab, mes)
+    if tm.empty:
+        return pd.Series(dtype=float), False
+    t = tm.dropna(subset=[campo]).sort_values("ini")
+    meio = f"{mes}-15"
+    antes = t[t["ini"].str[:10] <= meio].groupby("produto")[campo].last()
+    depois = t[~t["produto"].isin(antes.index)].groupby("produto")[campo].first()
+    return pd.concat([antes, depois]).astype(float), do_mes
 
 
 def _resumo_mes(operacao_id: int, origem: str, ops: list[str], mes: str) -> pd.DataFrame:
@@ -385,70 +388,35 @@ def _meses(de: str, ate: str) -> list[str]:
     return [str(p) for p in pd.period_range(de[:7], ate[:7], freq="M")]
 
 
-def _tarifa(q: pd.DataFrame, tab: pd.DataFrame, campo: str) -> pd.DataFrame:
-    """Põe em cada linha (data × produto) a tarifa do dia: usa a tabela do MÊS da data (a subida para aquele mês) e,
-    dentro dela, a vigência de maior início ≤ data. Mês sem tabela usa a do último mês anterior e marca fora_vig."""
-    if q.empty or tab.empty:
-        return q.assign(tarifa=float("nan"), fora_vig=False)
-    t = tab[["mes", "produto", "ini", campo]].dropna(subset=[campo]).copy()
-    if t.empty:
-        return q.assign(tarifa=float("nan"), fora_vig=False)
-    t["mes"] = t["mes"].fillna(t["ini"].str[:7])
-    t["ini_d"] = pd.to_datetime(t["ini"])
-    t = t.drop_duplicates(["mes", "produto", "ini_d"], keep="last")
-    meses_tab = sorted(t["mes"].unique())
-    x = q.copy()
-    x["_ord"] = range(len(x))
-    x["_mes"] = x["data"].str[:7]
-    partes = []
-    for m, xm in x.groupby("_mes"):
-        ant = [v for v in meses_tab if v <= m]
-        usar = ant[-1] if ant else meses_tab[0]
-        tm = t[t["mes"] == usar].sort_values("ini_d")
-        xm = xm.assign(data_d=pd.to_datetime(xm["data"])).sort_values("data_d")
-        r = pd.merge_asof(xm, tm[["produto", "ini_d", campo]], left_on="data_d", right_on="ini_d", by="produto",
-                          direction="backward")
-        falta = r[campo].isna() & r["produto"].isin(set(tm["produto"]))
-        if falta.any():  # dia antes da primeira vigência do mês: usa a primeira
-            prim = tm.groupby("produto")[campo].first()
-            r.loc[falta, campo] = r.loc[falta, "produto"].map(prim)
-        r["fora_vig"] = r[campo].notna() & (usar != m)
-        partes.append(r)
-    m_ = pd.concat(partes, ignore_index=True).rename(columns={campo: "tarifa"}).sort_values("_ord")
-    return m_.drop(columns=["_ord", "_mes", "data_d", "ini_d"]).reset_index(drop=True)
-
-
-_COLS_CARRETO = ["operacao_id", "data", "produto", "descricao", "qtde", "hl", "tarifa", "valor", "fora_vig", "base"]
-_COLS_FRETE = ["operacao_id", "data", "fornecedor", "unidade_cod", "unidade_nome", "produto", "descricao", "qtde", "hl",
+_COLS_CARRETO = ["operacao_id", "mes", "produto", "descricao", "qtde", "hl", "tarifa", "valor", "fora_vig", "base"]
+_COLS_FRETE = ["operacao_id", "mes", "fornecedor", "unidade_cod", "unidade_nome", "produto", "descricao", "qtde", "hl",
                "tarifa", "valor", "fora_vig", "base"]
 
 
 def carreto(operacao_id: int, de: str, ate: str) -> pd.DataFrame:
-    """Caixas entregues × carreto (coluna P). O carreto é o mesmo em qualquer fábrica: vale a tabela do mês (todas
-    as unidades juntas), com a vigência de cada dia. Mês sem o detalhe por dia usa o resumo mensal do 03.02.37 que
-    já está no sistema × carreto do período (média dos dias do mês)."""
+    """Caixas entregues no mês × carreto (coluna P). O carreto é o mesmo em qualquer fábrica (todas as tabelas do
+    mês viram uma só) e vale a vigência do meio do mês. Quantidade: 03.02.37 vendas já no sistema (detalhe por dia
+    quando existe; senão o resumo do mês)."""
     partes = []
     for op in operacoes_repo.ids_efetivos(operacao_id):
         ops = _ops(op, "carreto")
         tab = _carreto_unico(tabela(op))
         com_dia = meses_com_dia(op, "venda", de, ate)
-        q = _qtd_dia(op, "venda", ops, de, ate) if com_dia else pd.DataFrame()
-        if not q.empty:
-            q = q.groupby(["operacao_id", "data", "produto"], as_index=False).agg(
-                descricao=("descricao", "first"), qtde=("qtde", "sum"), hl=("hl", "sum"))
-            r = _tarifa(q, tab, "carreto")
-            partes.append(r.assign(valor=(r["qtde"] * r["tarifa"]).fillna(0.0), base="dia"))
+        qd = _qtd_dia(op, "venda", ops, de, ate) if com_dia else pd.DataFrame()
         for mes in _meses(de, ate):
             if mes in com_dia:
+                q = qd[qd["data"].str[:7] == mes]
+                q = q.groupby("produto", as_index=False).agg(descricao=("descricao", "first"), qtde=("qtde", "sum"),
+                                                             hl=("hl", "sum"))
+                base = "dia"
+            else:
+                q, base = _resumo_mes(op, "venda", ops, mes), "mês"
+            if q.empty:
                 continue
-            rm = _resumo_mes(op, "venda", ops, mes)
-            if rm.empty:
-                continue
-            tm, do_mes = _tab_mes(tab, mes)
-            tar = _tarifa_media_mes(rm["produto"].tolist(), tm, "carreto", mes)
-            rm["tarifa"] = rm["produto"].map(tar)
-            partes.append(rm.assign(operacao_id=op, data=f"{mes}-01", valor=(rm["qtde"] * rm["tarifa"]).fillna(0.0),
-                                    fora_vig=rm["tarifa"].notna() & (not do_mes), base="mês"))
+            tar, do_mes = _tarifas_meio(tab, "carreto", mes)
+            q["tarifa"] = q["produto"].map(tar)
+            partes.append(q.assign(operacao_id=op, mes=mes, valor=(q["qtde"] * q["tarifa"]).fillna(0.0),
+                                   fora_vig=q["tarifa"].notna() & (not do_mes), base=base))
     if not partes:
         return pd.DataFrame(columns=_COLS_CARRETO)
     return pd.concat(partes, ignore_index=True)[_COLS_CARRETO]
@@ -463,65 +431,64 @@ def _frete_mes_resumo(op: int, mes: str, ops: list[str], tab: pd.DataFrame, mp: 
     if rm.empty:
         return pd.DataFrame(columns=_COLS_FRETE)
     st_ = fs.STATUS_PADRAO["compra"]
-    cli = query_df(f"""SELECT cliente, MAX(nome) AS nome, SUM(hl) AS hl FROM notas_cliente_mes WHERE operacao_id = ?
+    cli = query_df(f"""SELECT cliente, SUM(hl) AS hl FROM notas_cliente_mes WHERE operacao_id = ?
                        AND origem = 'compra' AND mes = ? AND operacao_cod IN ({', '.join('?' * len(ops))})
                        AND status IN ({', '.join('?' * len(st_))}) GROUP BY cliente""", (op, mes, *ops, *st_))
     cli["cliente"] = cli["cliente"].map(_cod)
     cli["hl"] = pd.to_numeric(cli["hl"], errors="coerce").fillna(0.0)
     hl_forn = cli.groupby("cliente")["hl"].sum()
     forn_unid = {f: u for (o, u), f in mp.items() if o == op}
-    tm, do_mes = _tab_mes(tab, mes)
     nomes_u = dict(zip(tab["unidade_cod"], tab["unidade_nome"])) if not tab.empty else {}
-    # tarifa de frete do período por unidade × produto
-    tarifas = {}
-    for u, tu in (tm.groupby("unidade_cod") if not tm.empty else []):
-        tarifas[u] = _tarifa_media_mes(rm["produto"].tolist(), tu, "frete", mes)
+    tarifas = {u: _tarifas_meio(tab[tab["unidade_cod"] == u], "frete", mes) for u in set(forn_unid.values())
+               if not tab.empty}
     linhas = []
     for r in rm.itertuples(index=False):
-        cand = [(f, u) for f, u in forn_unid.items() if u in tarifas and pd.notna(tarifas[u].get(r.produto))
+        cand = [(f, u) for f, u in forn_unid.items() if u in tarifas and pd.notna(tarifas[u][0].get(r.produto))
                 and hl_forn.get(f, 0) > 0]
         tot = sum(hl_forn.get(f, 0) for f, _ in cand)
         if not cand or not tot:
-            linhas.append((op, f"{mes}-01", "", "", "", r.produto, r.descricao, r.qtde, r.hl, float("nan"), 0.0,
-                           False, "mês"))
+            linhas.append((op, mes, "", "", "", r.produto, r.descricao, r.qtde, r.hl, float("nan"), 0.0, False, "mês"))
             continue
         for f, u in cand:
             k = hl_forn[f] / tot
-            t = float(tarifas[u][r.produto])
-            linhas.append((op, f"{mes}-01", f, u, nomes_u.get(u, ""), r.produto, r.descricao, r.qtde * k, r.hl * k, t,
-                           r.qtde * k * t, not do_mes, "mês"))
+            t = float(tarifas[u][0][r.produto])
+            linhas.append((op, mes, f, u, nomes_u.get(u, ""), r.produto, r.descricao, r.qtde * k, r.hl * k, t,
+                           r.qtde * k * t, not tarifas[u][1], "mês"))
     return pd.DataFrame(linhas, columns=_COLS_FRETE)
 
 
 def frete(operacao_id: int, de: str, ate: str) -> pd.DataFrame:
-    """Caixas puxadas de cada fábrica × frete puxada (coluna N) da tabela daquela fábrica (o frete muda por fábrica).
-    Mês sem o detalhe por dia usa o resumo mensal do 03.02.37 compra que já está no sistema."""
+    """Caixas puxadas de cada fábrica no mês × frete puxada (coluna N) da tabela daquela fábrica, vigência do meio
+    do mês. Fábrica = coluna M do 03.02.37 compra (detalhe por dia); sem o detalhe, estima pelo resumo do mês."""
     partes = []
     for op in operacoes_repo.ids_efetivos(operacao_id):
         ops = _ops(op, "frete")
         tab = tabela(op)
         mp = mapas(op)
+        forn_unid = {f: u for (o, u), f in mp.items() if o == op}
+        nomes_u = dict(zip(tab["unidade_cod"], tab["unidade_nome"])) if not tab.empty else {}
         com_dia = meses_com_dia(op, "compra", de, ate)
-        q = _qtd_dia(op, "compra", ops, de, ate) if com_dia else pd.DataFrame()
-        if not q.empty:
-            q = q.rename(columns={"cliente": "fornecedor"})
-            forn_unid = {f: u for (o, u), f in mp.items() if o == op}
-            nomes_u = dict(zip(tab["unidade_cod"], tab["unidade_nome"])) if not tab.empty else {}
-            q["unidade_cod"] = q["fornecedor"].map(forn_unid).fillna("")
-            q["unidade_nome"] = q["unidade_cod"].map(nomes_u).fillna("")
-            saida = []
-            for u, qu in q.groupby("unidade_cod"):
-                if u and not tab.empty:
-                    saida.append(_tarifa(qu.reset_index(drop=True), tab[tab["unidade_cod"] == u], "frete"))
-                else:
-                    saida.append(qu.assign(tarifa=float("nan"), fora_vig=False))
-            q = pd.concat(saida, ignore_index=True)
-            partes.append(q.assign(valor=(q["qtde"] * q["tarifa"]).fillna(0.0), base="dia"))
+        qd = _qtd_dia(op, "compra", ops, de, ate) if com_dia else pd.DataFrame()
         for mes in _meses(de, ate):
             if mes not in com_dia:
                 fm = _frete_mes_resumo(op, mes, ops, tab, mp)
                 if not fm.empty:
                     partes.append(fm)
+                continue
+            q = qd[qd["data"].str[:7] == mes].rename(columns={"cliente": "fornecedor"})
+            q = q.groupby(["fornecedor", "produto"], as_index=False).agg(
+                descricao=("descricao", "first"), qtde=("qtde", "sum"), hl=("hl", "sum"))
+            q["unidade_cod"] = q["fornecedor"].map(forn_unid).fillna("")
+            q["unidade_nome"] = q["unidade_cod"].map(nomes_u).fillna("")
+            q["tarifa"], q["fora_vig"] = float("nan"), False
+            for u in q["unidade_cod"].unique():
+                if not u or tab.empty:
+                    continue
+                tar, do_mes = _tarifas_meio(tab[tab["unidade_cod"] == u], "frete", mes)
+                m = q["unidade_cod"] == u
+                q.loc[m, "tarifa"] = q.loc[m, "produto"].map(tar)
+                q.loc[m, "fora_vig"] = q.loc[m, "tarifa"].notna() & (not do_mes)
+            partes.append(q.assign(operacao_id=op, mes=mes, valor=(q["qtde"] * q["tarifa"]).fillna(0.0), base="dia"))
     if not partes:
         return pd.DataFrame(columns=_COLS_FRETE)
     return pd.concat(partes, ignore_index=True)[_COLS_FRETE]
@@ -555,8 +522,8 @@ def comparar_obz(operacao_id: int, meses: list[str]) -> dict:
     nomes = obz.nomes_deptos()
     linhas = []
     for m in sorted(meses):
-        cm = c[c["data"].str[:7] == m] if not c.empty else c
-        fm = f[f["data"].str[:7] == m] if not f.empty else f
+        cm = c[c["mes"] == m] if not c.empty else c
+        fm = f[f["mes"] == m] if not f.empty else f
         gm = g[g["mes"] == m] if not g.empty else g
         for tipo, base, deps in (("carreto", cm, cfg["deptos_carreto"]), ("frete", fm, cfg["deptos_frete"])):
             gd = gm[gm["depto"].isin(deps)] if not gm.empty else gm

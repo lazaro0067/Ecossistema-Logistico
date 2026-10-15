@@ -77,85 +77,87 @@ def render(usuario: dict, operacao_id: int) -> None:
 
 
 # --- 🚚 Carreto --------------------------------------------------------------------------------------------------------
+def _por_produto(df: pd.DataFrame) -> pd.DataFrame:
+    """Agrupa por produto: quantidade, remuneração unitária (R$/cx da vigência do meio do mês) e total."""
+    d = df.assign(qtde_com=df["qtde"].where(df["tarifa"].notna(), 0.0))
+    g = (d.groupby("produto", as_index=False)
+          .agg(descricao=("descricao", "first"), qtde=("qtde", "sum"), hl=("hl", "sum"), valor=("valor", "sum"),
+               qtde_com=("qtde_com", "sum"), tem=("tarifa", lambda s: s.notna().any())))
+    g["tarifa"] = [_div(v, q) if t else None for v, q, t in zip(g["valor"], g["qtde_com"], g["tem"])]
+    return g.sort_values(["valor", "qtde"], ascending=False).reset_index(drop=True)
+
+
+def _tab_prod(df: pd.DataFrame, rot_qtd: str = "Quantidade") -> pd.DataFrame:
+    return pd.DataFrame({"Cód": df["produto"].astype(str), "Produto": df["descricao"].fillna(""),
+                         rot_qtd: df["qtde"].map(_n), "Remuneração un (R$/cx)": df["tarifa"].map(_t),
+                         "Remuneração total": df["valor"].map(_m)}).reset_index(drop=True)
+
+
+def _aviso_meio(df: pd.DataFrame) -> None:
+    st.caption("📌 Tarifa de cada produto = vigência do **meio do mês** (dia 15) da tabela da Ambev daquele mês."
+               + (" Alguns meses usaram a tabela de um mês anterior (o mês não tem tabela subida)."
+                  if df["fora_vig"].any() else ""))
+
+
 def _carreto(op: int, ini: str, fim: str) -> None:
     c = rs.carreto(op, ini, fim)
     if c.empty:
         st.info("Nenhuma entrega no período (03.02.37 vendas, operações de venda + bonificação).")
         return
-    com = c[c["tarifa"].notna()]
-    sem = c[c["tarifa"].isna()]
-    tot, cx, hl = c["valor"].sum(), com["qtde"].sum(), com["hl"].sum()
-    c["qtde_com"] = c["qtde"].where(c["tarifa"].notna(), 0.0)
-    por_prod = (c.groupby("produto", as_index=False)
-                 .agg(descricao=("descricao", "first"), qtde=("qtde", "sum"), hl=("hl", "sum"),
-                      valor=("valor", "sum"), qtde_com=("qtde_com", "sum"),
-                      tem=("tarifa", lambda s: s.notna().any())))
-    por_prod["tarifa"] = [_div(v, q) if t else None for v, q, t in
-                          zip(por_prod["valor"], por_prod["qtde_com"], por_prod["tem"])]
-    por_prod = por_prod.sort_values("valor", ascending=False)
-    sem_p = por_prod[~por_prod["tem"]]
+    pp = _por_produto(c)
+    com, sem_p = pp[pp["tem"]], pp[~pp["tem"]]
+    tot, cx, hl = com["valor"].sum(), com["qtde"].sum(), com["hl"].sum()
     tema.kpis([
         {"titulo": "Remuneração carreto", "valor": _m(tot), "icone": "💰", "status": "bom",
-         "detalhe": "carreto da tabela do mês — igual para todas as fábricas"},
+         "detalhe": "o carreto é o mesmo em qualquer fábrica", "dados": _tab_prod(com, "Quantidade entregue")},
         {"titulo": "Caixas entregues (com tarifa)", "valor": _n(cx), "icone": "📦", "status": "info",
-         "detalhe": f"{_n(hl, 1)} HL"},
+         "detalhe": f"{_n(hl, 1)} HL · {len(com)} produto(s)"},
         {"titulo": "Carreto médio", "valor": _t(_div(tot, cx)) + "/cx", "icone": "🧮", "status": "info",
          "detalhe": f"{_m(_div(tot, hl))} por HL"},
-        {"titulo": "Produtos sem tarifa", "valor": _n(len(sem_p)), "icone": "⚠️",
-         "status": "atencao" if len(sem_p) else "bom", "detalhe": f"{_n(sem['qtde'].sum())} cx sem remuneração",
-         "dados": _tab_prod(sem_p) if len(sem_p) else None},
+        {"titulo": "Produtos sem carreto", "valor": _n(len(sem_p)), "icone": "⚠️",
+         "status": "atencao" if len(sem_p) else "bom", "detalhe": f"{_n(sem_p['qtde'].sum())} cx sem remuneração",
+         "dados": _tab_prod(sem_p, "Quantidade entregue") if len(sem_p) else None},
     ], key="kp_ra_car")
-    por_mes = (c["base"] == "mês").any() or c["data"].str[:7].nunique() > 1
-    dia = (c.assign(data=c["data"].str[:7]) if por_mes else c).groupby("data", as_index=False)[["valor", "qtde"]].sum()
-    eixo = dia["data"].map(ui.nome_mes) if por_mes else pd.to_datetime(dia["data"]).dt.strftime("%d/%m")
-    fig = go.Figure(go.Bar(x=eixo, y=dia["valor"], marker_color=VERDE,
-                           text=[ui.compacto(v) for v in dia["valor"]], textposition="outside",
-                           customdata=dia["qtde"], hovertemplate="%{x}<br>R$ %{y:,.2f}<br>%{customdata:,.0f} cx"
-                                                                 "<extra></extra>"))
-    graficos.mostrar(graficos._layout(fig, f"Carreto por {'mês' if por_mes else 'dia'} (R$)", 320, legenda=False),
-                     key="ra_g_car_dia")
-    if c["fora_vig"].any():
-        st.caption("ℹ️ Alguns dias usaram a tabela de um mês anterior (o mês não tem tabela da Ambev subida).")
-    tema.secao("📦 Carreto por produto", "Caixas entregues × carreto da Ambev (R$/cx) do período — o mesmo em "
-               "qualquer fábrica.")
-    ui.tabela(_tab_prod(por_prod[por_prod["tem"]]), baixar="remun_carreto_produto")
+    _aviso_meio(c)
+    if c["mes"].nunique() > 1:
+        mm = c.groupby("mes", as_index=False)[["valor", "qtde"]].sum()
+        fig = go.Figure(go.Bar(x=mm["mes"].map(ui.nome_mes), y=mm["valor"], marker_color=VERDE,
+                               text=[ui.compacto(v) for v in mm["valor"]], textposition="outside"))
+        graficos.mostrar(graficos._layout(fig, "Carreto por mês (R$)", 300, legenda=False), key="ra_g_car_mes")
+    if not com.empty:
+        g = com.head(15).iloc[::-1]
+        rot = [f"{p_} · {str(d)[:26]}" for p_, d in zip(g["produto"], g["descricao"])]
+        fig = go.Figure(go.Bar(y=rot, x=g["valor"], orientation="h", marker_color=VERDE,
+                               text=[f"{ui.compacto(v)} · {_t(t)}/cx" for v, t in zip(g["valor"], g["tarifa"])],
+                               textposition="outside"))
+        graficos.mostrar(graficos._layout(fig, "Maiores remunerações de carreto (R$)", max(300, 30 * len(g) + 90),
+                                          legenda=False), key="ra_g_car_top")
+    tema.secao("📦 Carreto por produto", "Quantidade entregue (03.02.37 vendas) × carreto da Ambev (coluna P).")
+    ui.tabela(_tab_prod(com, "Quantidade entregue"), baixar="remun_carreto_produto")
     if len(sem_p):
-        with st.expander(f"⚠️ {len(sem_p)} produto(s) entregues sem tarifa de carreto"):
-            st.caption("Produto que não está em nenhuma tabela da Ambev subida (ex.: não Ambev, ou fábrica que falta).")
-            ui.tabela(_tab_prod(sem_p), baixar="remun_carreto_sem_tarifa")
+        with st.expander(f"⚠️ {len(sem_p)} produto(s) entregues sem carreto"):
+            st.caption("Produto que não está em nenhuma tabela da Ambev subida para o mês — suba a tabela da fábrica "
+                       "que tem esse produto (o carreto dele vale para todas).")
+            ui.tabela(_tab_prod(sem_p, "Quantidade entregue"), baixar="remun_carreto_sem_tarifa")
 
 
-def _juntar(s) -> str:
-    return ", ".join(sorted({x for v in s for x in str(v).split(", ") if x and x != "nan"}))
-
-
-def _tab_prod(df: pd.DataFrame) -> pd.DataFrame:
-    out = pd.DataFrame({"Código": df["produto"], "Produto": df["descricao"], "Caixas": df["qtde"].map(_n),
-                        "HL": df["hl"].map(lambda v: _n(v, 1)), "R$/cx (médio)": df["tarifa"].map(_t),
-                        "Remuneração": df["valor"].map(_m)})
-    if "unidades" in df:
-        out["Tabela (unidade Ambev)"] = df["unidades"]
-    return out.reset_index(drop=True)
-
-
-# --- 🏭 Frete ----------------------------------------------------------------------------------------------------------
+# --- 🏭 Frete (dashboard por fábrica) ---------------------------------------------------------------------------------
 def _frete(op: int, ini: str, fim: str) -> None:
     f = rs.frete(op, ini, fim)
     if f.empty:
         st.info("Nenhuma compra no período (03.02.37 compra, operações de compra).")
         return
     nomes = rs.nomes_fornecedores(op)
-    f["fab"] = [f"{c} · {nomes.get(c, '') or 'Fábrica'}" if c else "Sem tabela da fábrica (resumo do mês)"
+    f["fab"] = [f"{c} · {nomes.get(c, '') or 'Fábrica'}" if c else "Sem fábrica com tabela"
                 for c in f["fornecedor"]]
     fab = (f.groupby(["fab", "fornecedor"], as_index=False)
             .agg(unidade=("unidade_nome", "first"), unidade_cod=("unidade_cod", "first"), qtde=("qtde", "sum"),
                  hl=("hl", "sum"), valor=("valor", "sum")))
     fab["tarifa"] = [_div(v, q) if u else None for v, q, u in zip(fab["valor"], fab["qtde"], fab["unidade_cod"])]
-    fab = fab.sort_values("valor", ascending=False)
-    ok = fab[fab["unidade_cod"] != ""]
-    sem = fab[fab["unidade_cod"] == ""]
-    tot = f["valor"].sum()
-    cx = ok["qtde"].sum()
+    fab = fab.sort_values("valor", ascending=False).reset_index(drop=True)
+    ok, sem = fab[fab["unidade_cod"] != ""], fab[fab["unidade_cod"] == ""]
+    tot, cx = f["valor"].sum(), ok["qtde"].sum()
+    produtos = {nome: _tab_prod(_por_produto(f[f["fab"] == nome]), "Quantidade compra") for nome in fab["fab"]}
     tema.kpis([
         {"titulo": "Remuneração frete", "valor": _m(tot), "icone": "💰", "status": "bom",
          "detalhe": f"{len(ok)} fábrica(s) com tabela"},
@@ -167,35 +169,39 @@ def _frete(op: int, ini: str, fim: str) -> None:
          "status": "atencao" if len(sem) else "bom", "detalhe": f"{_n(sem['qtde'].sum())} cx sem remuneração",
          "dados": _tab_fab(sem) if len(sem) else None},
     ], key="kp_ra_fre")
+    _aviso_meio(f)
+    if (f["base"] == "mês").any():
+        st.caption("ℹ️ Meses sem o detalhe por fábrica no 03.02.37: as caixas de cada produto foram repartidas entre as "
+                   "fábricas com tabela pelo HL comprado de cada uma. Subindo o 03.02.37 compra do mês de novo, fica "
+                   "exato pela coluna M.")
+    tema.secao("🏭 Remuneração por fábrica", "Clique na fábrica para abrir os produtos: código, quantidade comprada, "
+               "remuneração unitária e total.")
+    tema.kpis([{"titulo": nome[:40], "valor": _m(v), "icone": "🏭" if u else "⚠️",
+                "status": "bom" if u else "atencao",
+                "detalhe": (f"{_n(q)} cx · {_t(t)}/cx" if u else f"{_n(q)} cx · sem tabela da Ambev"),
+                "dados": produtos[nome]}
+               for nome, v, q, t, u in zip(fab["fab"], fab["valor"], fab["qtde"], fab["tarifa"], fab["unidade_cod"])],
+              key="kp_ra_fab")
     if not ok.empty:
         g = ok.iloc[::-1]
-        fig = go.Figure(go.Bar(y=g["fab"].str[:34], x=g["valor"], orientation="h", marker_color=AZUL,
+        fig = go.Figure(go.Bar(y=g["fab"], x=g["valor"], orientation="h", marker_color=AZUL,
                                text=[f"{ui.compacto(v)} · {_t(t)}/cx" for v, t in zip(g["valor"], g["tarifa"])],
                                textposition="outside"))
-        graficos.mostrar(graficos._layout(fig, "Frete por fábrica (R$)", max(260, 40 * len(g) + 90), legenda=False),
-                         key="ra_g_fre_fab")
-    tema.secao("🏭 Remuneração por fábrica", "Caixas compradas da fábrica (coluna M do 03.02.37) × frete puxada.")
+        graficos.mostrar(graficos._layout(fig, "Frete remunerado por fábrica (R$) — clique na barra para ver os "
+                                               "produtos", max(260, 40 * len(g) + 90), legenda=False),
+                         key="ra_g_fre_fab", detalhe=lambda r: produtos.get(r, pd.DataFrame()))
     ui.tabela(_tab_fab(fab), baixar="remun_frete_fabrica")
-    if len(sem):
-        st.caption("⚠️ Fábrica sem tabela: suba o arquivo da Ambev dessa unidade e ligue em 📥 Tabelas Ambev.")
-    tema.secao("📦 Por fábrica e produto")
-    opcs = ok["fab"].tolist() or fab["fab"].tolist()
-    esc = st.selectbox("Fábrica", opcs, key="ra_fre_fab")
-    fp = f[f["fab"] == esc]
-    pp = (fp.groupby("produto", as_index=False)
-            .agg(descricao=("descricao", "first"), qtde=("qtde", "sum"), hl=("hl", "sum"), valor=("valor", "sum"),
-                 tem=("tarifa", lambda s: s.notna().any())))
-    pp["tarifa"] = [_div(v, q) if t else None for v, q, t in zip(pp["valor"], pp["qtde"], pp["tem"])]
-    ui.tabela(_tab_prod(pp.sort_values("valor", ascending=False)), baixar="remun_frete_produto")
+    tema.secao("📦 Produtos da fábrica")
+    esc = st.selectbox("Fábrica", fab["fab"].tolist(), key="ra_fre_fab")
+    ui.tabela(produtos[esc], baixar="remun_frete_produto")
 
 
 def _tab_fab(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame({"Fábrica (03.02.37)": df["fab"],
                          "Tabela Ambev": [f"{c} · {n}" if c else "— sem tabela" for c, n in
                                           zip(df["unidade_cod"], df["unidade"])],
-                         "Caixas": df["qtde"].map(_n), "HL": df["hl"].map(lambda v: _n(v, 1)),
-                         "R$/cx (médio)": df["tarifa"].map(_t), "Remuneração": df["valor"].map(_m)}).reset_index(
-        drop=True)
+                         "Quantidade compra": df["qtde"].map(_n), "Remuneração un (R$/cx)": df["tarifa"].map(_t),
+                         "Remuneração total": df["valor"].map(_m)}).reset_index(drop=True)
 
 
 # --- ⚖️ Comparação OBZ -------------------------------------------------------------------------------------------------
