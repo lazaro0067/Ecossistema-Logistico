@@ -88,7 +88,8 @@ def verificar_repositorio() -> None:
 
 
 def _sha_atual() -> str | None:
-    info = _req("GET", _url(f"/contents/{CAMINHO}"))
+    # o parâmetro muda a cada chamada: evita o GitHub devolver a versão anterior em cache logo após um envio
+    info = _req("GET", _url(f"/contents/{CAMINHO}?t={time.time_ns()}"))
     return info.get("sha") if info else None
 
 
@@ -97,11 +98,22 @@ def baixar() -> bytes | None:
 
 
 def enviar(arquivo: bytes, mensagem: str) -> None:
-    corpo = {"message": mensagem, "content": base64.b64encode(arquivo).decode()}
-    sha = _sha_atual()
-    if sha:
-        corpo["sha"] = sha
-    _req("PUT", _url(f"/contents/{CAMINHO}"), corpo)
+    """Envia o backup. Se outro envio (outra aba/instância) gravou no meio do caminho, o GitHub responde 409
+    (versão do arquivo mudou): busca a versão nova e tenta de novo."""
+    conteudo = base64.b64encode(arquivo).decode()
+    for tentativa in range(4):
+        corpo = {"message": mensagem, "content": conteudo}
+        sha = _sha_atual()
+        if sha:
+            corpo["sha"] = sha
+        try:
+            _req("PUT", _url(f"/contents/{CAMINHO}"), corpo)
+            return
+        except BackupErro as e:
+            conflito = "respondeu 409" in str(e) or ("respondeu 422" in str(e) and "sha" in str(e).lower())
+            if not conflito or tentativa == 3:
+                raise
+            time.sleep(2 + 2 * tentativa)
 
 
 # --- Salvar / restaurar -----------------------------------------------------------------------
