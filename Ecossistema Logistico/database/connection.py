@@ -110,14 +110,29 @@ class _Cursor:
 _CACHE: "OrderedDict[tuple, tuple[float, object]]" = OrderedDict()
 _CACHE_LOCK = threading.Lock()
 _CACHE_TTL = 60           # segundos — gravações deste app limpam na hora; o TTL cobre o app do motorista (outro processo)
-_CACHE_MAX_ITENS = 500
-_CACHE_MAX_LINHAS = 150_000  # resultado maior que isso não é guardado
+_CACHE_MAX_ITENS = 300
+_CACHE_MAX_LINHAS = 40_000           # resultado maior que isso não é guardado
+_CACHE_MAX_BYTES = 80 * 1024 ** 2    # teto de memória do cache inteiro (o servidor da nuvem tem pouca memória)
+_CACHE_MAX_ITEM = 12 * 1024 ** 2     # um resultado sozinho não passa disso
+_cache_bytes = [0]
 _LEITURA = re.compile(r"^\s*(SELECT|WITH|PRAGMA|EXPLAIN)\b", re.I)
 
 
 def limpar_cache() -> None:
     with _CACHE_LOCK:
         _CACHE.clear()
+        _cache_bytes[0] = 0
+
+
+def _tamanho(valor) -> int:
+    try:
+        if isinstance(valor, pd.DataFrame):
+            return int(valor.memory_usage(index=False, deep=False).sum()) + len(valor) * len(valor.columns) * 40
+        if isinstance(valor, list):
+            return len(valor) * (len(valor[0]) if valor else 1) * 90
+        return 2_000
+    except Exception:  # noqa: BLE001
+        return 1_000_000
 
 
 def _cache_get(chave):
@@ -125,20 +140,28 @@ def _cache_get(chave):
         item = _CACHE.get(chave)
         if item is None:
             return None
-        quando, valor = item
+        quando, valor, tam = item
         if time.monotonic() - quando > _CACHE_TTL:
             _CACHE.pop(chave, None)
+            _cache_bytes[0] -= tam
             return None
         _CACHE.move_to_end(chave)
         return valor
 
 
 def _cache_put(chave, valor) -> None:
+    tam = _tamanho(valor)
+    if tam > _CACHE_MAX_ITEM:
+        return
     with _CACHE_LOCK:
-        _CACHE[chave] = (time.monotonic(), valor)
-        _CACHE.move_to_end(chave)
-        while len(_CACHE) > _CACHE_MAX_ITENS:
-            _CACHE.popitem(last=False)
+        antigo = _CACHE.pop(chave, None)
+        if antigo:
+            _cache_bytes[0] -= antigo[2]
+        _CACHE[chave] = (time.monotonic(), valor, tam)
+        _cache_bytes[0] += tam
+        while _CACHE and (len(_CACHE) > _CACHE_MAX_ITENS or _cache_bytes[0] > _CACHE_MAX_BYTES):
+            _, (_, _, t) = _CACHE.popitem(last=False)
+            _cache_bytes[0] -= t
 
 
 class Conexao:

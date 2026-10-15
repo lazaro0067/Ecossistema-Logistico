@@ -18,8 +18,8 @@ from services import produtividade_entrega_service as pe
 from services.erros import RegraNegocioError
 
 
-LIMITE_TXT = ("📦 Até 3 GB por arquivo, CSV ou .zip — o arquivo do ano inteiro sobe direto e é gravado mês a mês. "
-              "Em .zip ele fica ~20× menor e sobe muito mais rápido.")
+LIMITE_TXT = ("📦 Até 1 GB por arquivo, CSV ou .zip. Arquivo grande (ano inteiro)? Compacte em .zip — fica ~20× menor, "
+              "sobe rápido e não derruba o servidor; o sistema lê o .zip mês a mês.")
 
 
 def _quando(v) -> str:
@@ -58,6 +58,9 @@ def _card(titulo: str, ultima: str, texto: str, chave: str, tipos: list[str], ac
                 except Exception as e:  # noqa: BLE001 — mostra em português em vez de travar a tela
                     erros.append(f"{arq.name}: erro inesperado ({e}). Confira se é o relatório certo, em CSV ou .zip.")
             barra.empty()
+            import gc
+
+            gc.collect()  # devolve a memória do arquivo processado
             for m in msgs:
                 ui.avisar(m)
             if erros:
