@@ -45,6 +45,12 @@ def _sem_dados(op: int) -> bool:
 
 # --- 📊 Gestão ----------------------------------------------------------------------------------------------
 def render_gestao(usuario: dict, operacao_id: int) -> None:
+    from modules.financeiro import obz_painel
+
+    obz_painel.render(usuario, operacao_id)
+
+
+def render_gestao_antiga(usuario: dict, operacao_id: int) -> None:
     op = ui.visao_acompanhamento(usuario, operacao_id, "obz_gestao")
     if _sem_dados(op):
         return
@@ -357,14 +363,18 @@ def render_plan(usuario: dict, operacao_id: int) -> None:
     if operacoes_repo.e_consolidada(operacao_id):
         st.info("Escolha uma revenda no menu.")
         return
+    pode = obz.pode_plan(usuario)
+    if not pode:
+        st.info("🔒 Somente quem o Master liberou (⚙️ Cadastros OBZ › 🔑 Papéis › Pode alterar o Plan) altera o plan. "
+                "Você pode baixar e consultar.")
     c1, c2 = st.columns([1, 3])
     ano = c1.selectbox("Ano", [str(dt.date.today().year + i) for i in (0, 1, -1)], key="obz_p_ano")
     c2.write("")
     c2.download_button("⬇️ Baixar planilha modelo", obz.modelo_plan(operacao_id, ano),
                        file_name=f"modelo_plan_obz_{ano}.xlsx", key="obz_p_baixar",
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    arq = st.file_uploader("Planilha do plan preenchida", type=["xlsx", "csv"], key="obz_p_up")
-    if arq is not None and st.button("Gravar plan", type="primary", key="obz_p_gravar"):
+    arq = st.file_uploader("Planilha do plan preenchida", type=["xlsx", "csv"], key="obz_p_up", disabled=not pode)
+    if pode and arq is not None and st.button("Gravar plan", type="primary", key="obz_p_gravar"):
         try:
             n = obz.importar_plan(arq.getvalue(), arq.name, operacao_id, ano)
         except RegraNegocioError as e:
@@ -383,6 +393,39 @@ def render_plan(usuario: dict, operacao_id: int) -> None:
     out = piv.map(_m) if hasattr(piv, "map") else piv.applymap(_m)
     out.insert(0, "Conta", [f"{c} · {ct.get(c, '')}" for c in piv.index])
     ui.tabela(out.reset_index(drop=True), baixar=f"plan_obz_{ano}")
+    if pode:
+        _editor_plan(usuario, operacao_id, ano)
+
+
+def _editor_plan(usuario: dict, operacao_id: int, ano: str) -> None:
+    tema.secao("✏️ Ajustar o plan", "Escolha o departamento e o mês e altere o valor — grava ao salvar.")
+    mp = obz._mapas()
+    c1, c2 = st.columns(2)
+    ar = obz.areas()["nome"].tolist() or [obz.SEM_AREA]
+    area = c1.selectbox("Departamento", ar, key="obz_pe_area")
+    mes = c2.selectbox("Mês", [f"{ano}-{m:02d}" for m in range(1, 13)], key="obz_pe_mes", format_func=obz.nome_mes)
+    pl = obz.plan_df(operacao_id, mes, mes)
+    pares = obz.query_df("SELECT conta, depto FROM obz_mapa WHERE area = ?", (area,))
+    if pares.empty:
+        st.info("Nenhuma conta mapeada neste departamento (suba a Base OBZ).")
+        return
+    val = pl.set_index(["conta", "depto"])["valor"] if not pl.empty else pd.Series(dtype=float)
+    ct = obz.contas().set_index("codigo")["nome"]
+    ed = pd.DataFrame({"conta": pares["conta"], "depto": pares["depto"],
+                       "Conta": pares["conta"] + " · " + pares["conta"].map(ct).fillna(""),
+                       "Plan": [float(val.get((c, d), 0.0)) for c, d in zip(pares["conta"], pares["depto"])]})
+    novo = st.data_editor(ed, hide_index=True, key=f"obz_pe_{area}_{mes}", **ui.LARGURA,
+                          disabled=["conta", "depto", "Conta"], column_order=["Conta", "depto", "Plan"],
+                          column_config={"depto": "Depto", "Plan": st.column_config.NumberColumn("Plan ✏️",
+                                                                                                format="R$ %.2f")})
+    if st.button("💾 Salvar plan", key="obz_pe_salvar", type="primary"):
+        n = 0
+        for (_, o), (_, r) in zip(ed.iterrows(), novo.iterrows()):
+            if abs(float(r["Plan"] or 0) - float(o["Plan"] or 0)) > 0.004:
+                obz.salvar_plan_valor(operacao_id, mes, o["conta"], o["depto"], float(r["Plan"] or 0), usuario)
+                n += 1
+        ui.avisar(f"{n} valor(es) do plan alterado(s).")
+        st.rerun()
 
 
 # --- 📥 Realizado ----------------------------------------------------------------------------------------
@@ -395,6 +438,30 @@ def render_real(usuario: dict, operacao_id: int) -> None:
     if operacoes_repo.e_consolidada(operacao_id):
         st.info("Escolha uma revenda no menu.")
         return
+    with st.container(border=True):
+        st.markdown("**📗 Base OBZ (planilha com uma aba por departamento)**")
+        st.caption("Grava departamentos (abas), contas, VBZ, o mapa conta × depto (a aba Folha vai para o "
+                   "departamento pelo código da coluna B), o plan de todos os meses, o real histórico das abas e o "
+                   "razão da aba 16.03.01.")
+        c1, c2 = st.columns([1, 3])
+        ano = c1.selectbox("Ano da base", [str(dt.date.today().year + i) for i in (0, -1, 1)], key="obz_b_ano")
+        arqb = c2.file_uploader("Base OBZ (.xlsx)", type=["xlsx"], key="obz_b_up")
+        if arqb is not None and st.button("Gravar Base OBZ", type="primary", key="obz_b_gravar",
+                                          disabled=not obz.pode_plan(usuario)):
+            try:
+                with st.spinner("Lendo a Base OBZ (pode levar 1 minuto)..."):
+                    r = obz.importar_base(arqb.getvalue(), arqb.name, operacao_id, ano, usuario.get("nome", ""))
+            except RegraNegocioError as e:
+                st.error(str(e))
+            else:
+                ui.avisar(f"Base OBZ: {r['departamentos']} departamentos · {r['contas']} contas · plan de "
+                          f"{len(r['meses_plan'])} meses ({_m(r['plan'])}) · real histórico: "
+                          f"{len(r['meses_historico'])} meses"
+                          + (f" · razão 16.03.01: {r['real']['lancamentos']} lançamentos" if r.get("real") else ""))
+                st.rerun()
+        if not obz.pode_plan(usuario):
+            st.caption("🔒 Gravar a Base OBZ altera o plan — só quem o Master liberou.")
+    st.markdown("**📒 16.03.01 do mês**")
     arq = st.file_uploader("16.03.01 (.csv)", type=["csv", "zip"], key="obz_r_up")
     if arq is not None and st.button("Gravar realizado", type="primary", key="obz_r_gravar"):
         try:
@@ -426,16 +493,31 @@ def render_cadastros(usuario: dict, operacao_id: int) -> None:
     pode = e_master(usuario) or obz.pode_aprovar(usuario)
     if not pode:
         st.info("Somente o Master e os aprovadores do financeiro alteram os cadastros do OBZ.")
-    aba = ui._escolha("obz_c_aba", ["deptos", "contas", "subdonos", "papeis"], "deptos", pills=True,
-                      formatar={"deptos": "🏢 Departamentos", "contas": "🧾 Contas & donos",
-                                "subdonos": "👥 Sub-donos (conta × depto)", "papeis": "🔑 Lançadores & aprovadores"}.get)
+    aba = ui._escolha("obz_c_aba", ["arvore", "areas", "deptos", "contas", "papeis"], "arvore", pills=True,
+                      formatar={"arvore": "🌳 Árvore de donos", "areas": "🏢 Departamentos",
+                                "deptos": "🔢 Códigos de depto", "contas": "🧾 Contas",
+                                "papeis": "🔑 Papéis (lança / aprova / plan)"}.get)
+    if aba == "arvore":
+        from modules.financeiro import obz_arvore
+
+        obz_arvore.render(usuario, pode)
+        return
+    if aba == "areas":
+        from modules.financeiro import obz_arvore
+
+        obz_arvore.render_areas(usuario, pode)
+        return
     if aba == "deptos":
         d = obz.departamentos()
-        ed = pd.DataFrame({"codigo": d["codigo"], "nome": d["nome"].fillna(""), "ativo": d["ativo"].astype(int) == 1,
-                           "excluir": False})
+        st.caption("Cada código de departamento do 16.03.01 pertence a um departamento do OBZ (as abas da Base).")
+        ar = obz.areas()["nome"].tolist()
+        ed = pd.DataFrame({"codigo": d["codigo"], "nome": d["nome"].fillna(""),
+                           "area": d["area"] if "area" in d else None,
+                           "ativo": d["ativo"].astype(int) == 1, "excluir": False})
         novo = st.data_editor(ed, hide_index=True, num_rows="dynamic", key="obz_c_dep", **ui.LARGURA,
                               disabled=not pode,
                               column_config={"codigo": "Código", "nome": st.column_config.TextColumn("Nome ✏️"),
+                                             "area": st.column_config.SelectboxColumn("Departamento OBZ", options=ar),
                                              "ativo": "Ativo", "excluir": st.column_config.CheckboxColumn("🗑️")})
         if pode and st.button("💾 Salvar departamentos", key="obz_c_dep_s", type="primary"):
             for _, r in novo.iterrows():
@@ -445,6 +527,9 @@ def render_cadastros(usuario: dict, operacao_id: int) -> None:
                     obz.excluir_depto(str(r["codigo"]))
                 else:
                     obz.salvar_depto(str(r["codigo"]), r["nome"] or "", bool(r["ativo"]))
+                    obz.execute("UPDATE obz_departamentos SET area = ? WHERE codigo = ?",
+                                (r["area"] if isinstance(r["area"], str) and r["area"] else None,
+                                 obz._cod(r["codigo"]) if str(r["codigo"]).strip() != "0" else "0"))
             ui.avisar("Departamentos salvos.")
             st.rerun()
     elif aba == "contas":

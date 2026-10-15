@@ -25,5 +25,8 @@ GRAFICOS = [Grafico("Incidentes por dia", "data", "incidentes_qtd", horizontal=F
 
 def render(usuario: dict, operacao_id: int) -> None:
     ui.cabecalho_modulo("gente")
+    from modules.gente import gestores
+
     tela_registros(modulo="gente", usuario=usuario, tabela="gente_ssma", operacao_id=operacao_id,
-                   campos=CAMPOS, indicadores=INDICADORES, graficos_=GRAFICOS)
+                   campos=CAMPOS, indicadores=INDICADORES, graficos_=GRAFICOS,
+                   extras={"gestores": lambda: gestores.render(usuario, operacao_id)})

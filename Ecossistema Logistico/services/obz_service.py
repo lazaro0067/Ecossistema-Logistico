@@ -23,7 +23,8 @@ from services.erros import RegraNegocioError
 LIMITE_PADRAO = 10.0
 STATUS = {"lancada": "✅ Lançada", "aguardando": "⏳ Aguardando aprovação", "aprovada": "✔️ Aprovada",
           "reprovada": "❌ Reprovada — revisar", "sugerida": "💡 Sugestão (não lançada)"}
-PAPEIS = {"lancador": "📝 Lança tendências", "aprovador": "✔️ Aprova (financeiro)"}
+PAPEIS = {"lancador": "📝 Lança tendências", "aprovador": "✔️ Aprova (financeiro)",
+          "plan": "🎯 Pode alterar o Plan (liberado pelo Master)"}
 _MESES = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
 
 
@@ -96,7 +97,7 @@ def pacote_padrao(codigo: str, nome: str) -> tuple[str, str, int]:
 
 # --- Cadastros -----------------------------------------------------------------------------------------
 def departamentos(so_ativos: bool = False) -> pd.DataFrame:
-    df = query_df("SELECT codigo, nome, ativo FROM obz_departamentos" + (" WHERE ativo = 1" if so_ativos else ""))
+    df = query_df("SELECT codigo, nome, ativo, area FROM obz_departamentos" + (" WHERE ativo = 1" if so_ativos else ""))
     return df.sort_values("codigo", key=lambda s: s.str.zfill(6)).reset_index(drop=True)
 
 
@@ -196,15 +197,91 @@ def salvar_subdono(conta: str, depto: str, usuario_id: int | None) -> None:
 
 
 def pode_lancar(usuario: dict, conta: str, depto: str) -> bool:
+    """Master, lançadores, ou o gestor do usuário como dono do departamento / sub-dono da conta."""
     from core.auth import e_master
+    from services import gestores_service
 
     if e_master(usuario) or usuario["id"] in usuarios_papel("lancador"):
         return True
-    r = query_one("SELECT dono_id FROM obz_contas WHERE codigo = ?", (str(conta),))
-    if r and r["dono_id"] == usuario["id"]:
-        return True
     r = query_one("SELECT usuario_id FROM obz_subdonos WHERE conta = ? AND depto = ?", (str(conta), str(depto)))
-    return bool(r and r["usuario_id"] == usuario["id"])
+    if r and r["usuario_id"] == usuario["id"]:
+        return True
+    gid = gestores_service.gestor_do_usuario(usuario["id"])
+    if not gid:
+        return False
+    area = area_de(str(conta), str(depto))
+    a = query_one("SELECT dono_gestor_id FROM obz_areas WHERE nome = ?", (area,))
+    if a and a["dono_gestor_id"] == gid:
+        return True
+    r = query_one("SELECT gestor_id FROM obz_resp WHERE area = ? AND conta = ?", (area, str(conta)))
+    return bool(r and r["gestor_id"] == gid)
+
+
+def pode_plan(usuario: dict) -> bool:
+    from core.auth import e_master
+
+    return e_master(usuario) or usuario["id"] in usuarios_papel("plan")
+
+
+# --- Departamentos (áreas do OBZ), mapa conta × depto → área, donos -----------------------------------------
+SEM_AREA = "Sem departamento"
+
+
+def areas() -> pd.DataFrame:
+    df = query_df("""SELECT a.nome, a.dono_gestor_id, a.ordem, g.nome AS dono FROM obz_areas a
+                     LEFT JOIN gestores g ON g.id = a.dono_gestor_id ORDER BY a.ordem, a.nome""")
+    return df
+
+
+def salvar_area(nome: str, dono_gestor_id=None, ordem: int | None = None, novo_nome: str | None = None) -> None:
+    nome = (nome or "").strip()
+    if not nome:
+        raise RegraNegocioError("Informe o nome do departamento.")
+    atual = query_one("SELECT * FROM obz_areas WHERE nome = ?", (nome,))
+    if atual:
+        execute("UPDATE obz_areas SET dono_gestor_id = ?, ordem = ? WHERE nome = ?",
+                (dono_gestor_id, ordem if ordem is not None else atual["ordem"], nome))
+        if novo_nome and novo_nome.strip() and novo_nome.strip() != nome:
+            nn = novo_nome.strip()
+            for t, c in (("obz_areas", "nome"), ("obz_mapa", "area"), ("obz_resp", "area"),
+                         ("obz_departamentos", "area")):
+                execute(f"UPDATE {t} SET {c} = ? WHERE {c} = ?", (nn, nome))
+    else:
+        execute("INSERT INTO obz_areas (nome, dono_gestor_id, ordem) VALUES (?, ?, ?)",
+                (nome, dono_gestor_id, ordem or 0))
+
+
+def excluir_area(nome: str) -> None:
+    execute("UPDATE obz_mapa SET area = NULL WHERE area = ?", (nome,))
+    execute("UPDATE obz_departamentos SET area = NULL WHERE area = ?", (nome,))
+    execute("DELETE FROM obz_resp WHERE area = ?", (nome,))
+    execute("DELETE FROM obz_areas WHERE nome = ?", (nome,))
+
+
+def _mapas() -> tuple[dict, dict, dict]:
+    m = query_df("SELECT conta, depto, area, vbz FROM obz_mapa")
+    d = query_df("SELECT codigo, area FROM obz_departamentos WHERE area IS NOT NULL")
+    par = {(c, dp): a for c, dp, a in zip(m["conta"], m["depto"], m["area"]) if a}
+    vbz = {(c, dp): v for c, dp, v in zip(m["conta"], m["depto"], m["vbz"]) if v}
+    return par, dict(zip(d["codigo"], d["area"])), vbz
+
+
+def area_de(conta: str, depto: str, mapas=None) -> str:
+    par, por_depto, _ = mapas or _mapas()
+    return par.get((conta, depto)) or por_depto.get(depto) or SEM_AREA
+
+
+def salvar_resp(area: str, conta: str, gestor_id: int | None) -> None:
+    with get_conn() as conn:
+        conn.execute("DELETE FROM obz_resp WHERE area = ? AND conta = ?", (area, str(conta)))
+        if gestor_id:
+            conn.execute("INSERT INTO obz_resp (area, conta, gestor_id) VALUES (?, ?, ?)",
+                         (area, str(conta), int(gestor_id)))
+
+
+def resp_df() -> pd.DataFrame:
+    return query_df("""SELECT r.area, r.conta, r.gestor_id, g.nome AS subdono FROM obz_resp r
+                       LEFT JOIN gestores g ON g.id = r.gestor_id""")
 
 
 def pode_aprovar(usuario: dict) -> bool:
@@ -229,13 +306,29 @@ def importar_real(conteudo: bytes, nome: str, operacao_id: int, usuario: str = "
                       "data": pd.to_datetime(df[c[2]].astype(str).str.strip(), format="%d/%m/%Y", errors="coerce"),
                       "historico": df[c[3]].astype(str).str.strip(), "depto": df[c[5]].map(_cod),
                       "debito": _num(df[c[7]]), "credito": _num(df[c[8]])})
+    return _gravar_real(operacao_id, d, nome, usuario)
+
+
+def _e_resultado(conta: str) -> bool:
+    try:
+        return 4000 <= int(conta) < 8000
+    except ValueError:
+        return False
+
+
+def _gravar_real(operacao_id: int, d: pd.DataFrame, nome: str, usuario: str) -> dict:
+    """d: conta, nome, data (datetime), historico, depto, debito, credito. Só contas de resultado (4xxx–7xxx) ou
+    já cadastradas — o razão completo traz clientes e fornecedores, que não são OBZ."""
+    from services.produtividade_entrega_service import _log, _py
+
     d = d[d["data"].notna() & (d["conta"] != "0")]
+    cad = set(contas()["codigo"])
+    d = d[d["conta"].isin(cad) | d["conta"].map(_e_resultado)]
     if d.empty:
-        raise RegraNegocioError("Nenhum lançamento com data válida.")
+        raise RegraNegocioError("Nenhum lançamento de conta de resultado com data válida.")
+    d = d.copy()
     d["mes"] = d["data"].dt.strftime("%Y-%m")
     d["data"] = d["data"].dt.strftime("%Y-%m-%d")
-    # cadastra contas e departamentos novos
-    cad = set(contas()["codigo"])
     for conta, nome_c in d.drop_duplicates("conta")[["conta", "nome"]].itertuples(index=False):
         if conta not in cad:
             salvar_conta(conta, nome_c)
@@ -605,3 +698,193 @@ def despesas_dre(operacao_id: int, mes: str) -> pd.DataFrame | None:
     else:
         g["orcado"] = 0.0
     return g.sort_values("realizado", ascending=False).reset_index(drop=True)
+
+
+# --- Base OBZ (planilha com uma aba por departamento) ---------------------------------------------------------
+_MESES_NOME = {"janeiro": 1, "fevereiro": 2, "marco": 3, "abril": 4, "maio": 5, "junho": 6, "julho": 7,
+               "agosto": 8, "setembro": 9, "outubro": 10, "novembro": 11, "dezembro": 12}
+_IGNORAR_ABAS = {"16.03.01", "simulador", "base", "resumo"}
+
+
+def _vbz(t) -> str:
+    t = str(t or "").strip()
+    return {"gente": "Pessoal"}.get(t.lower(), t[:1].upper() + t[1:].lower()) if t else "Gerais"
+
+
+def importar_base(conteudo: bytes, nome: str, operacao_id: int, ano: str, usuario: str = "",
+                  importar_real_aba: bool = True) -> dict:
+    """Base OBZ: cada aba é um departamento (colunas: DONO/VBZ, DPT, Nome da conta, Conta, e por mês Plano/Real/R-P).
+    A aba "Folha" é distribuída nos departamentos pelo código do DPT (coluna B). A aba "16.03.01" (razão do ano)
+    vira o realizado. Grava departamentos, contas, mapa conta × depto → departamento e o plan de todos os meses."""
+    if operacoes_repo.e_consolidada(operacao_id):
+        raise RegraNegocioError("Escolha uma revenda (não a visão consolidada) para subir a Base OBZ.")
+    try:
+        xl = pd.ExcelFile(io.BytesIO(conteudo))
+    except Exception as e:
+        raise RegraNegocioError(f"Não consegui abrir a planilha: {e}") from e
+    linhas, folha = [], []
+    for aba in xl.sheet_names:
+        if _n(aba).strip() in _IGNORAR_ABAS:
+            continue
+        df = xl.parse(aba, header=None)
+        if len(df) < 3 or len(df.columns) < 5:
+            continue
+        cab = [_n(x) for x in df.iloc[1].tolist()]
+        if "conta" not in cab or "dpt" not in cab:
+            continue
+        meses_col = {}
+        for j, v in enumerate(df.iloc[0].tolist()):
+            m = _MESES_NOME.get(_n(v).replace("ç", "c"))
+            if m:
+                meses_col[m] = j  # coluna do "Plano" daquele mês
+        corpo = df.iloc[2:]
+        for _, r in corpo.iterrows():
+            conta = _cod(r[cab.index("conta")])
+            if conta == "0":
+                continue
+            item = {"area": str(aba).strip(), "vbz": _vbz(r[0]), "depto": _cod(r[1]),
+                    "nome": str(r[2] or "").strip(), "conta": conta,
+                    "plan": {m: pd.to_numeric(r[j], errors="coerce") for m, j in meses_col.items()},
+                    "real": {m: pd.to_numeric(r[j + 1], errors="coerce") for m, j in meses_col.items()
+                             if j + 1 < len(r)}}
+            (folha if _n(aba) == "folha" else linhas).append(item)
+    if not linhas and not folha:
+        raise RegraNegocioError("Não achei as abas de departamento (cabeçalho DONO, DPT, Nome da Conta, Conta).")
+    # código do depto → departamento (o mais comum entre as abas)
+    cont: dict[str, dict[str, int]] = {}
+    for it in linhas:
+        cont.setdefault(it["depto"], {}).setdefault(it["area"], 0)
+        cont[it["depto"]][it["area"]] += 1
+    por_depto = {d: max(a.items(), key=lambda x: x[1])[0] for d, a in cont.items()}
+    for it in folha:
+        it["area"] = por_depto.get(it["depto"], "Folha")
+    todos = linhas + folha
+    ordem = {}
+    for it in linhas:
+        ordem.setdefault(it["area"], len(ordem))
+    for a in {it["area"] for it in todos}:
+        atual = query_one("SELECT nome FROM obz_areas WHERE nome = ?", (a,))
+        if not atual:
+            salvar_area(a, None, ordem.get(a, 99))
+    for d, a in por_depto.items():
+        execute("""INSERT INTO obz_departamentos (codigo, nome, ativo, area) VALUES (?, ?, 1, ?)
+                   ON CONFLICT(codigo) DO UPDATE SET area = excluded.area,
+                   nome = CASE WHEN obz_departamentos.nome IS NULL OR obz_departamentos.nome = ''
+                               THEN excluded.nome ELSE obz_departamentos.nome END""", (d, a, a))
+    cad = set(contas()["codigo"])
+    for it in todos:
+        if it["conta"] not in cad:
+            salvar_conta(it["conta"], it["nome"], pacote=it["vbz"], no_obz=True)
+            cad.add(it["conta"])
+        else:
+            execute("UPDATE obz_contas SET no_obz = 1 WHERE codigo = ?", (it["conta"],))
+    with get_conn() as conn:
+        for it in todos:
+            conn.execute("""INSERT INTO obz_mapa (conta, depto, area, vbz) VALUES (?, ?, ?, ?)
+                            ON CONFLICT(conta, depto) DO UPDATE SET area = excluded.area, vbz = excluded.vbz""",
+                         (it["conta"], it["depto"], it["area"], it["vbz"]))
+    plan = {}
+    for it in todos:
+        for m, v in it["plan"].items():
+            if pd.notna(v) and float(v) != 0:
+                k = (f"{ano}-{m:02d}", it["conta"], it["depto"])
+                plan[k] = plan.get(k, 0.0) + float(v)
+    with get_conn() as conn:
+        meses_plan = sorted({k[0] for k in plan})
+        for mes in meses_plan:
+            conn.execute("DELETE FROM obz_plan WHERE operacao_id = ? AND mes = ?", (operacao_id, mes))
+        conn.executemany("INSERT INTO obz_plan (operacao_id, mes, conta, depto, valor) VALUES (?, ?, ?, ?, ?)",
+                         [(operacao_id, *k, v) for k, v in plan.items()])
+    res = {"departamentos": len({it["area"] for it in todos}), "contas": len({it["conta"] for it in todos}),
+           "linhas": len(todos), "folha": len(folha), "meses_plan": meses_plan, "plan": sum(plan.values()),
+           "real": None}
+    if importar_real_aba and "16.03.01" in xl.sheet_names:
+        rz = xl.parse("16.03.01")
+        c = list(rz.columns)
+        if len(c) >= 9:
+            d = pd.DataFrame({"conta": rz[c[0]].map(_cod), "nome": rz[c[1]].astype(str).str.strip(),
+                              "data": pd.to_datetime(rz[c[2]], errors="coerce", dayfirst=True),
+                              "historico": rz[c[3]].astype(str).str.strip(), "depto": rz[c[5]].map(_cod),
+                              "debito": pd.to_numeric(rz[c[7]], errors="coerce").fillna(0.0),
+                              "credito": pd.to_numeric(rz[c[8]], errors="coerce").fillna(0.0)})
+            res["real"] = _gravar_real(operacao_id, d, f"{nome} (aba 16.03.01)", usuario)
+    # realizado dos meses que não têm 16.03.01 carregado: vem da coluna "Real" das abas (histórico)
+    com_razao = set(query_df("SELECT DISTINCT mes FROM obz_real WHERE operacao_id = ?", (operacao_id,))["mes"])
+    hist = {}
+    for it in todos:
+        for m, v in it["real"].items():
+            mes = f"{ano}-{m:02d}"
+            if mes not in com_razao and pd.notna(v) and float(v) != 0:
+                k = (mes, it["conta"], it["depto"])
+                hist[k] = hist.get(k, 0.0) + float(v)
+    if hist:
+        agora_ = tempo.agora().strftime("%Y-%m-%d %H:%M:%S")
+        with get_conn() as conn:
+            conn.executemany("""INSERT INTO obz_real (operacao_id, mes, conta, depto, debito, credito, valor,
+                                                      lancamentos, importado_em) VALUES (?, ?, ?, ?, ?, 0, ?, 0, ?)""",
+                             [(operacao_id, *k, v, v, agora_) for k, v in hist.items()])
+    res["meses_historico"] = sorted({k[0] for k in hist})
+    from services.produtividade_entrega_service import _log
+
+    _log(operacao_id, "obz_base", len(todos), nome, usuario)
+    return res
+
+
+def salvar_plan_valor(operacao_id: int, mes: str, conta: str, depto: str, valor: float, usuario: dict) -> None:
+    if not pode_plan(usuario):
+        raise RegraNegocioError("Só quem o Master liberou pode alterar o Plan.")
+    execute("""INSERT INTO obz_plan (operacao_id, mes, conta, depto, valor) VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(operacao_id, mes, conta, depto) DO UPDATE SET valor = excluded.valor""",
+            (operacao_id, mes, str(conta), str(depto), float(valor or 0)))
+
+
+# --- Painel (mês ou período) -------------------------------------------------------------------------------------
+def enriquecer(b: pd.DataFrame) -> pd.DataFrame:
+    """Departamento (área), VBZ, dono do departamento e sub-dono da conta."""
+    if b.empty:
+        return b
+    mp = _mapas()
+    b = b.copy()
+    b["area"] = [area_de(c, d, mp) for c, d in zip(b["conta"], b["depto"])]
+    b["vbz"] = [mp[2].get((c, d)) or p for c, d, p in zip(b["conta"], b["depto"], b["pacote"])]
+    ar = areas().set_index("nome")
+    b["dono_area"] = b["area"].map(ar["dono"]) if not ar.empty else None
+    rp = resp_df()
+    rpi = rp.set_index(["area", "conta"])["subdono"] if not rp.empty else pd.Series(dtype=object)
+    b["subdono_conta"] = [rpi.get((a, c)) for a, c in zip(b["area"], b["conta"])]
+    b["responsavel"] = b["subdono_conta"].fillna(b["dono_area"]).fillna("Sem dono")
+    return b
+
+
+def painel(operacao_id: int, meses_: list[str]) -> pd.DataFrame:
+    """Soma conta × depto nos meses (fechamento = real nos fechados, tend no aberto) já com área/VBZ/donos."""
+    partes = [base(operacao_id, m).assign(mes=m) for m in meses_]
+    partes = [p for p in partes if not p.empty]
+    if not partes:
+        return pd.DataFrame()
+    b = pd.concat(partes, ignore_index=True)
+    num = ["plan", "real", "tend", "fechamento", "disp", "desfavoravel"]
+    info = b.drop_duplicates(["conta", "depto"], keep="last").set_index(["conta", "depto"])
+    g = b.groupby(["conta", "depto"], as_index=False)[num].sum()
+    for c in ("nome_conta", "pacote", "natureza", "limite", "nome_depto", "status", "justificativa"):
+        g[c] = [info.at[(a, d), c] if (a, d) in info.index else None for a, d in zip(g["conta"], g["depto"])]
+    g["disp_pct"] = g["disp"] / g["plan"].where(g["plan"] != 0) * 100
+    g["critica"] = (g["disp_pct"].abs() >= g["limite"].astype(float)) | ((g["plan"] == 0) & (g["fechamento"] != 0))
+    return enriquecer(g)
+
+
+def serie_mensal(operacao_id: int, ano: str) -> pd.DataFrame:
+    """Plan × real × fechamento por mês e departamento (para os gráficos)."""
+    mp = _mapas()
+    pl = plan_df(operacao_id, f"{ano}-01", f"{ano}-12")
+    rl = real_df(operacao_id, f"{ano}-01", f"{ano}-12")
+    ct = contas()
+    obz_ok = set(ct.loc[ct["no_obz"].astype(int) == 1, "codigo"])
+    out = []
+    for nome, x in (("plan", pl), ("real", rl)):
+        if x.empty:
+            continue
+        x = x[x["conta"].isin(obz_ok)].copy()
+        x["area"] = [area_de(c, d, mp) for c, d in zip(x["conta"], x["depto"])]
+        out.append(x.groupby(["mes", "area"], as_index=False)["valor"].sum().assign(tipo=nome))
+    return pd.concat(out, ignore_index=True) if out else pd.DataFrame(columns=["mes", "area", "valor", "tipo"])

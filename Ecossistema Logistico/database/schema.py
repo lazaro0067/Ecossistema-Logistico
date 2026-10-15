@@ -636,6 +636,39 @@ CREATE TABLE IF NOT EXISTS obz_reunioes (
     criado_por    TEXT
 );
 
+CREATE TABLE IF NOT EXISTS gestores (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    nome         TEXT NOT NULL,
+    cargo        TEXT,
+    email        TEXT,
+    telefone     TEXT,
+    departamento TEXT,
+    usuario_id   INTEGER,
+    ativo        INTEGER DEFAULT 1,
+    criado_em    TEXT
+);
+
+CREATE TABLE IF NOT EXISTS obz_areas (
+    nome           TEXT PRIMARY KEY,
+    dono_gestor_id INTEGER,
+    ordem          INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS obz_mapa (
+    conta TEXT NOT NULL,
+    depto TEXT NOT NULL,
+    area  TEXT,
+    vbz   TEXT,
+    PRIMARY KEY (conta, depto)
+);
+
+CREATE TABLE IF NOT EXISTS obz_resp (
+    area      TEXT NOT NULL,
+    conta     TEXT NOT NULL,
+    gestor_id INTEGER NOT NULL,
+    PRIMARY KEY (area, conta)
+);
+
 CREATE TABLE IF NOT EXISTS agendamentos_descarga (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     operacao_id INTEGER NOT NULL REFERENCES operacoes(id),
@@ -1124,6 +1157,7 @@ MIGRACOES: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS ix_obz_lanc ON obz_real_lanc(operacao_id, mes, conta);
         CREATE INDEX IF NOT EXISTS ix_obz_tend ON obz_tend(operacao_id, mes);
     """),
+    ("035_obz_areas", "ALTER TABLE obz_departamentos ADD COLUMN area TEXT;"),
 ]
 
 
