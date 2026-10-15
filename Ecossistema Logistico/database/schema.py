@@ -1509,6 +1509,11 @@ MIGRACOES: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS ix_notas_prod_dia ON notas_prod_dia(operacao_id, origem, data);
         CREATE INDEX IF NOT EXISTS ix_remun_tab ON remun_tabela(operacao_id, unidade_cod, produto, ini);
     """),
+    ("043_remun_mes", """
+        ALTER TABLE remun_tabela ADD COLUMN mes TEXT;
+        UPDATE remun_tabela SET mes = substr(ini, 1, 7) WHERE mes IS NULL;
+        CREATE INDEX IF NOT EXISTS ix_remun_mes ON remun_tabela(operacao_id, unidade_cod, mes);
+    """),
 ]
 
 

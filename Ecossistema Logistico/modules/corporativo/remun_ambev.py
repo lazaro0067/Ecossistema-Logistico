@@ -65,6 +65,11 @@ def render(usuario: dict, operacao_id: int) -> None:
     if faltam:
         st.warning("Para calcular pelo produto e dia, suba de novo o 03.02.37 destes meses em 📥 Relatórios: "
                    + ", ".join(faltam) + ".")
+    tm = rs.tabelas_mes(operacao_id)
+    sem_tab = [m for m in lista if m not in set(tm["mes"])]
+    if sem_tab:
+        st.warning("Sem tabela da Ambev em " + ", ".join(ui.nome_mes(m) for m in sem_tab) + " — usando a do último mês "
+                   "anterior subido. Suba a do mês em 📥 Tabelas Ambev.")
     {"carreto": lambda: _carreto(operacao_id, ini, fim),
      "frete": lambda: _frete(operacao_id, ini, fim),
      "obz": lambda: _obz(usuario, operacao_id, lista)}[tela]()
@@ -106,8 +111,7 @@ def _carreto(op: int, ini: str, fim: str) -> None:
                                                                  "<extra></extra>"))
     graficos.mostrar(graficos._layout(fig, "Carreto por dia (R$)", 320, legenda=False), key="ra_g_car_dia")
     if c["fora_vig"].any():
-        st.caption("ℹ️ Alguns dias usaram a última tarifa conhecida (a vigência da tabela já tinha terminado) — suba a "
-                   "tabela mais nova da Ambev.")
+        st.caption("ℹ️ Alguns dias usaram a tabela de um mês anterior (o mês não tem tabela da Ambev subida).")
     tema.secao("📦 Carreto por produto", "Caixas entregues × carreto da Ambev (R$/cx) vigente em cada dia.")
     ui.tabela(_tab_prod(por_prod[por_prod["tem"]]), baixar="remun_carreto_produto")
     if len(sem_p):
@@ -285,33 +289,60 @@ def _config(usuario: dict, op: int, cfg: dict, nomes: dict) -> None:
 
 
 # --- 📥 Tabelas Ambev --------------------------------------------------------------------------------------------------
+def _meses_upload(op: int) -> list[str]:
+    from core import tempo
+
+    hoje = pd.Period(tempo.hoje(), "M")
+    base = {str(hoje - k) for k in range(0, 24)} | {str(hoje + 1)} | set(rs.meses_disponiveis(op))
+    return sorted(base, reverse=True)
+
+
 def _tabelas(usuario: dict, op: int) -> None:
+    from core import tempo
+    from core.auth import e_master
+
     consolidada = operacoes_repo.e_consolidada(op)
     if consolidada:
         st.info("Escolha uma revenda no menu para subir as tabelas da Ambev.")
     else:
         tema.secao("📤 Subir tabela de remuneração da Ambev",
-                   "Um arquivo por fábrica (unidade fornecedora) — pode escolher vários de uma vez. Coluna N = frete "
-                   "puxada, coluna P = carreto, por caixa e vigência.")
+                   "Escolha o mês da tabela e suba um arquivo por fábrica (unidade fornecedora) — pode escolher vários "
+                   "de uma vez. Coluna N = frete puxada, coluna P = carreto, por caixa e vigência.")
+        meses = _meses_upload(op)
+        padrao = str(pd.Period(tempo.hoje(), "M"))
+        c1, c2 = st.columns([1, 3])
+        mes = c1.selectbox("📅 Mês da tabela", meses, index=meses.index(padrao) if padrao in meses else 0,
+                           key="ra_up_mes", format_func=ui.nome_mes)
+        ja = rs.tabelas_mes(op)
+        ja = ja[ja["mes"] == mes] if not ja.empty else ja
+        c2.caption(f"As entregas e compras de **{ui.nome_mes(mes)}** usam esta tabela. Subir de novo a mesma fábrica "
+                   "no mesmo mês substitui a anterior."
+                   + (f"  \nJá subidas em {ui.nome_mes(mes)}: " + ", ".join(f"{c} · {n}" for c, n in
+                                                                          zip(ja["unidade_cod"], ja["unidade_nome"]))
+                      if len(ja) else ""))
         v = st.session_state.get("ra_up_v", 0)
         arqs = st.file_uploader("Tabelas Ambev (CSV ou ZIP)", type=["csv", "txt", "zip"], accept_multiple_files=True,
                                 key=f"ra_up_{v}", label_visibility="collapsed")
         arqs = [a for a in (arqs or []) if a is not None]
-        if arqs and st.button("Gravar" if len(arqs) == 1 else f"Gravar as {len(arqs)} tabelas", type="primary",
-                              key="ra_gravar"):
+        rot = f"Gravar como tabela de {ui.nome_mes(mes)}" if len(arqs) <= 1 else \
+            f"Gravar as {len(arqs)} tabelas em {ui.nome_mes(mes)}"
+        if arqs and st.button(rot, type="primary", key="ra_gravar"):
             erros = []
             for a in arqs:
                 try:
-                    r = rs.importar(a.getvalue(), a.name, op, usuario.get("nome", ""))
+                    r = rs.importar(a.getvalue(), a.name, op, mes, usuario.get("nome", ""))
                 except RegraNegocioError as e:
                     erros.append(f"{a.name}: {e}")
                 except Exception as e:  # noqa: BLE001
                     erros.append(f"{a.name}: erro inesperado ({e}). Confira se é o relatório da Ambev em CSV.")
                 else:
-                    ui.avisar(f"{r['unidade']}: {r['produtos']} produtos, {r['vigencias']} vigências "
-                              f"({pd.to_datetime(r['de']).strftime('%d/%m')} a "
-                              f"{pd.to_datetime(r['ate']).strftime('%d/%m/%Y')})"
-                              + ("" if r["fornecedor"] else " — ligue a fábrica abaixo."))
+                    ui.avisar(f"{r['unidade']} · {ui.nome_mes(mes)}: {r['produtos']} produtos, {r['vigencias']} "
+                              f"vigências" + ("" if r["fornecedor"] else " — ligue a fábrica abaixo."))
+                    if r["outro_mes"]:
+                        ui.avisar(f"{r['unidade']}: as vigências do arquivo são de "
+                                  f"{pd.to_datetime(r['de']).strftime('%d/%m/%Y')} a "
+                                  f"{pd.to_datetime(r['ate']).strftime('%d/%m/%Y')} — gravada em {ui.nome_mes(mes)} "
+                                  "como você escolheu.", "warning")
             for e in erros:
                 st.error(e)
             if not erros:
@@ -331,9 +362,10 @@ def _tabelas(usuario: dict, op: int) -> None:
     for _, u in un.iterrows():
         o, cod = int(u["operacao_id"]), str(u["unidade_cod"])
         atual = mp.get((o, cod), "")
-        c1, c2, c3, c4 = st.columns([2.2, 2.6, 1.4, 0.8])
-        c1.markdown(f"**{cod} · {u['unidade_nome']}**  \n{int(u['produtos'])} produtos · vigências de "
-                    f"{pd.to_datetime(u['de']).strftime('%d/%m/%Y')} a {pd.to_datetime(u['ate']).strftime('%d/%m/%Y')}")
+        c1, c2, c3 = st.columns([2.4, 2.6, 1.4])
+        c1.markdown(f"**{cod} · {u['unidade_nome']}**  \nMeses: " + ", ".join(ui.nome_mes(m) for m in u["meses"]))
+        c3.caption(f"última subida {pd.to_datetime(u['importado_em']).strftime('%d/%m %H:%M') if u['importado_em'] else '—'}"
+                   f"  \npor {u['importado_por'] or '—'}")
         if consolidada:
             c2.markdown(f"Fábrica: **{atual} · {nomes_f.get(atual, '')}**" if atual else "Fábrica: —")
             continue
@@ -344,20 +376,26 @@ def _tabelas(usuario: dict, op: int) -> None:
         if esc != atual:
             rs.salvar_mapa(o, cod, esc or None)
             ui.salvo_automatico("Fábrica ligada.")
-        c3.caption(f"subida em {pd.to_datetime(u['importado_em']).strftime('%d/%m %H:%M') if u['importado_em'] else '—'}"
-                   f"  \npor {u['importado_por'] or '—'}")
-        from core.auth import e_master
-
-        if e_master(usuario) and c4.button("🗑️", key=f"ra_del_{o}_{cod}", help="Excluir a tabela desta unidade"):
-            ui.acao(rs.excluir_unidade, o, cod, sucesso="Tabela excluída.")
     if forn.empty:
         st.caption("ℹ️ A lista de fábricas vem do 03.02.37 compra — suba ele em 📥 Relatórios.")
+    tm = rs.tabelas_mes(op)
+    tema.secao("🗂️ Tabelas por mês")
+    ui.tabela(pd.DataFrame({"Mês": tm["mes"].map(ui.nome_mes),
+                            "Unidade Ambev": [f"{c} · {n}" for c, n in zip(tm["unidade_cod"], tm["unidade_nome"])],
+                            "Produtos": tm["produtos"],
+                            "Vigências no arquivo": [f"{pd.to_datetime(a).strftime('%d/%m')} a "
+                                                     f"{pd.to_datetime(b).strftime('%d/%m/%Y')}"
+                                                     for a, b in zip(tm["de"], tm["ate"])],
+                            "Arquivo": tm["arquivo"].fillna(""), "Por": tm["importado_por"].fillna("")}),
+              baixar="tabelas_ambev_meses")
     tema.secao("🔎 Ver tabela")
-    esc = st.selectbox("Unidade", un["unidade_cod"].astype(str).unique().tolist(), key="ra_ver_un",
-                       format_func=lambda c: f"{c} · {un.set_index('unidade_cod').loc[c, 'unidade_nome']}"
-                       if c in set(un["unidade_cod"]) else c)
-    t = rs.tabela(op, esc)
-    so_vig = st.toggle("Só a vigência atual de cada produto", value=True, key="ra_ver_vig")
+    c1, c2 = st.columns(2)
+    nomes_u = dict(zip(un["unidade_cod"].astype(str), un["unidade_nome"]))
+    esc = c1.selectbox("Unidade", list(nomes_u), key="ra_ver_un", format_func=lambda c: f"{c} · {nomes_u.get(c, '')}")
+    meses_u = sorted(tm.loc[tm["unidade_cod"].astype(str) == esc, "mes"].unique(), reverse=True)
+    mes_v = c2.selectbox("Mês", meses_u, key="ra_ver_mes", format_func=ui.nome_mes)
+    t = rs.tabela(op, esc, mes_v)
+    so_vig = st.toggle("Só a última vigência de cada produto no mês", value=True, key="ra_ver_vig")
     if so_vig and not t.empty:
         t = t.sort_values("ini").groupby("produto", as_index=False).tail(1)
     ui.tabela(pd.DataFrame({
@@ -365,4 +403,7 @@ def _tabelas(usuario: dict, op: int) -> None:
         "Início": pd.to_datetime(t["ini"]).dt.strftime("%d/%m/%Y"),
         "Fim": [pd.to_datetime(x).strftime("%d/%m/%Y") if isinstance(x, str) and x else "vigente" for x in t["fim"]],
         "Carreto (P) R$/cx": t["carreto"].map(_t), "Frete puxada (N) R$/cx": t["frete"].map(_t)}),
-        baixar=f"tabela_ambev_{esc}")
+        baixar=f"tabela_ambev_{esc}_{mes_v}")
+    if not consolidada and e_master(usuario) and mes_v and \
+            st.button(f"🗑️ Excluir a tabela {esc} de {ui.nome_mes(mes_v)}", key=f"ra_del_{esc}_{mes_v}"):
+        ui.acao(rs.excluir_tabela, op, esc, mes_v, sucesso="Tabela excluída.")

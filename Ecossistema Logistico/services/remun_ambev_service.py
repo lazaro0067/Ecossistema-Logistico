@@ -115,21 +115,22 @@ def ler_tabela(conteudo: bytes, nome: str) -> dict:
             "revenda": revenda, "gerado": gerado, "df": df.sort_values(["produto", "ini"]).reset_index(drop=True)}
 
 
-def importar(conteudo: bytes, nome: str, operacao_id: int, usuario: str = "") -> dict:
+def importar(conteudo: bytes, nome: str, operacao_id: int, mes: str, usuario: str = "") -> dict:
+    """Grava a tabela da Ambev de uma unidade como a tabela do MÊS escolhido (substitui a desse mês)."""
     if operacoes_repo.e_consolidada(operacao_id):
         raise RegraNegocioError("Escolha uma revenda (não a visão consolidada) para subir a tabela da Ambev.")
+    if not re.fullmatch(r"\d{4}-\d{2}", str(mes or "")):
+        raise RegraNegocioError("Escolha o mês da tabela.")
     t = ler_tabela(conteudo, nome)
     df = t["df"]
     agora = tempo.agora().strftime("%Y-%m-%d %H:%M:%S")
-    de, ate = df["ini"].min(), df["ini"].max()
     with get_conn() as conn:
-        # o arquivo substitui as vigências que começam no período dele (para esta unidade)
-        conn.execute("DELETE FROM remun_tabela WHERE operacao_id = ? AND unidade_cod = ? AND ini BETWEEN ? AND ?",
-                     (operacao_id, t["unidade_cod"], de, ate))
+        conn.execute("DELETE FROM remun_tabela WHERE operacao_id = ? AND unidade_cod = ? AND mes = ?",
+                     (operacao_id, t["unidade_cod"], mes))
         conn.executemany(
-            "INSERT INTO remun_tabela (operacao_id, unidade_cod, unidade_nome, produto, descricao, ini, fim, carreto, "
-            "frete, arquivo, importado_por, importado_em) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [(operacao_id, t["unidade_cod"], t["unidade_nome"], r.produto, r.descricao, r.ini,
+            "INSERT INTO remun_tabela (operacao_id, unidade_cod, unidade_nome, mes, produto, descricao, ini, fim, "
+            "carreto, frete, arquivo, importado_por, importado_em) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [(operacao_id, t["unidade_cod"], t["unidade_nome"], mes, r.produto, r.descricao, r.ini,
               None if pd.isna(r.fim) else r.fim, None if pd.isna(r.carreto) else float(r.carreto),
               None if pd.isna(r.frete) else float(r.frete), str(nome)[:200], usuario, agora)
              for r in df.itertuples(index=False)])
@@ -138,28 +139,50 @@ def importar(conteudo: bytes, nome: str, operacao_id: int, usuario: str = "") ->
         sug = sugerir_fornecedor(operacao_id, t["unidade_nome"])
         if sug:
             salvar_mapa(operacao_id, t["unidade_cod"], sug)
+    meses_arq = sorted(set(df["ini"].str[:7]))
     return {"unidade": f"{t['unidade_cod']} · {t['unidade_nome']}", "produtos": int(df["produto"].nunique()),
-            "vigencias": len(df), "de": de, "ate": ate, "fornecedor": fornecedor_de(operacao_id, t["unidade_cod"])}
+            "vigencias": len(df), "mes": mes, "de": df["ini"].min(), "ate": df["ini"].max(),
+            "outro_mes": mes not in meses_arq, "fornecedor": fornecedor_de(operacao_id, t["unidade_cod"])}
+
+
+def tabelas_mes(operacao_id: int) -> pd.DataFrame:
+    """Uma linha por unidade × mês de tabela subida."""
+    trecho, p = operacoes_repo.filtro("operacao_id", operacao_id)
+    return query_df(f"""SELECT operacao_id, unidade_cod, mes, MAX(unidade_nome) AS unidade_nome,
+                        COUNT(DISTINCT produto) AS produtos, MIN(ini) AS de, MAX(ini) AS ate,
+                        MAX(importado_em) AS importado_em, MAX(importado_por) AS importado_por, MAX(arquivo) AS arquivo
+                        FROM remun_tabela WHERE {trecho} GROUP BY operacao_id, unidade_cod, mes
+                        ORDER BY unidade_cod, mes DESC""", p)
 
 
 def unidades(operacao_id: int) -> pd.DataFrame:
+    t = tabelas_mes(operacao_id)
+    if t.empty:
+        return pd.DataFrame(columns=["operacao_id", "unidade_cod", "unidade_nome", "meses", "produtos",
+                                     "importado_em", "importado_por"])
+    return (t.groupby(["operacao_id", "unidade_cod"], as_index=False)
+             .agg(unidade_nome=("unidade_nome", "first"), meses=("mes", lambda s: sorted(set(s), reverse=True)),
+                  produtos=("produtos", "max"), importado_em=("importado_em", "max"),
+                  importado_por=("importado_por", "last")))
+
+
+def tabela(operacao_id: int, unidade_cod: str | None = None, mes: str | None = None) -> pd.DataFrame:
     trecho, p = operacoes_repo.filtro("operacao_id", operacao_id)
-    return query_df(f"""SELECT operacao_id, unidade_cod, MAX(unidade_nome) AS unidade_nome, COUNT(DISTINCT produto)
-                        AS produtos, MIN(ini) AS de, MAX(ini) AS ate, MAX(importado_em) AS importado_em,
-                        MAX(importado_por) AS importado_por FROM remun_tabela WHERE {trecho}
-                        GROUP BY operacao_id, unidade_cod ORDER BY unidade_cod""", p)
+    extra, pe = "", []
+    if unidade_cod:
+        extra, pe = extra + " AND unidade_cod = ?", pe + [unidade_cod]
+    if mes:
+        extra, pe = extra + " AND mes = ?", pe + [mes]
+    return query_df(f"SELECT operacao_id, unidade_cod, unidade_nome, mes, produto, descricao, ini, fim, carreto, frete "
+                    f"FROM remun_tabela WHERE {trecho}{extra} ORDER BY unidade_cod, mes, produto, ini", (*p, *pe))
 
 
-def tabela(operacao_id: int, unidade_cod: str | None = None) -> pd.DataFrame:
-    trecho, p = operacoes_repo.filtro("operacao_id", operacao_id)
-    extra, pe = (" AND unidade_cod = ?", [unidade_cod]) if unidade_cod else ("", [])
-    return query_df(f"SELECT operacao_id, unidade_cod, unidade_nome, produto, descricao, ini, fim, carreto, frete "
-                    f"FROM remun_tabela WHERE {trecho}{extra} ORDER BY unidade_cod, produto, ini", (*p, *pe))
-
-
-def excluir_unidade(operacao_id: int, unidade_cod: str) -> None:
-    execute("DELETE FROM remun_tabela WHERE operacao_id = ? AND unidade_cod = ?", (operacao_id, unidade_cod))
-    execute("DELETE FROM remun_fabrica_map WHERE operacao_id = ? AND unidade_cod = ?", (operacao_id, unidade_cod))
+def excluir_tabela(operacao_id: int, unidade_cod: str, mes: str) -> None:
+    execute("DELETE FROM remun_tabela WHERE operacao_id = ? AND unidade_cod = ? AND mes = ?",
+            (operacao_id, unidade_cod, mes))
+    if query_df("SELECT 1 AS x FROM remun_tabela WHERE operacao_id = ? AND unidade_cod = ?",
+                (operacao_id, unidade_cod)).empty:
+        execute("DELETE FROM remun_fabrica_map WHERE operacao_id = ? AND unidade_cod = ?", (operacao_id, unidade_cod))
 
 
 # --- de-para unidade Ambev × fábrica do 03.02.37 (coluna M) -----------------------------------------------------------
@@ -302,29 +325,35 @@ def sem_base_dia(operacao_id: int, origem: str, de: str, ate: str) -> list[str]:
 
 
 def _tarifa(q: pd.DataFrame, tab: pd.DataFrame, campo: str) -> pd.DataFrame:
-    """Põe em cada linha (data × produto) a tarifa vigente no dia: maior início ≤ data; se o fim já passou, usa a
-    última conhecida e marca fora_vig."""
+    """Põe em cada linha (data × produto) a tarifa do dia: usa a tabela do MÊS da data (a subida para aquele mês) e,
+    dentro dela, a vigência de maior início ≤ data. Mês sem tabela usa a do último mês anterior e marca fora_vig."""
     if q.empty or tab.empty:
         return q.assign(tarifa=float("nan"), fora_vig=False)
-    t = tab[["produto", "ini", "fim", campo]].dropna(subset=[campo]).copy()
+    t = tab[["mes", "produto", "ini", campo]].dropna(subset=[campo]).copy()
+    if t.empty:
+        return q.assign(tarifa=float("nan"), fora_vig=False)
+    t["mes"] = t["mes"].fillna(t["ini"].str[:7])
     t["ini_d"] = pd.to_datetime(t["ini"])
-    t = t.sort_values("ini_d")
+    meses_tab = sorted(t["mes"].unique())
     x = q.copy()
     x["_ord"] = range(len(x))
-    x["data_d"] = pd.to_datetime(x["data"])
-    x = x.sort_values("data_d")
-    m = pd.merge_asof(x, t[["produto", "ini_d", "fim", campo]], left_on="data_d", right_on="ini_d", by="produto",
-                      direction="backward")
-    # produto sem vigência anterior: usa a primeira vigência da tabela
-    falta = m[campo].isna() & m["produto"].isin(set(t["produto"]))
-    if falta.any():
-        prim = t.groupby("produto")[campo].first()
-        m.loc[falta, campo] = m.loc[falta, "produto"].map(prim)
-        m.loc[falta, "fim"] = None
-    fim = pd.to_datetime(m["fim"], errors="coerce")
-    m["fora_vig"] = m[campo].notna() & fim.notna() & (fim < m["data_d"])
-    m = m.rename(columns={campo: "tarifa"}).sort_values("_ord")
-    return m.drop(columns=["_ord", "data_d", "ini_d", "fim"]).reset_index(drop=True)
+    x["_mes"] = x["data"].str[:7]
+    partes = []
+    for m, xm in x.groupby("_mes"):
+        ant = [v for v in meses_tab if v <= m]
+        usar = ant[-1] if ant else meses_tab[0]
+        tm = t[t["mes"] == usar].sort_values("ini_d")
+        xm = xm.assign(data_d=pd.to_datetime(xm["data"])).sort_values("data_d")
+        r = pd.merge_asof(xm, tm[["produto", "ini_d", campo]], left_on="data_d", right_on="ini_d", by="produto",
+                          direction="backward")
+        falta = r[campo].isna() & r["produto"].isin(set(tm["produto"]))
+        if falta.any():  # dia antes da primeira vigência do mês: usa a primeira
+            prim = tm.groupby("produto")[campo].first()
+            r.loc[falta, campo] = r.loc[falta, "produto"].map(prim)
+        r["fora_vig"] = r[campo].notna() & (usar != m)
+        partes.append(r)
+    m_ = pd.concat(partes, ignore_index=True).rename(columns={campo: "tarifa"}).sort_values("_ord")
+    return m_.drop(columns=["_ord", "_mes", "data_d", "ini_d"]).reset_index(drop=True)
 
 
 def carreto(operacao_id: int, de: str, ate: str) -> pd.DataFrame:
