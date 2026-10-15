@@ -506,8 +506,9 @@ def _aba_backup() -> None:
                  "tudo de forma permanente. Até lá, baixe um backup sempre que criar acessos ou cadastros.")
     else:
         st.success("✅ Banco permanente (PostgreSQL). Mesmo assim, guarde um backup de tempos em tempos.")
-    tema.secao("⬇️ Baixar backup", "Um arquivo .zip com TODAS as tabelas: usuários, senhas (criptografadas), "
-               "permissões, operações, cadastros, frota, metas e bases.")
+    tema.secao("⬇️ Baixar backup", "Um arquivo .zip com usuários, senhas (criptografadas), permissões, operações, "
+               "cadastros, frota, metas, OBZ e lançamentos. As bases de relatório grandes (03.02.37, 16.03.01 "
+               "detalhado, 02.05.02, PCD) ficam fora — depois de uma restauração, basta subir os relatórios de novo.")
     if st.button("Gerar backup agora", key="bk_gerar", type="primary"):
         st.session_state["bk_zip"] = bk.exportar()
     if st.session_state.get("bk_zip"):

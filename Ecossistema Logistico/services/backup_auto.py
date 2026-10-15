@@ -202,6 +202,12 @@ def iniciar() -> None:
     if not any(t.name == "backup-auto" and t.is_alive() for t in threading.enumerate()):
         threading.Thread(target=_ciclo, name="backup-auto", daemon=True).start()
         atexit.register(_ao_desligar)
+    # o 1º backup roda em segundo plano, 1 minuto depois de ligar (não pesa na partida do servidor)
+    threading.Thread(target=_primeiro_backup, name="backup-inicio", daemon=True).start()
+
+
+def _primeiro_backup() -> None:
+    time.sleep(60)
     try:
         salvar_agora("ao iniciar")
     except Exception as e:  # noqa: BLE001
