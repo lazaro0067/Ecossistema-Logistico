@@ -275,7 +275,7 @@ def dre_periodo(operacao_id: int, meses_: list[str]) -> dict:
     desp = float(ob["realizado"].sum()) if tem else None
     man = manual(operacao_id, ms)
     receita_bruta = v["valor"]  # total das notas (coluna Z) das operações de venda filtradas
-    receita = receita_bruta - man["icms"] - man["pis_cofins"]
+    receita = receita_bruta - abs(man["icms"]) - abs(man["pis_cofins"])  # impostos sempre abatem, com ou sem sinal
     lucro = receita - c["cmv"] if c["cmv"] is not None else None
     resultado = lucro - desp + man["conta_corrente"] if lucro is not None and desp is not None else None
     return {"mes": ms[-1], "meses": ms, "ops_venda": ops_venda, "receita_bruta": receita_bruta,
