@@ -766,6 +766,49 @@ CREATE TABLE IF NOT EXISTS obz_sim_valor (
     PRIMARY KEY (sim_id, conta, depto, mes)
 );
 
+CREATE TABLE IF NOT EXISTS vendas_calendario (
+    operacao_id  INTEGER NOT NULL,
+    mes          TEXT NOT NULL,
+    data         TEXT NOT NULL,
+    PRIMARY KEY (operacao_id, data)
+);
+
+CREATE TABLE IF NOT EXISTS grade_checks (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id  INTEGER NOT NULL,
+    data         TEXT NOT NULL,
+    fonte        TEXT,
+    limite_pct   REAL,
+    itens        INTEGER,
+    divergentes  INTEGER,
+    obs          TEXT,
+    criado_por   TEXT,
+    criado_em    TEXT
+);
+
+CREATE TABLE IF NOT EXISTS grade_check_itens (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    check_id   INTEGER NOT NULL,
+    cod        TEXT,
+    descricao  TEXT,
+    sistema    REAL,
+    grade      REAL,
+    dif        REAL,
+    dif_pct    REAL,
+    divergente INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS grade_controle (
+    operacao_id INTEGER NOT NULL,
+    usuario_id  INTEGER NOT NULL,
+    PRIMARY KEY (operacao_id, usuario_id)
+);
+
+CREATE TABLE IF NOT EXISTS grade_config (
+    operacao_id INTEGER PRIMARY KEY,
+    limite_pct  REAL DEFAULT 5
+);
+
 CREATE TABLE IF NOT EXISTS obz_capex (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     operacao_id     INTEGER NOT NULL,
@@ -1366,6 +1409,11 @@ MIGRACOES: list[tuple[str, str]] = [
         ALTER TABLE obz_sim_equipe ADD COLUMN qlp_plan REAL;
         ALTER TABLE obz_sim_volume ADD COLUMN fonte TEXT;
         CREATE INDEX IF NOT EXISTS ix_capex ON obz_capex(operacao_id, ano);
+    """),
+    ("040_grade_calendario", """
+        CREATE INDEX IF NOT EXISTS ix_grade_itens ON grade_check_itens(check_id);
+        CREATE INDEX IF NOT EXISTS ix_grade_checks ON grade_checks(operacao_id, data);
+        CREATE INDEX IF NOT EXISTS ix_vend_cal ON vendas_calendario(operacao_id, mes);
     """),
 ]
 

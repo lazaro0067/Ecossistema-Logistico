@@ -240,4 +240,11 @@ def render(usuario: dict, operacao_id: int) -> None:
     ui.abas_modulo(usuario, "armazem", {
         "saude": aba_saude, "fundamentos": aba_fundamentos, "manter": aba_manter, "melhorar": aba_melhorar,
         "patio": aba_patio, "pedidos": aba_pedidos, "estrutura": aba_estrutura, "produtos": aba_produtos,
+        "grade": _grade,
     }, usuario, operacao_id)
+
+
+def _grade(usuario: dict, operacao_id: int) -> None:
+    from modules.armazem import grade
+
+    grade.render(usuario, operacao_id)

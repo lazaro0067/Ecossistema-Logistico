@@ -45,8 +45,53 @@ def salvar_dias_sem_puxada(operacao_id: int, mes_ano: str, datas) -> None:
 
 
 def dias_puxada(operacao_id: int, mes_ano: str) -> list[dt.date]:
+    """Dias que contam para a tendência. No acompanhamento de vendas (fonte "vendas") são os dias de venda do
+    📅 Calendário de Vendas; no ressuprimento, os dias de puxada."""
+    if ressuprimento_repo.fonte_atual() == "vendas":
+        return dias_venda(operacao_id, mes_ano)
     fora = dias_sem_puxada(operacao_id, mes_ano)
     return [d for d in dias_do_mes(mes_ano) if d not in fora]
+
+
+# --- Calendário de vendas -----------------------------------------------------------------------
+def dias_venda_padrao(mes_ano: str) -> list[dt.date]:
+    """Sem calendário salvo: segunda a sábado."""
+    return [d for d in dias_do_mes(mes_ano) if d.weekday() < 6]
+
+
+def _calendario_salvo(operacao_id: int, mes_ano: str) -> list[dt.date]:
+    linhas = query_all("SELECT data FROM vendas_calendario WHERE operacao_id = ? AND mes = ? ORDER BY data",
+                       (operacao_id, mes_ano))
+    return [dt.date.fromisoformat(str(r["data"])[:10]) for r in linhas]
+
+
+def calendario_vendas(operacao_id: int, mes_ano: str) -> tuple[list[dt.date], bool]:
+    """(dias de venda, foi salvo?). Visão consolidada: usa o calendário da 1ª filial que tiver."""
+    from repositories import operacoes_repo
+
+    for oid in operacoes_repo.ids_efetivos(operacao_id):
+        dias = _calendario_salvo(oid, mes_ano)
+        if dias:
+            return dias, True
+    return dias_venda_padrao(mes_ano), False
+
+
+def dias_venda(operacao_id: int, mes_ano: str) -> list[dt.date]:
+    return calendario_vendas(operacao_id, mes_ano)[0]
+
+
+def salvar_calendario_vendas(operacao_id: int, mes_ano: str, datas) -> None:
+    from repositories import operacoes_repo
+
+    if operacoes_repo.e_consolidada(operacao_id):
+        raise RegraNegocioError("Escolha uma filial no menu para marcar os dias de venda.")
+    validas = sorted({d for d in (datas or []) if isinstance(d, dt.date) and d.strftime("%Y-%m") == mes_ano})
+    if not validas:
+        raise RegraNegocioError("Marque pelo menos um dia de venda no mês.")
+    execute("DELETE FROM vendas_calendario WHERE operacao_id = ? AND mes = ?", (operacao_id, mes_ano))
+    for d in validas:
+        execute("INSERT INTO vendas_calendario (operacao_id, mes, data) VALUES (?, ?, ?)",
+                (operacao_id, mes_ano, d.isoformat()))
 
 
 def semanas(mes_ano: str) -> list[tuple[int, dt.date, dt.date]]:

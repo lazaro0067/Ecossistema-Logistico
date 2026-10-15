@@ -119,7 +119,10 @@ def aba_abc(usuario: dict, operacao_id: int) -> None:
 
 def render(usuario: dict, operacao_id: int) -> None:
     ui.cabecalho_modulo("vendas")
-    ui.abas_modulo(usuario, "vendas", {"acompanhamento": aba_acompanhamento, "metas_cestas": aba_metas_cestas,
+    from modules.vendas import calendario
+
+    ui.abas_modulo(usuario, "vendas", {"acompanhamento": aba_acompanhamento, "calendario": calendario.render,
+                                       "metas_cestas": aba_metas_cestas,
                                        "comercial": aba_comercial, "metas": aba_metas, "abc": aba_abc},
                    usuario, operacao_id)
 
@@ -153,7 +156,7 @@ def aba_acompanhamento(usuario: dict, operacao_id: int) -> None:
         if ressuprimento_repo.metas_df(op, mes).attrs.get("metas_do_ressuprimento"):
             avisos.append("metas: usando as do **Ressuprimento** (cadastre metas próprias em 🎯 Metas por Cesta)")
         st.caption("📊 Mesmo relatório do Acompanhamento do Ressuprimento · Vendas lê o **HL vendido (coluna D)**; "
-                   "o Ressuprimento lê a coluna C." + ("  \n⚠️ " + " · ".join(avisos) if avisos else ""))
+                   "o Ressuprimento lê a coluna C. A tendência usa os dias do **📅 Calendário de Vendas**." + ("  \n⚠️ " + " · ".join(avisos) if avisos else ""))
         cestas.acompanhamento(op, chave="vces", grade=True)
         with st.expander("📥 Atualizar o relatório de ressuprimento diário"):
             _subir_ressup(usuario, operacao_id, "vces2_")

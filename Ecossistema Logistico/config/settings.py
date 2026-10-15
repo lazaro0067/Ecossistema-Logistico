@@ -65,7 +65,8 @@ MODULOS = {
         "ruptura": "⚠️ Projeção de Falta",
     }},
     "vendas": {"rotulo": "Vendas", "icone": "📈", "abas": {
-        "acompanhamento": "📈 Acompanhamento de Vendas (Cestas)",
+        "acompanhamento": "📈 Acompanhamento Sell-out",
+        "calendario": "📅 Calendário de Vendas",
         "metas_cestas": "🎯 Metas por Cesta",
         "comercial": "🛍️ Estoque do Dia (Portal RN)",
         "metas": "🎯 Metas de Vendas",
@@ -80,6 +81,7 @@ MODULOS = {
         "pedidos": "📋 Gestão de Pedidos (Puxada)",
         "estrutura": "🏗️ Capacidade & Áreas",
         "produtos": "🔎 Catálogo de Produtos",
+        "grade": "✅ Check de Grade",
     }},
     "distribuicao": {"rotulo": "Distribuição (Entrega)", "icone": "🚛", "abas": {
         "book": "📘 Book DPO Entrega",
@@ -163,7 +165,7 @@ GRUPOS_ABAS = {
         "📈 Acompanhamento": ["cestas", "sellin", "gestao_dia", "metas"],
     },
     "vendas": {
-        "📈 Acompanhamento": ["acompanhamento", "metas_cestas"],
+        "📈 Acompanhamento": ["acompanhamento", "calendario", "metas_cestas"],
         "🛍️ Comercial": ["comercial"],
         "🎯 Metas & ABC": ["metas", "abc"],
     },
@@ -173,7 +175,7 @@ GRUPOS_ABAS = {
         "🔧 Manutenção": ["painel", "lancamentos"],
     },
     "armazem": {
-        "🏥 Saúde & Estoque": ["saude", "produtos"],
+        "🏥 Saúde & Estoque": ["saude", "grade", "produtos"],
         "📘 Book DPO": ["fundamentos", "manter", "melhorar"],
         "🏗️ Pátio & Pedidos": ["patio", "pedidos", "estrutura"],
     },
