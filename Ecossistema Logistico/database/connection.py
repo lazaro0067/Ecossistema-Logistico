@@ -13,6 +13,9 @@ Uso:  with get_conn() as conn:  conn.execute(sql, params)
 """
 import re
 import sqlite3
+import threading
+import time
+from collections import OrderedDict
 from contextlib import contextmanager
 
 import pandas as pd
@@ -91,12 +94,62 @@ class _Cursor:
     def __iter__(self):
         return iter(self.fetchall())
 
+    def tuplas(self) -> list:
+        """Linhas cruas (rápido para montar DataFrame — sem criar um objeto por linha)."""
+        r = self._linhas if self._linhas is not None else self._cur.fetchall()
+        self._linhas = [] if self._linhas is not None else None
+        if r and any(isinstance(x, memoryview) for x in r[0]):
+            return [tuple(bytes(x) if isinstance(x, memoryview) else x for x in t) for t in r]
+        return r
+
+
+# --- Cache de leitura ------------------------------------------------------------------------------------------
+# Cada tela repete as mesmas consultas (revenda, operações, cadastros...) e, no PostgreSQL da nuvem, cada consulta é
+# uma ida e volta pela rede. As leituras (query_df / query_one / query_all) ficam guardadas na memória e TODO o cache
+# é descartado na hora em que qualquer gravação acontece — o que aparece na tela nunca fica desatualizado.
+_CACHE: "OrderedDict[tuple, tuple[float, object]]" = OrderedDict()
+_CACHE_LOCK = threading.Lock()
+_CACHE_TTL = 60           # segundos — gravações deste app limpam na hora; o TTL cobre o app do motorista (outro processo)
+_CACHE_MAX_ITENS = 500
+_CACHE_MAX_LINHAS = 150_000  # resultado maior que isso não é guardado
+_LEITURA = re.compile(r"^\s*(SELECT|WITH|PRAGMA|EXPLAIN)\b", re.I)
+
+
+def limpar_cache() -> None:
+    with _CACHE_LOCK:
+        _CACHE.clear()
+
+
+def _cache_get(chave):
+    with _CACHE_LOCK:
+        item = _CACHE.get(chave)
+        if item is None:
+            return None
+        quando, valor = item
+        if time.monotonic() - quando > _CACHE_TTL:
+            _CACHE.pop(chave, None)
+            return None
+        _CACHE.move_to_end(chave)
+        return valor
+
+
+def _cache_put(chave, valor) -> None:
+    with _CACHE_LOCK:
+        _CACHE[chave] = (time.monotonic(), valor)
+        _CACHE.move_to_end(chave)
+        while len(_CACHE) > _CACHE_MAX_ITENS:
+            _CACHE.popitem(last=False)
+
 
 class Conexao:
     def __init__(self, raw, pg: bool):
         self.raw, self.pg = raw, pg
+        self.escreveu = False
 
     def execute(self, sql: str, params=()) -> _Cursor:
+        if not _LEITURA.match(sql):
+            self.escreveu = True
+            limpar_cache()
         cur = self.raw.cursor()
         if not self.pg:
             cur.execute(sql, tuple(params))
@@ -111,6 +164,8 @@ class Conexao:
         return _Cursor(cur)
 
     def executemany(self, sql: str, linhas) -> _Cursor:
+        self.escreveu = True
+        limpar_cache()
         cur = self.raw.cursor()
         linhas = [tuple(l) for l in linhas]
         if self.pg:
@@ -120,6 +175,8 @@ class Conexao:
         return _Cursor(cur)
 
     def executescript(self, script: str) -> None:
+        self.escreveu = True
+        limpar_cache()
         if not self.pg:
             self.raw.executescript(script)
             return
@@ -155,6 +212,9 @@ def get_conn(db_path=None):
             except Exception:
                 raw.rollback()
                 raise
+            finally:
+                if conn.escreveu:
+                    limpar_cache()
         return
 
     raw = sqlite3.connect(db_path or DB_PATH, timeout=15)
@@ -172,6 +232,8 @@ def get_conn(db_path=None):
         raise
     finally:
         raw.close()
+        if conn.escreveu:
+            limpar_cache()
 
 
 def tipo_violacao(e: Exception) -> str | None:
@@ -183,22 +245,56 @@ def tipo_violacao(e: Exception) -> str | None:
 
 
 # --- Atalhos usados pelos repositórios -----------------------------------
+def _chave(tipo: str, sql: str, params) -> tuple | None:
+    try:
+        return (tipo, _destino_cache(), sql, tuple(params))
+    except TypeError:  # parâmetro não "hasheável": não usa cache
+        return None
+
+
+def _destino_cache() -> str:
+    return "pg" if is_postgres() else str(DB_PATH)
+
+
 def query_df(sql: str, params: tuple | list = ()) -> pd.DataFrame:
+    chave = _chave("df", sql, params) if _LEITURA.match(sql) else None
+    if chave is not None:
+        hit = _cache_get(chave)
+        if hit is not None:
+            return hit.copy()
     with get_conn() as conn:
         cur = conn.execute(sql, params)
-        linhas = cur.fetchall()
-        return pd.DataFrame([list(r._valores) for r in linhas], columns=cur.colunas)
+        df = pd.DataFrame.from_records(cur.tuplas(), columns=cur.colunas)
+    if chave is not None and len(df) <= _CACHE_MAX_LINHAS:
+        _cache_put(chave, df.copy())
+    return df
 
 
 def query_one(sql: str, params: tuple | list = ()) -> dict | None:
+    chave = _chave("one", sql, params) if _LEITURA.match(sql) else None
+    if chave is not None:
+        hit = _cache_get(chave)
+        if hit is not None:
+            return dict(hit[0]) if hit[0] is not None else None
     with get_conn() as conn:
         row = conn.execute(sql, params).fetchone()
-        return dict(row) if row else None
+        r = dict(row) if row else None
+    if chave is not None:
+        _cache_put(chave, (r,))
+    return dict(r) if r else None
 
 
 def query_all(sql: str, params: tuple | list = ()) -> list[dict]:
+    chave = _chave("all", sql, params) if _LEITURA.match(sql) else None
+    if chave is not None:
+        hit = _cache_get(chave)
+        if hit is not None:
+            return [dict(x) for x in hit]
     with get_conn() as conn:
-        return [dict(r) for r in conn.execute(sql, params).fetchall()]
+        rs = [dict(r) for r in conn.execute(sql, params).fetchall()]
+    if chave is not None and len(rs) <= _CACHE_MAX_LINHAS:
+        _cache_put(chave, rs)
+    return [dict(x) for x in rs]
 
 
 def execute(sql: str, params: tuple | list = ()) -> int:

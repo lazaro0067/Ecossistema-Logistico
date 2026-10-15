@@ -126,11 +126,18 @@ def meses(operacao_id: int) -> list[str]:
     return r["mes"].tolist()
 
 
+def _tipos_produto() -> pd.DataFrame:
+    pr = query_df("SELECT cod, tipo AS tipo_prod, categoria FROM produtos")
+    pr["produto"] = pr["cod"].astype(str).str.replace(r"\.0$", "", regex=True)
+    return pr.drop(columns="cod").drop_duplicates("produto")
+
+
 def _bruto(operacao_id: int, mes: str, tipo_saldo: str) -> pd.DataFrame:
-    trecho, p = operacoes_repo.filtro("s.operacao_id", operacao_id)
-    df = query_df(f"""SELECT s.*, pr.tipo AS tipo_prod, pr.categoria FROM estoque_saldos s
-                      LEFT JOIN produtos pr ON CAST(pr.cod AS TEXT) = s.produto
-                      WHERE {trecho} AND s.mes = ? AND s.tipo_saldo = ?""", (*p, mes, tipo_saldo))
+    # o JOIN com CAST(cod AS TEXT) não usa índice e ficava lento (segundos) — junta aqui no pandas
+    trecho, p = operacoes_repo.filtro("operacao_id", operacao_id)
+    df = query_df(f"SELECT * FROM estoque_saldos WHERE {trecho} AND mes = ? AND tipo_saldo = ?", (*p, mes, tipo_saldo))
+    df = df.merge(_tipos_produto(), on="produto", how="left") if not df.empty else \
+        df.assign(tipo_prod=None, categoria=None)
     for c in ("fator", "qtd_unid", "qtd_venda", "custo_medio", "valor", "valor_ur", "hl"):
         df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
     return df

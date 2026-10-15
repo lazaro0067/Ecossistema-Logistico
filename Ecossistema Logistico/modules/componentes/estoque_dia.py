@@ -63,32 +63,39 @@ def render(operacao_id: int, key: str, mostrar_download: bool = True) -> None:
     modo = st.radio("Visualização", ["📊 Tabela", "📲 Para enviar no grupo", "📱 Cards"],
                     horizontal=True, key=f"{key}_modo")
     if modo.startswith("📲"):
-        _grupo(vis, operacao_id, key)
+        _grupo(vis, operacao_id, key, marcacao=True)
         return
     st.caption(f"{len(vis)} produto(s)")
     if modo.startswith("📱"):
-        _cards(vis.head(120))
+        _cards(vis.head(120), marcacao=True)
         if len(vis) > 120:
             st.caption("Mostrando os 120 primeiros — use os filtros para refinar.")
     else:
         tab = vis.assign(status=vis["status_comercial"].map(lambda s: f"{STATUS[s][1]} {s}"))
         ui.tabela(tab[["cod", "descricao", "marca", "tipo", "categoria_detalhada", "disponivel", "transito",
-                       "projetado", "linear_cx_dia", "doi", "status"]], column_config={
+                       "d0", "d1", "d2", "projetado", "linear_cx_dia", "doi", "status"]], column_config={
             "cod": st.column_config.NumberColumn("Código", format="%d"), "descricao": "Produto", "marca": "Marca",
             "tipo": "Tipo", "categoria_detalhada": "Embalagem",
             "disponivel": st.column_config.NumberColumn("Estoque (cx)", format="%.0f"),
             "transito": st.column_config.NumberColumn("🚚 Trânsito", format="%.0f",
                                                       help="Já carregado na fábrica, vindo para o armazém"),
-            "projetado": st.column_config.NumberColumn("Projetado", format="%.0f"),
+            "d0": st.column_config.NumberColumn("D0", format="%.0f", help="Marcado para puxar hoje (cx)"),
+            "d1": st.column_config.NumberColumn("D1", format="%.0f", help="Marcado para amanhã (cx)"),
+            "d2": st.column_config.NumberColumn("D2", format="%.0f", help="Marcado para depois de amanhã (cx)"),
+            "projetado": st.column_config.NumberColumn("Projetado", format="%.0f",
+                                                       help="Estoque + trânsito + D0 + D1 + D2"),
             "linear_cx_dia": st.column_config.NumberColumn("Venda/dia", format="%.1f"),
             "doi": st.column_config.NumberColumn("Cobertura", format="%.1f d"), "status": "Status"})
     if mostrar_download:
         ui.downloads(vis.drop(columns=["situacao"], errors="ignore"), "estoque_comercial", key=f"dl_{key}")
 
 
-def _cards(df) -> None:
+def _cards(df, marcacao: bool = False) -> None:
+    """marcacao=True (dentro do sistema) mostra D0/D1/D2; o link do RN não mostra."""
     partes = []
     for r in df.itertuples():
+        marc = (f'<div class="det" style="margin-top:.3rem">Marcado: D0 <b>{ui.numero(r.d0)}</b> · D1 '
+                f'<b>{ui.numero(r.d1)}</b> · D2 <b>{ui.numero(r.d2)}</b></div>') if marcacao else ""
         cor = tema.STATUS[STATUS[r.status_comercial][0]][0]
         doi = "—" if r.doi != r.doi else f"{ui.numero(r.doi, 1)} dias"
         partes.append(f"""
@@ -101,7 +108,8 @@ def _cards(df) -> None:
     <div><div style="color:#7a4fc9">🚚 Trânsito</div><b>{ui.numero(r.transito)}</b></div>
     <div><div style="color:#52514e">Cobertura</div><b>{doi}</b></div>
   </div>
-  <div class="det" style="margin-top:.35rem">Projetado (estoque + trânsito): <b>{ui.numero(r.projetado)} cx</b></div>
+  {marc}
+  <div class="det" style="margin-top:.35rem">Projetado ({"estoque + trânsito + D0/D1/D2" if marcacao else "estoque + trânsito"}): <b>{ui.numero(r.projetado if marcacao else r.disponivel + r.transito)} cx</b></div>
 </div>""")
     c1, c2 = st.columns(2)
     metade = (len(partes) + 1) // 2
@@ -132,7 +140,8 @@ def _curto(nome: str, n: int = 34) -> str:
     return nome if len(nome) <= n else nome[: n - 1].rstrip() + "…"
 
 
-def _grupo(vis, operacao_id: int, key: str) -> None:
+def _grupo(vis, operacao_id: int, key: str, marcacao: bool = False) -> None:
+    """marcacao=True (dentro do sistema) inclui D0/D1/D2; o link do RN (portal) não."""
     import html as _h
 
     from core import tempo
@@ -141,11 +150,12 @@ def _grupo(vis, operacao_id: int, key: str) -> None:
     c1, c2, c3 = st.columns([2, 1, 1])
     status_sel = c1.multiselect("Mostrar status", list(STATUS), default=["Stock Out", "Stock Low"],
                                 format_func=lambda s: f"{STATUS[s][1]} {s}", key=f"{key}_g_status")
-    so_marc = c2.toggle("Só com trânsito", value=False, key=f"{key}_g_marc")
+    so_marc = c2.toggle("Só com marcação/trânsito" if marcacao else "Só com trânsito", value=False,
+                        key=f"{key}_g_marc")
     ordem = c3.selectbox("Ordenar por", ["Cobertura", "Produto", "Estoque"], key=f"{key}_g_ord")
     g = vis[vis["status_comercial"].isin(status_sel)] if status_sel else vis
     if so_marc:
-        g = g[g["transito"] > 0]
+        g = g[(g["transito"] + (g["d0"] + g["d1"] + g["d2"] if marcacao else 0)) > 0]
     g = g.sort_values({"Cobertura": "doi", "Produto": "descricao", "Estoque": "disponivel"}[ordem],
                       na_position="last")
     if g.empty:
@@ -163,15 +173,19 @@ def _grupo(vis, operacao_id: int, key: str) -> None:
         linhas.append(
             f'<tr class="{_CLASSE.get(r.status_comercial, "")}"><td>{STATUS[r.status_comercial][1]} '
             f'{_h.escape(_curto(r.descricao, 48))}</td><td><b>{ui.numero(r.disponivel)}</b></td>'
-            + "".join(f'<td class="{"z" if not v else ""}">{n(v)}</td>' for v in (r.transito,))
+            + "".join(f'<td class="{"z" if not v else ""}">{n(v)}</td>'
+                      for v in ((r.transito, r.d0, r.d1, r.d2) if marcacao else (r.transito,)))
             + f"<td>{doi}</td></tr>")
     st.markdown(
         _CSS_GRUPO + f'<div class="eg-box"><div class="eg-tit"><b>📦 Estoque · {_h.escape(filial)}</b>'
         f'<span>{agora:%d/%m %H:%M} · {len(g)} produto(s)</span></div>'
         '<table class="eg-tab"><thead><tr><th>Produto</th><th>Estoque</th><th>Trâns.</th>'
-        f'<th>Cob.</th></tr></thead><tbody>{"".join(linhas)}</tbody></table>'
-        '<div class="eg-leg">Estoque em caixas · Trâns. = já carregado, vindo para o armazém · Cob. = dias de cobertura · '
-        '🔴 Stock Out · 🟡 Stock Low · 🟢 Ideal · 🔵 Over</div></div>', unsafe_allow_html=True)
+        + ("<th>D0</th><th>D1</th><th>D2</th>" if marcacao else "")
+        + f'<th>Cob.</th></tr></thead><tbody>{"".join(linhas)}</tbody></table>'
+        '<div class="eg-leg">Estoque em caixas · Trâns. = já carregado, vindo para o armazém · '
+        + ("D0/D1/D2 = marcado para hoje, amanhã e depois · " if marcacao else "")
+        + 'Cob. = dias de cobertura · 🔴 Stock Out · 🟡 Stock Low · 🟢 Ideal · 🔵 Over</div></div>',
+        unsafe_allow_html=True)
     st.caption("📸 Tire o print do quadro acima ou copie o texto abaixo para colar no grupo.")
     texto = [f"*📦 Estoque {filial} — {agora:%d/%m %H:%M}*", ""]
     for rot in STATUS:
@@ -180,11 +194,14 @@ def _grupo(vis, operacao_id: int, key: str) -> None:
             continue
         texto.append(f"{STATUS[rot][1]} *{rot}* ({len(sub)})")
         for r in sub.itertuples():
-            puxada = " + ".join(f"{d} {ui.numero(v)}" for d, v in (("🚚 trânsito", r.transito),) if v)
+            itens = (("🚚 trânsito", r.transito), ("D0", r.d0), ("D1", r.d1), ("D2", r.d2)) if marcacao else \
+                (("🚚 trânsito", r.transito),)
+            puxada = " + ".join(f"{d} {ui.numero(v)}" for d, v in itens if v)
             doi = "" if r.doi != r.doi else f" · {ui.numero(r.doi, 1)}d"
             texto.append(f"• {_curto(r.descricao, 40)} — {ui.numero(r.disponivel)} cx{doi}"
                          + (f" · {puxada}" if puxada else ""))
         texto.append("")
     with st.expander("📋 Texto para WhatsApp (copiar)"):
         st.code("\n".join(texto).strip(), language=None)
-    ui.downloads(g.drop(columns=["situacao"], errors="ignore"), "estoque_grupo", key=f"dl_{key}_g")
+    sem = [] if marcacao else ["d0", "d1", "d2", "projetado"]
+    ui.downloads(g.drop(columns=["situacao", *sem], errors="ignore"), "estoque_grupo", key=f"dl_{key}_g")

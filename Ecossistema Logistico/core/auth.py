@@ -71,6 +71,7 @@ _ABAS_IRMAS = {"armazem.pedidos": "armazem.patio",
                "ressuprimento.puxada_pedidos": "ressuprimento.sugestao",
                "ressuprimento.ruptura": "ressuprimento.estoque",
                "ressuprimento.gestao_dia": "ressuprimento.cestas",
+               "ressuprimento.sellin": "ressuprimento.cestas",
                **{f"frota.{a}": "frota.painel" for a in ("gestao", "placas", "motoristas", "transportadoras",
                                                           "locadoras")}}
 

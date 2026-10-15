@@ -86,36 +86,56 @@ def _assinatura(df: pd.DataFrame) -> str:
     return hashlib.md5(f"{list(df.columns)}|{len(df)}".encode()).hexdigest()[:10]
 
 
-def _baixar_tabela(df: pd.DataFrame, nome: str) -> None:
+def _xlsx(df: pd.DataFrame) -> tuple[bytes, str, str]:
     import io
 
-    sig = _assinatura(df)
-    st.session_state["_tb_ultima"] = sig  # ui.downloads logo depois da mesma tabela não repete o botão
-    stamp = tempo.agora().strftime("%Y%m%d_%H%M")
     try:
         buf = io.BytesIO()
         with pd.ExcelWriter(buf, engine="openpyxl") as w:
             df.to_excel(w, index=False, sheet_name="Dados")
-        dados, ext = buf.getvalue(), "xlsx"
-        mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    except Exception:
-        dados, ext, mime = df.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig"), "csv", "text/csv"
+        return buf.getvalue(), "xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    except Exception:  # noqa: BLE001
+        return df.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig"), "csv", "text/csv"
+
+
+def _baixar_tabela(df: pd.DataFrame, nome: str) -> None:
+    """Botão de baixar em Excel. O arquivo só é montado quando a pessoa pede (montar o Excel de toda tabela a cada
+    clique deixava as telas lentas): 1º clique prepara, 2º baixa."""
+    sig = _assinatura(df)
+    st.session_state["_tb_ultima"] = sig  # ui.downloads logo depois da mesma tabela não repete o botão
     for n in range(50):  # a mesma tabela pode aparecer mais de uma vez na tela
+        chave = f"tbdl_{sig}_{n}"
+        if chave in st.session_state.get("_tb_chaves", set()):
+            continue
+        st.session_state.setdefault("_tb_chaves", set()).add(chave)
+        break
+    pronto = st.session_state.get("_tb_pronto", {})
+    if chave in pronto and pronto[chave][0] == _assin_dados(df):
+        dados, ext, mime = pronto[chave][1]
+        stamp = tempo.agora().strftime("%Y%m%d_%H%M")
         try:
-            st.download_button("⬇️ Baixar relatório", dados, file_name=f"{nome}_{stamp}.{ext}", mime=mime,
-                               key=f"tbdl_{sig}_{n}", on_click="ignore")
-            return
-        except TypeError:  # Streamlit sem on_click="ignore"
-            try:
-                st.download_button("⬇️ Baixar relatório", dados, file_name=f"{nome}_{stamp}.{ext}", mime=mime,
-                                   key=f"tbdl_{sig}_{n}")
-                return
-            except Exception as e:
-                if "key" not in str(e).lower() and "duplicate" not in str(e).lower():
-                    return
-        except Exception as e:
-            if "key" not in str(e).lower() and "duplicate" not in str(e).lower():
-                return
+            st.download_button("⬇️ Baixar Excel", dados, file_name=f"{nome}_{stamp}.{ext}", mime=mime,
+                               key=f"{chave}_dl", on_click="ignore", type="primary")
+        except TypeError:
+            st.download_button("⬇️ Baixar Excel", dados, file_name=f"{nome}_{stamp}.{ext}", mime=mime,
+                               key=f"{chave}_dl")
+        return
+    if st.button("⬇️ Baixar relatório", key=f"{chave}_prep", help="Monta o arquivo Excel desta tabela"):
+        pronto = {chave: (_assin_dados(df), _xlsx(df))}  # guarda só o último (não acumula memória)
+        st.session_state["_tb_pronto"] = pronto
+        st.rerun()
+
+
+def _assin_dados(df: pd.DataFrame) -> int:
+    try:
+        return int(pd.util.hash_pandas_object(df.astype(str), index=False).sum())
+    except Exception:  # noqa: BLE001
+        return len(df)
+
+
+def limpar_chaves_tabela() -> None:
+    """Chamado no início de cada execução: as chaves dos botões de baixar recomeçam."""
+    st.session_state["_tb_chaves"] = set()
 
 
 def botao(rotulo: str, key: str | None = None, **kwargs) -> bool:
@@ -262,14 +282,14 @@ def downloads(df: pd.DataFrame, nome: str, key: str | None = None) -> None:
     k = key or nome
     stamp = tempo.agora().strftime("%Y%m%d_%H%M")
     c1, c2, _ = st.columns([1, 1, 3])
-    buf = io.BytesIO()
-    try:
-        with pd.ExcelWriter(buf, engine="openpyxl") as w:
-            df.to_excel(w, index=False, sheet_name="Dados")
-        c1.download_button("⬇️ Excel", buf.getvalue(), file_name=f"{nome}_{stamp}.xlsx", key=f"dlx_{k}",
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    except Exception:
-        pass
+    pronto = st.session_state.get("_dl_pronto", {})
+    if k in pronto and pronto[k][0] == _assin_dados(df):
+        dados, ext, mime = pronto[k][1]
+        c1.download_button("⬇️ Excel", dados, file_name=f"{nome}_{stamp}.{ext}", key=f"dlx_{k}", mime=mime,
+                           type="primary")
+    elif c1.button("⬇️ Excel", key=f"dlxp_{k}", help="Monta o arquivo Excel"):
+        st.session_state["_dl_pronto"] = {k: (_assin_dados(df), _xlsx(df))}
+        st.rerun()
     c2.download_button("⬇️ CSV", df.to_csv(index=False, sep=";", decimal=",").encode("utf-8-sig"),
                        file_name=f"{nome}_{stamp}.csv", mime="text/csv", key=f"dlc_{k}")
 

@@ -378,6 +378,7 @@ def _alertas(usuario: dict) -> None:
 
 
 def main() -> None:
+    ui.limpar_chaves_tabela()
     tema.aplicar()
     try:
         from database.schema import MIGRACOES
