@@ -1,0 +1,37 @@
+# Deploy no Render (https://render.com) — servidor com mais memória que o Streamlit Cloud gratuito.
+# No Render: New + › Blueprint › escolha este repositório. Depois preencha as variáveis marcadas com sync: false.
+services:
+  - type: web
+    name: ecossistema-logistico
+    runtime: python
+    plan: pro            # Pro = 4 GB de memória · 2 CPU (Standard = 2 GB)
+    region: virginia
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
+    autoDeploy: true     # todo Push no GitHub atualiza o sistema sozinho
+    healthCheckPath: /_stcore/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: DATABASE_URL
+        sync: false
+      - key: BACKUP_GITHUB_TOKEN
+        sync: false
+      - key: BACKUP_GITHUB_REPO
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USUARIO
+        sync: false
+      - key: SMTP_SENHA
+        sync: false
+      - key: SMTP_REMETENTE
+        sync: false
+      - key: APP_URL
+        sync: false
+      - key: CARRETEIRO_URL
+        sync: false
