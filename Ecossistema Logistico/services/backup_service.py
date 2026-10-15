@@ -93,7 +93,7 @@ def resumo() -> list[dict]:
 # Bases que vêm dos relatórios (sobem de novo pelos arquivos) e são enormes: ficam fora do backup automático.
 # Usuários, acessos, cadastros, metas, OBZ, simulador, lançamentos — tudo o que é digitado — continua no backup.
 BASES_RELATORIO = {"notas_cli_prod_mes", "notas_produto_mes", "notas_cliente_mes", "notas_dia", "entregas_notas",
-                   "entregas_mapas", "obz_real_lanc", "estoque_saldos", "notas_prod_dia"}
+                   "entregas_mapas", "obz_real_lanc", "estoque_saldos", "notas_prod_dia", "notas_mapa_prod"}
 _LOTE = 5_000
 _MAX_LINHAS_TABELA = 400_000  # tabela maior que isso não entra (protege a memória do servidor)
 

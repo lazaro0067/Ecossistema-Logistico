@@ -197,6 +197,11 @@ def importar_notas(conteudo, nome: str, operacao_id: int, usuario: str = "", pro
                       .agg(hl=("hl", "sum"), qtde=("qtde", "sum"), notas=("nota", "nunique"),
                            clientes=("cliente", "nunique"), valor=("valor", "sum")))
             _gravar("entregas_notas", pd.Series([operacao_id] * len(agg)), agg, {mes})
+            # mapa × produto — carreto da Ambev por mapa e por placa (cruza com o PCD)
+            mp_ = (ent.assign(produto=ent["produto"].map(_cod))
+                      .groupby(["data", "mapa", "operacao_cod", "status", "produto"], as_index=False)
+                      .agg(descricao=("descricao", "first"), qtde=("qtde", "sum"), hl=("hl", "sum")))
+            _gravar("notas_mapa_prod", pd.Series([operacao_id] * len(mp_)), mp_, {mes})
             mapas += int(ent["mapa"].nunique())
         rs.append(fs.gravar_resumo(df, operacao_id, "venda", "emissao"))
         sem |= set(df.loc[df["sem_fator"], "produto"])

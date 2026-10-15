@@ -855,6 +855,20 @@ CREATE TABLE IF NOT EXISTS notas_prod_dia (
     hl           REAL
 );
 
+CREATE TABLE IF NOT EXISTS notas_mapa_prod (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id  INTEGER NOT NULL,
+    data         TEXT NOT NULL,
+    mapa         TEXT NOT NULL,
+    operacao_cod TEXT,
+    status       TEXT,
+    produto      TEXT,
+    descricao    TEXT,
+    qtde         REAL,
+    hl           REAL,
+    importado_em TEXT
+);
+
 CREATE TABLE IF NOT EXISTS remun_tabela (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     operacao_id   INTEGER NOT NULL,
@@ -1513,6 +1527,10 @@ MIGRACOES: list[tuple[str, str]] = [
         ALTER TABLE remun_tabela ADD COLUMN mes TEXT;
         UPDATE remun_tabela SET mes = substr(ini, 1, 7) WHERE mes IS NULL;
         CREATE INDEX IF NOT EXISTS ix_remun_mes ON remun_tabela(operacao_id, unidade_cod, mes);
+    """),
+    ("044_mapa_prod", """
+        CREATE INDEX IF NOT EXISTS ix_mapa_prod ON notas_mapa_prod(operacao_id, data);
+        CREATE INDEX IF NOT EXISTS ix_mapa_prod_m ON notas_mapa_prod(operacao_id, mapa);
     """),
 ]
 

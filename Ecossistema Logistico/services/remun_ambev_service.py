@@ -422,44 +422,9 @@ def carreto(operacao_id: int, de: str, ate: str) -> pd.DataFrame:
     return pd.concat(partes, ignore_index=True)[_COLS_CARRETO]
 
 
-def _frete_mes_resumo(op: int, mes: str, ops: list[str], tab: pd.DataFrame, mp: dict) -> pd.DataFrame:
-    """Mês sem detalhe por dia: caixas compradas por produto (resumo mensal) repartidas entre as fábricas ligadas
-    que têm o produto na tabela, na proporção do HL comprado de cada fábrica no mês (resumo por fornecedor)."""
-    from services import faturamento_service as fs
-
-    rm = _resumo_mes(op, "compra", ops, mes)
-    if rm.empty:
-        return pd.DataFrame(columns=_COLS_FRETE)
-    st_ = fs.STATUS_PADRAO["compra"]
-    cli = query_df(f"""SELECT cliente, SUM(hl) AS hl FROM notas_cliente_mes WHERE operacao_id = ?
-                       AND origem = 'compra' AND mes = ? AND operacao_cod IN ({', '.join('?' * len(ops))})
-                       AND status IN ({', '.join('?' * len(st_))}) GROUP BY cliente""", (op, mes, *ops, *st_))
-    cli["cliente"] = cli["cliente"].map(_cod)
-    cli["hl"] = pd.to_numeric(cli["hl"], errors="coerce").fillna(0.0)
-    hl_forn = cli.groupby("cliente")["hl"].sum()
-    forn_unid = {f: u for (o, u), f in mp.items() if o == op}
-    nomes_u = dict(zip(tab["unidade_cod"], tab["unidade_nome"])) if not tab.empty else {}
-    tarifas = {u: _tarifas_meio(tab[tab["unidade_cod"] == u], "frete", mes) for u in set(forn_unid.values())
-               if not tab.empty}
-    linhas = []
-    for r in rm.itertuples(index=False):
-        cand = [(f, u) for f, u in forn_unid.items() if u in tarifas and pd.notna(tarifas[u][0].get(r.produto))
-                and hl_forn.get(f, 0) > 0]
-        tot = sum(hl_forn.get(f, 0) for f, _ in cand)
-        if not cand or not tot:
-            linhas.append((op, mes, "", "", "", r.produto, r.descricao, r.qtde, r.hl, float("nan"), 0.0, False, "mês"))
-            continue
-        for f, u in cand:
-            k = hl_forn[f] / tot
-            t = float(tarifas[u][0][r.produto])
-            linhas.append((op, mes, f, u, nomes_u.get(u, ""), r.produto, r.descricao, r.qtde * k, r.hl * k, t,
-                           r.qtde * k * t, not tarifas[u][1], "mês"))
-    return pd.DataFrame(linhas, columns=_COLS_FRETE)
-
-
 def frete(operacao_id: int, de: str, ate: str) -> pd.DataFrame:
     """Caixas puxadas de cada fábrica no mês × frete puxada (coluna N) da tabela daquela fábrica, vigência do meio
-    do mês. Fábrica = coluna M do 03.02.37 compra (detalhe por dia); sem o detalhe, estima pelo resumo do mês."""
+    do mês — exato por produto e fábrica (coluna M do 03.02.37 compra). Mês sem esse detalhe não entra (sem média)."""
     partes = []
     for op in operacoes_repo.ids_efetivos(operacao_id):
         ops = _ops(op, "frete")
@@ -470,10 +435,7 @@ def frete(operacao_id: int, de: str, ate: str) -> pd.DataFrame:
         com_dia = meses_com_dia(op, "compra", de, ate)
         qd = _qtd_dia(op, "compra", ops, de, ate) if com_dia else pd.DataFrame()
         for mes in _meses(de, ate):
-            if mes not in com_dia:
-                fm = _frete_mes_resumo(op, mes, ops, tab, mp)
-                if not fm.empty:
-                    partes.append(fm)
+            if mes not in com_dia:  # sem o detalhe produto × fábrica: não estima (precisa subir a compra de novo)
                 continue
             q = qd[qd["data"].str[:7] == mes].rename(columns={"cliente": "fornecedor"})
             q = q.groupby(["fornecedor", "produto"], as_index=False).agg(
@@ -492,6 +454,59 @@ def frete(operacao_id: int, de: str, ate: str) -> pd.DataFrame:
     if not partes:
         return pd.DataFrame(columns=_COLS_FRETE)
     return pd.concat(partes, ignore_index=True)[_COLS_FRETE]
+
+
+def meses_sem_mapa(operacao_id: int, de: str, ate: str) -> list[str]:
+    """Meses com 03.02.37 vendas no sistema mas sem o detalhe mapa × produto (subidos antes desta versão)."""
+    trecho, p = operacoes_repo.filtro("operacao_id", operacao_id)
+    a = query_df(f"SELECT DISTINCT substr(data, 1, 7) AS m FROM entregas_notas WHERE {trecho} AND data BETWEEN ? AND ?",
+                 (*p, de, ate))
+    b = query_df(f"SELECT DISTINCT substr(data, 1, 7) AS m FROM notas_mapa_prod WHERE {trecho} AND data BETWEEN ? AND ?",
+                 (*p, de, ate))
+    return sorted(set(a["m"]) - set(b["m"]))
+
+
+def carreto_mapas(operacao_id: int, de: str, ate: str) -> pd.DataFrame:
+    """Carreto por mapa × produto: caixas de cada mapa (03.02.37 vendas, coluna AA) × carreto do meio do mês, com a
+    placa, o motorista e as entregas do PCD (cruza pelo número do mapa)."""
+    from services import faturamento_service as fs
+
+    partes = []
+    for op in operacoes_repo.ids_efetivos(operacao_id):
+        ops = _ops(op, "carreto")
+        st_ = fs.STATUS_PADRAO["venda"]
+        if not ops:
+            continue
+        q = query_df(f"""SELECT operacao_id, data, mapa, produto, MAX(descricao) AS descricao, SUM(qtde) AS qtde,
+                                SUM(hl) AS hl FROM notas_mapa_prod WHERE operacao_id = ? AND data BETWEEN ? AND ?
+                                AND operacao_cod IN ({', '.join('?' * len(ops))})
+                                AND status IN ({', '.join('?' * len(st_))})
+                         GROUP BY operacao_id, data, mapa, produto""", (op, de, ate, *ops, *st_))
+        if q.empty:
+            continue
+        for c in ("qtde", "hl"):
+            q[c] = pd.to_numeric(q[c], errors="coerce").fillna(0.0)
+        q["mes"] = q["data"].str[:7]
+        tab = _carreto_unico(tabela(op))
+        q["tarifa"] = float("nan")
+        for mes in q["mes"].unique():
+            tar, _ = _tarifas_meio(tab, "carreto", mes)
+            m = q["mes"] == mes
+            q.loc[m, "tarifa"] = q.loc[m, "produto"].map(tar)
+        q["valor"] = (q["qtde"] * q["tarifa"]).fillna(0.0)
+        pcd = query_df("""SELECT mapa, MIN(data) AS data_pcd, MAX(placa) AS placa, MAX(motorista) AS motorista,
+                                 MAX(veiculo) AS veiculo, SUM(entregas) AS entregas FROM entregas_mapas
+                          WHERE operacao_id = ? GROUP BY mapa""", (op,))
+        q = q.merge(pcd, on="mapa", how="left")
+        partes.append(q)
+    if not partes:
+        return pd.DataFrame(columns=["operacao_id", "data", "mapa", "produto", "descricao", "qtde", "hl", "mes",
+                                     "tarifa", "valor", "data_pcd", "placa", "motorista", "veiculo", "entregas"])
+    out = pd.concat(partes, ignore_index=True)
+    out["placa"] = out["placa"].fillna("").astype(str).str.upper().str.strip()
+    out["motorista"] = out["motorista"].fillna("")
+    out["entregas"] = pd.to_numeric(out["entregas"], errors="coerce")
+    return out
 
 
 def nomes_fornecedores(operacao_id: int) -> dict[str, str]:

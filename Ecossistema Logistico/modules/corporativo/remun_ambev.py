@@ -58,14 +58,12 @@ def render(usuario: dict, operacao_id: int) -> None:
     ini, fim = f"{de}-01", pd.Period(ate).end_time.strftime("%Y-%m-%d")
     lista = [m for m in meses if de <= m <= ate]
     origem = {"carreto": "venda", "frete": "compra"}.get(tela)
-    resumo = []
-    for o in ([origem] if origem else ["venda", "compra"]):
-        resumo += [f"{ui.nome_mes(m)} ({'vendas' if o == 'venda' else 'compra'})"
-                   for m in rs.meses_resumo(operacao_id, o, ini, fim)]
-    if resumo:
-        st.caption("📊 Calculado pelo 03.02.37 que já está no sistema (resumo do mês) em: " + ", ".join(resumo)
-                   + ". Carreto = caixas do mês × carreto do período; frete por fábrica repartido pelo HL comprado de "
-                   "cada fábrica no mês. Os meses subidos de novo passam a usar o detalhe por dia e produto.")
+    if tela in ("frete", "obz"):
+        sem_det = rs.meses_resumo(operacao_id, "compra", ini, fim)
+        if sem_det:
+            st.warning("🏭 O frete é calculado exatamente por produto e fábrica (coluna M do 03.02.37 compra). "
+                       + ", ".join(ui.nome_mes(m) for m in sem_det) + " foi(ram) subido(s) antes deste detalhe — suba "
+                       "de novo o 03.02.37 compra desse(s) mês(es) em 📥 Relatórios para entrar no frete.")
     tm = rs.tabelas_mes(operacao_id)
     sem_tab = [m for m in lista if m not in set(tm["mes"])]
     if sem_tab:
@@ -78,9 +76,11 @@ def render(usuario: dict, operacao_id: int) -> None:
 
 # --- 🚚 Carreto --------------------------------------------------------------------------------------------------------
 def _por_produto(df: pd.DataFrame) -> pd.DataFrame:
-    """Agrupa por produto: quantidade, remuneração unitária (R$/cx da vigência do meio do mês) e total."""
+    """Agrupa por produto (e mês, quando o período tem mais de um): quantidade, remuneração unitária (R$/cx da
+    vigência do meio do mês) e total."""
     d = df.assign(qtde_com=df["qtde"].where(df["tarifa"].notna(), 0.0))
-    g = (d.groupby("produto", as_index=False)
+    chave = ["mes", "produto"] if "mes" in d and d["mes"].nunique() > 1 else "produto"
+    g = (d.groupby(chave, as_index=False)
           .agg(descricao=("descricao", "first"), qtde=("qtde", "sum"), hl=("hl", "sum"), valor=("valor", "sum"),
                qtde_com=("qtde_com", "sum"), tem=("tarifa", lambda s: s.notna().any())))
     g["tarifa"] = [_div(v, q) if t else None for v, q, t in zip(g["valor"], g["qtde_com"], g["tem"])]
@@ -88,9 +88,12 @@ def _por_produto(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _tab_prod(df: pd.DataFrame, rot_qtd: str = "Quantidade") -> pd.DataFrame:
-    return pd.DataFrame({"Cód": df["produto"].astype(str), "Produto": df["descricao"].fillna(""),
-                         rot_qtd: df["qtde"].map(_n), "Remuneração un (R$/cx)": df["tarifa"].map(_t),
-                         "Remuneração total": df["valor"].map(_m)}).reset_index(drop=True)
+    out = pd.DataFrame({"Cód": df["produto"].astype(str), "Produto": df["descricao"].fillna(""),
+                        rot_qtd: df["qtde"].map(_n), "Remuneração un (R$/cx)": df["tarifa"].map(_t),
+                        "Remuneração total": df["valor"].map(_m)}).reset_index(drop=True)
+    if "mes" in df:
+        out.insert(0, "Mês", df["mes"].map(ui.nome_mes).values)
+    return out
 
 
 def _aviso_meio(df: pd.DataFrame) -> None:
@@ -99,7 +102,103 @@ def _aviso_meio(df: pd.DataFrame) -> None:
                   if df["fora_vig"].any() else ""))
 
 
+_VISOES_CAR = {"produto": "📦 Por produto", "mapa": "🗺️ Por mapa", "placa": "🚚 Por placa"}
+
+
 def _carreto(op: int, ini: str, fim: str) -> None:
+    v = ui._escolha("ra_car_vis", list(_VISOES_CAR), "produto", formatar=_VISOES_CAR.get)
+    if v == "produto":
+        _carreto_produto(op, ini, fim)
+    else:
+        _carreto_mapa(op, ini, fim, v)
+
+
+def _carreto_mapa(op: int, ini: str, fim: str, visao: str) -> None:
+    falta = rs.meses_sem_mapa(op, ini, fim)
+    if falta:
+        st.warning("Para ver o carreto por mapa e placa, suba de novo o 03.02.37 vendas de "
+                   + ", ".join(ui.nome_mes(m) for m in falta) + " em 📥 Relatórios (o sistema passa a guardar os "
+                   "produtos de cada mapa).")
+    it = rs.carreto_mapas(op, ini, fim)
+    if it.empty:
+        st.info("Sem entregas com mapa no período.")
+        return
+    it["qtde_com"] = it["qtde"].where(it["tarifa"].notna(), 0.0)
+    mp = (it.groupby("mapa", as_index=False)
+            .agg(data=("data", "min"), data_pcd=("data_pcd", "first"), placa=("placa", "first"),
+                 motorista=("motorista", "first"), veiculo=("veiculo", "first"), entregas=("entregas", "first"),
+                 qtde=("qtde", "sum"), qtde_com=("qtde_com", "sum"), hl=("hl", "sum"), valor=("valor", "sum"),
+                 produtos=("produto", "nunique")))
+    mp["placa"] = mp["placa"].replace("", "Sem placa (mapa fora do PCD)")
+    mp["dia"] = pd.to_datetime(mp["data_pcd"].fillna(mp["data"]))
+    tot, viag = mp["valor"].sum(), len(mp)
+    sem_pcd = int(mp["data_pcd"].isna().sum())
+    ent = pd.to_numeric(mp["entregas"], errors="coerce").sum()
+    tema.kpis([
+        {"titulo": "Remuneração carreto", "valor": _m(tot), "icone": "💰", "status": "bom",
+         "detalhe": f"{_n(viag)} mapas · {mp['placa'].nunique()} placas"},
+        {"titulo": "Por mapa (viagem)", "valor": _m(_div(tot, viag)), "icone": "🗺️", "status": "info",
+         "detalhe": f"{_n(_div(mp['qtde_com'].sum(), viag))} cx por mapa"},
+        {"titulo": "Por entrega", "valor": _m(_div(tot, ent)), "icone": "📍", "status": "info",
+         "detalhe": f"{_n(ent)} entregas (PCD)"},
+        {"titulo": "Por caixa", "valor": _t(_div(tot, mp["qtde_com"].sum())) + "/cx", "icone": "📦", "status": "info",
+         "detalhe": f"{_n(mp['qtde_com'].sum())} cx com carreto"},
+        {"titulo": "Mapas sem PCD", "valor": _n(sem_pcd), "icone": "⚠️", "status": "atencao" if sem_pcd else "bom",
+         "detalhe": "mapa da 03.02.37 sem linha no PCD"},
+    ], key=f"kp_ra_map_{visao}")
+
+    def produtos_do(mapas: list) -> pd.DataFrame:
+        x = it[it["mapa"].isin(mapas)]
+        return _tab_prod(_por_produto(x.drop(columns=["mes"])), "Quantidade entregue")
+
+    def tab_mapas(d: pd.DataFrame) -> pd.DataFrame:
+        return pd.DataFrame({"Data": d["dia"].dt.strftime("%d/%m/%Y"), "Mapa": d["mapa"], "Placa": d["placa"],
+                             "Motorista": d["motorista"].fillna(""), "Entregas": d["entregas"].map(_n),
+                             "Caixas": d["qtde"].map(_n), "Remuneração": d["valor"].map(_m),
+                             "R$/cx": [_t(_div(v, q)) for v, q in zip(d["valor"], d["qtde_com"])],
+                             "R$/entrega": [_m(_div(v, e)) for v, e in zip(d["valor"], d["entregas"])]
+                             }).reset_index(drop=True)
+
+    if visao == "placa":
+        pl = (mp.groupby("placa", as_index=False)
+                .agg(viagens=("mapa", "count"), motorista=("motorista", lambda s: ", ".join(sorted(
+                     {x for x in s if x})[:2])), entregas=("entregas", "sum"), qtde=("qtde", "sum"),
+                     qtde_com=("qtde_com", "sum"), valor=("valor", "sum"))
+                .sort_values("valor", ascending=False))
+        g = pl.head(20).iloc[::-1]
+        fig = go.Figure(go.Bar(y=g["placa"], x=g["valor"], orientation="h", marker_color=VERDE,
+                               text=[f"{ui.compacto(v)} · {int(n)} viag." for v, n in zip(g["valor"], g["viagens"])],
+                               textposition="outside"))
+        graficos.mostrar(graficos._layout(fig, "Carreto por placa (R$) — clique para ver os mapas",
+                                          max(300, 30 * len(g) + 90), legenda=False), key="ra_g_car_placa",
+                         detalhe=lambda r: tab_mapas(mp[mp["placa"] == r].sort_values("dia")))
+        tema.secao("🚚 Remuneração por placa")
+        ui.tabela(pd.DataFrame({
+            "Placa": pl["placa"], "Motorista": pl["motorista"], "Viagens": pl["viagens"],
+            "Entregas": pl["entregas"].map(_n), "Caixas": pl["qtde"].map(_n), "Remuneração": pl["valor"].map(_m),
+            "R$/viagem": [_m(_div(v, n)) for v, n in zip(pl["valor"], pl["viagens"])],
+            "R$/entrega": [_m(_div(v, e)) for v, e in zip(pl["valor"], pl["entregas"])],
+            "R$/cx": [_t(_div(v, q)) for v, q in zip(pl["valor"], pl["qtde_com"])]}), baixar="carreto_por_placa")
+        esc = st.selectbox("Placa", pl["placa"].tolist(), key="ra_car_placa")
+        ui.tabela(tab_mapas(mp[mp["placa"] == esc].sort_values("dia")), baixar=f"carreto_mapas_{esc}")
+        return
+    dd = mp.groupby(mp["dia"].dt.strftime("%Y-%m-%d"), as_index=False).agg(valor=("valor", "sum"),
+                                                                             mapas=("mapa", "count"))
+    fig = go.Figure(go.Bar(x=pd.to_datetime(dd["dia"]).dt.strftime("%d/%m"), y=dd["valor"], marker_color=VERDE,
+                           customdata=dd["mapas"], hovertemplate="%{x}<br>R$ %{y:,.2f}<br>%{customdata} mapas"
+                                                                 "<extra></extra>"))
+    graficos.mostrar(graficos._layout(fig, "Carreto por dia de entrega (R$)", 300, legenda=False), key="ra_g_car_mdia")
+    tema.secao("🗺️ Remuneração por mapa", "Caixas de cada mapa (03.02.37 vendas, coluna AA) × carreto; placa, "
+               "motorista e entregas do PCD.")
+    mp = mp.sort_values(["dia", "mapa"])
+    ui.tabela(tab_mapas(mp), baixar="carreto_por_mapa")
+    esc = st.selectbox("🔎 Produtos do mapa", mp["mapa"].tolist(), key="ra_car_mapa",
+                       format_func=lambda m: f"{m} · {mp.set_index('mapa').at[m, 'placa']} · "
+                                             f"{_m(mp.set_index('mapa').at[m, 'valor'])}")
+    ui.tabela(produtos_do([esc]), baixar=f"carreto_mapa_{esc}")
+
+
+def _carreto_produto(op: int, ini: str, fim: str) -> None:
     c = rs.carreto(op, ini, fim)
     if c.empty:
         st.info("Nenhuma entrega no período (03.02.37 vendas, operações de venda + bonificação).")
@@ -170,10 +269,6 @@ def _frete(op: int, ini: str, fim: str) -> None:
          "dados": _tab_fab(sem) if len(sem) else None},
     ], key="kp_ra_fre")
     _aviso_meio(f)
-    if (f["base"] == "mês").any():
-        st.caption("ℹ️ Meses sem o detalhe por fábrica no 03.02.37: as caixas de cada produto foram repartidas entre as "
-                   "fábricas com tabela pelo HL comprado de cada uma. Subindo o 03.02.37 compra do mês de novo, fica "
-                   "exato pela coluna M.")
     tema.secao("🏭 Remuneração por fábrica", "Clique na fábrica para abrir os produtos: código, quantidade comprada, "
                "remuneração unitária e total.")
     tema.kpis([{"titulo": nome[:40], "valor": _m(v), "icone": "🏭" if u else "⚠️",
