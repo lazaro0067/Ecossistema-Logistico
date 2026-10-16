@@ -8,7 +8,13 @@ services/, SQL em repositories/ e telas em modules/.
 """
 import os
 
+import pandas as pd
 import streamlit as st
+
+try:  # pandas 3: texto vazio do banco volta a ser None (não NaN) — evita TypeError nas telas
+    pd.set_option("future.infer_string", False)
+except Exception:  # noqa: BLE001
+    pass
 
 from config.settings import APP_EMPRESA, APP_ICONE, APP_SUBTITULO, APP_TITULO, MODULO_ADMIN, MODULOS
 

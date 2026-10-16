@@ -80,7 +80,9 @@ def _novo(operacao_id: int, gestores: list[dict]) -> None:
 def _acesso(df: pd.DataFrame) -> None:
     from modules.puxada.app_motorista import link_do_app, link_whatsapp
 
-    regs = df.to_dict("records")
+    # NaN do pandas (motorista sem acesso) vira None — senão "NaN or 'nunca'" dá NaN e quebra a tela
+    regs = [{k: (None if not isinstance(v, (str, list, dict)) and pd.isna(v) else v) for k, v in r.items()}
+            for r in df.to_dict("records")]
     mid = ui.select_registro("Motorista", regs, key="mot_acesso_sel", permitir_vazio=False)
     sel = next((r for r in regs if r["id"] == mid), None)
     if not sel:
@@ -88,9 +90,9 @@ def _acesso(df: pd.DataFrame) -> None:
     tema.kpis([
         {"titulo": "Login do app", "valor": sel.get("acesso") or "—", "icone": "👤",
          "status": "info" if sel.get("acesso") else "neutro"},
-        {"titulo": "Situação", "valor": sel["situacao_acesso"], "icone": "📱",
-         "status": {"Ativo": "bom", "Bloqueado": "critico"}.get(sel["situacao_acesso"], "atencao")},
-        {"titulo": "Último acesso", "valor": (sel.get("ultimo_acesso") or "nunca")[:16], "icone": "🕒",
+        {"titulo": "Situação", "valor": sel.get("situacao_acesso") or "Sem acesso", "icone": "📱",
+         "status": {"Ativo": "bom", "Bloqueado": "critico"}.get(sel.get("situacao_acesso"), "atencao")},
+        {"titulo": "Último acesso", "valor": str(sel.get("ultimo_acesso") or "nunca")[:16], "icone": "🕒",
          "status": "info"},
     ])
     c1, c2 = st.columns(2)
@@ -120,7 +122,7 @@ def _acesso(df: pd.DataFrame) -> None:
                 st.rerun()
     with c2:
         tema.secao("Outras ações")
-        msg = (f"Olá, {sel['nome'].split()[0]}! Link do App Carreteiro do Grupo Lima:\n{link_do_app()}"
+        msg = (f"Olá, {(str(sel.get('nome') or '').split() or [''])[0]}! Link do App Carreteiro do Grupo Lima:\n{link_do_app()}"
                + (f"\n\nLogin (CPF): {sel['acesso']}" if sel.get("acesso") else ""))
         st.link_button("📲 Mandar o link pelo WhatsApp", link_whatsapp(msg, sel.get("telefone")), **ui.LARGURA)
         if sel.get("usuario_id"):

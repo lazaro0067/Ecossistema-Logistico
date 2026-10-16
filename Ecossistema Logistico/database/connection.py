@@ -20,6 +20,11 @@ from contextlib import contextmanager
 
 import pandas as pd
 
+try:  # pandas 3: texto volta a ser "object" com None (como no pandas 2) — vazio do banco não vira NaN (que é "verdadeiro")
+    pd.set_option("future.infer_string", False)
+except Exception:  # noqa: BLE001 — pandas antigo não tem a opção
+    pass
+
 from config.settings import DB_PATH
 
 # Tabelas que NÃO têm coluna "id" (o INSERT no Postgres não pode pedir RETURNING id)
