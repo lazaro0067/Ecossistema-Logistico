@@ -25,11 +25,13 @@ STATUS = {
     "aguardando": "⏳ Falta 2ª contagem",
     "pendente": "📨 Em recontagem",
     "recontado": "📥 Recontado — conciliar",
+    "nao_bateu": "🔁 Não bateu — nova recontagem",
     "conciliado": "✔️ Conciliado",
     "sem_conversao": "❔ Sem conversão",
 }
 REC_STATUS = {"pendente": "📨 Aguardando recontagem", "contado": "✍️ Contado (falta descarga)",
-              "recontado": "📥 Descarga feita — conciliar", "conciliado": "✔️ Conciliado"}
+              "recontado": "📥 Descarga feita — conciliar", "conciliado": "✔️ Conciliado",
+              "superado": "↪️ Substituída por nova recontagem"}
 ESCOLHAS = {"c1": "1ª contagem", "c2": "2ª contagem", "rec": "Recontagem"}
 _UN = {"UN", "UND", "UNID", "UNIDADE", "U", "GF", "GFA"}
 _PL = {"PL", "PLT", "PALETE", "PALLET", "PAL"}
@@ -280,23 +282,31 @@ def _multiplicador(unidade: str, conv: dict) -> float | None:
 
 
 # --- inventários --------------------------------------------------------------------------------------------------------
-def inventarios(operacao_id: int) -> pd.DataFrame:
+def inventarios(operacao_id: int, tipo: str = "mensal") -> pd.DataFrame:
     trecho, p = operacoes_repo.filtro("operacao_id", operacao_id)
-    return query_df(f"SELECT * FROM inv_inventarios WHERE {trecho} ORDER BY mes DESC, id DESC", p)
+    return query_df(f"SELECT * FROM inv_inventarios WHERE {trecho} AND COALESCE(tipo, 'mensal') = ? "
+                    f"ORDER BY COALESCE(data, mes) DESC, id DESC", (*p, tipo))
 
 
 def inventario(inv_id: int) -> dict | None:
     return query_one("SELECT * FROM inv_inventarios WHERE id = ?", (int(inv_id),))
 
 
-def criar(operacao_id: int, mes: str, nome: str, usuario: str = "") -> int:
+def criar(operacao_id: int, mes: str, nome: str, usuario: str = "", tipo: str = "mensal",
+          data: str | None = None) -> int:
     if operacoes_repo.e_consolidada(operacao_id):
         raise RegraNegocioError("Escolha uma revenda para abrir o inventário.")
-    if not re.fullmatch(r"\d{4}-\d{2}", str(mes or "")):
-        raise RegraNegocioError("Escolha o mês do inventário.")
-    nome = (nome or "").strip() or f"Inventário {mes[5:]}/{mes[:4]}"
-    return execute("INSERT INTO inv_inventarios (operacao_id, mes, nome, status, criado_por, criado_em) "
-                   "VALUES (?, ?, ?, 'aberto', ?, ?)", (operacao_id, mes, nome, usuario, agora()))
+    if tipo == "diario":
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(data or "")):
+            raise RegraNegocioError("Escolha o dia da contagem.")
+        mes = data[:7]
+        nome = (nome or "").strip() or f"Contagem {data[8:10]}/{data[5:7]}/{data[:4]}"
+    else:
+        if not re.fullmatch(r"\d{4}-\d{2}", str(mes or "")):
+            raise RegraNegocioError("Escolha o mês do inventário.")
+        nome = (nome or "").strip() or f"Inventário {mes[5:]}/{mes[:4]}"
+    return execute("INSERT INTO inv_inventarios (operacao_id, mes, nome, status, criado_por, criado_em, tipo, data) "
+                   "VALUES (?, ?, ?, 'aberto', ?, ?, ?, ?)", (operacao_id, mes, nome, usuario, agora(), tipo, data))
 
 
 def mudar_status(inv_id: int, status: str) -> None:
@@ -616,6 +626,7 @@ def conciliacao(inv_id: int) -> pd.DataFrame:
         # cada rodada de recontagem vira uma coluna (r1_un, r2_un…); o status vem da última rodada
         piv = rec.pivot_table(index=chave, columns="rodada", values="rec_un", aggfunc="last")
         piv.columns = [f"r{int(k)}_un" for k in piv.columns]
+        rec = _marcar_bateu(rec).drop(columns=["c1_un", "c2_un", "bateu"], errors="ignore")
         ult = rec.sort_values("rodada").groupby(chave, as_index=False).tail(1)
         ult = ult.assign(rodadas=ult["rodada"]).drop(columns="rodada")
         base_ = base_.drop(columns="rodadas").merge(ult, on=chave, how="left").merge(
@@ -623,7 +634,7 @@ def conciliacao(inv_id: int) -> pd.DataFrame:
         base_["rodadas"] = pd.to_numeric(base_["rodadas"], errors="coerce").fillna(0).astype(int)
         tem = base_["rec_id"].notna() & base_["status"].isin(["divergente", "ok", "aguardando"])
         novo = base_["rec_status"].map({"pendente": "pendente", "contado": "pendente", "recontado": "recontado",
-                                        "conciliado": "conciliado"})
+                                        "conciliado": "conciliado", "nao_bateu": "nao_bateu"})
         base_["status"] = novo.where(tem, base_["status"])
         conc = base_["status"] == "conciliado"
         # pandas 3 não aceita gravar coluna "object" (None) dentro de coluna numérica: converte antes
@@ -651,7 +662,7 @@ def por_endereco(conc: pd.DataFrame) -> pd.DataFrame:
     if conc.empty:
         return pd.DataFrame(columns=cols)
     x = conc.assign(ok_=conc["status"].isin(["ok", "conciliado"]), div_=conc["status"] == "divergente",
-                    pend_=conc["status"] == "pendente", rec_=conc["status"] == "recontado",
+                    pend_=conc["status"] == "pendente", rec_=conc["status"].isin(["recontado", "nao_bateu"]),
                     ag_=conc["status"] == "aguardando", sc_=conc["status"] == "sem_conversao")
     e = x.groupby(["area", "endereco"], as_index=False).agg(
         u1=("u1", "first"), u2=("u2", "first"), itens=("produto", "size"), ok=("ok_", "sum"),
@@ -750,7 +761,7 @@ def enviar_recontagem(inv_id: int, itens: pd.DataFrame, usuario: str = "") -> in
             linhas = conn.execute("SELECT status, COALESCE(rodada, 1) FROM inv_recontagem WHERE inv_id = ? AND "
                                   "area = ? AND COALESCE(endereco, '') = ? AND produto = ?",
                                   (int(inv_id), r.area, end, r.produto)).fetchall()
-            if any(x[0] != "conciliado" for x in linhas):
+            if any(x[0] not in ("conciliado", "superado") for x in linhas):
                 continue
             rodada = max([int(x[1] or 1) for x in linhas], default=0) + 1
             conn.execute("INSERT INTO inv_recontagem (inv_id, operacao_id, area, endereco, produto, descricao, c1_un, "
@@ -769,15 +780,51 @@ def cancelar_recontagem(rec_ids: list[int]) -> None:
             conn.execute("DELETE FROM inv_recontagem WHERE id = ? AND status <> 'conciliado'", (int(i),))
 
 
+def _marcar_bateu(rec: pd.DataFrame) -> pd.DataFrame:
+    """Na última rodada descarregada: 'bateu' se a recontagem é igual a alguma contagem anterior (1ª, 2ª ou outra
+    recontagem); senão vira 'nao_bateu' (o gestor cria uma nova recontagem)."""
+    rec = rec.copy()
+    if "c1_un" not in rec:
+        extra = query_df("SELECT id AS rec_id, c1_un, c2_un FROM inv_recontagem WHERE id IN (" +
+                         ",".join(str(int(i)) for i in rec["rec_id"]) + ")") if len(rec) else pd.DataFrame(
+            columns=["rec_id", "c1_un", "c2_un"])
+        rec = rec.merge(extra, on="rec_id", how="left")
+    rec["bateu"] = None
+    for _, g in rec.groupby(["area", "endereco", "produto"]):
+        g = g.sort_values("rodada")
+        anteriores = [v for v in (g["c1_un"].iloc[0], g["c2_un"].iloc[0]) if v is not None and pd.notna(v)]
+        for idx, r in g.iterrows():
+            q = r["rec_un"]
+            if r["rec_status"] in ("recontado", "conciliado", "superado") and q is not None and pd.notna(q):
+                rec.at[idx, "bateu"] = any(abs(float(q) - float(v)) <= TOLERANCIA_UN for v in anteriores)
+                anteriores.append(float(q))
+    nb = (rec["rec_status"] == "recontado") & (rec["bateu"] == False)  # noqa: E712
+    rec.loc[nb, "rec_status"] = "nao_bateu"
+    return rec
+
+
 def recontagens(inv_id: int) -> pd.DataFrame:
-    df = query_df("SELECT * FROM inv_recontagem WHERE inv_id = ? ORDER BY area, endereco, produto", (int(inv_id),))
+    df = query_df("SELECT * FROM inv_recontagem WHERE inv_id = ? ORDER BY area, endereco, produto, rodada",
+                  (int(inv_id),))
     if not df.empty:
         df["endereco"] = df["endereco"].fillna("")
-        df["sugestao"] = [_sugestao(q, c1, c2) for q, c1, c2 in zip(df["qtd_un"], df["c1_un"], df["c2_un"])]
+        df["rodada"] = pd.to_numeric(df["rodada"], errors="coerce").fillna(1).astype(int)
+        df["qtd_un"] = pd.to_numeric(df["qtd_un"], errors="coerce")
+        m = _marcar_bateu(df.rename(columns={"id": "rec_id", "status": "rec_status", "qtd_un": "rec_un"}))
+        df["bateu"] = m["bateu"].values
+        df["sit"] = m["rec_status"].values  # recontado → nao_bateu quando não bateu com nenhuma contagem
+        # contagens anteriores do item (para a gestão ver tudo na frente)
+        df["anteriores"] = ""
+        for _, g in df.groupby(["area", "endereco", "produto"]):
+            g = g.sort_values("rodada")
+            for k, (idx, r) in enumerate(g.iterrows()):
+                df.at[idx, "anteriores"] = ",".join(str(x) for x in g["qtd_un"].iloc[:k].tolist())
+        df["sugestao"] = [_sugestao(q, c1, c2, b) for q, c1, c2, b in
+                          zip(df["qtd_un"], df["c1_un"], df["c2_un"], df["bateu"])]
     return df
 
 
-def _sugestao(q, c1, c2) -> str:
+def _sugestao(q, c1, c2, bateu=None) -> str:
     if q is None or pd.isna(q):
         return ""
     if c1 is not None and not pd.isna(c1) and abs(q - c1) <= TOLERANCIA_UN:
@@ -785,6 +832,21 @@ def _sugestao(q, c1, c2) -> str:
     if c2 is not None and not pd.isna(c2) and abs(q - c2) <= TOLERANCIA_UN:
         return "c2"
     return "rec"
+
+
+def nova_recontagem(inv_id: int, rec_ids: list[int], usuario: str = "") -> int:
+    """Para os itens que não bateram: encerra a rodada atual (fica guardada) e cria a próxima rodada no app."""
+    _aberto(inv_id)
+    df = query_df("SELECT * FROM inv_recontagem WHERE inv_id = ?", (int(inv_id),))
+    df = df[df["id"].isin([int(i) for i in rec_ids])]
+    if df.empty:
+        raise RegraNegocioError("Selecione os itens para recontar.")
+    with get_conn() as conn:
+        for i in df["id"]:
+            conn.execute("UPDATE inv_recontagem SET status = 'superado' WHERE id = ? AND status IN ('recontado', "
+                         "'conciliado')", (int(i),))
+    itens = df.rename(columns={})[["area", "endereco", "produto", "descricao", "c1_un", "c2_un", "fator"]]
+    return enviar_recontagem(inv_id, itens, usuario)
 
 
 def conciliar(escolhas: dict[int, str], usuario: str = "") -> int:
@@ -1049,3 +1111,109 @@ def conferente_por_token(token: str, operacao_id: int) -> dict | None:
             not hmac.compare_digest(_assinar_conf(cid, expira, r["senha_hash"]), ass):
         return None
     return _sessao_conf(r)
+
+
+# --- 🔄 Conciliação diária: uma contagem × estoque da 02.05.02 --------------------------------------------------------
+DIA_STATUS = {"ok": "✅ Bateu com o estoque", "ok_rec": "✅ Bateu na recontagem", "divergente": "❌ Diferença",
+              "pendente": "📨 Em recontagem", "confirmado": "⚠️ Diferença confirmada (2 contagens iguais)",
+              "sem_conversao": "❔ Sem conversão"}
+
+
+def _contagem_dia(inv_id: int) -> pd.DataFrame:
+    """Uma contagem por endereço × produto (se contaram duas vezes, vale a última)."""
+    c = _contagens_un(inv_id)
+    if c.empty:
+        return pd.DataFrame(columns=["area", "endereco", "produto", "descricao", "qtd_un", "usuario", "unidades"])
+    c["finalizacao"] = c["finalizacao"].fillna(c["inicio"]).fillna("")
+    ult = c.groupby(["area", "endereco"])["finalizacao"].transform("max")
+    c = c[c["finalizacao"] == ult]
+    return (c.groupby(["area", "endereco", "produto"], as_index=False)
+             .agg(descricao=("descricao", "first"), qtd_un=("qtd_un", lambda s: s.sum(min_count=len(s))),
+                  usuario=("usuario", "first"), unidades=("unidade", lambda s: ", ".join(sorted(set(s))))))
+
+
+def conciliacao_diaria(inv_id: int) -> pd.DataFrame:
+    """Por produto: estoque (02.05.02) × contagem do dia (soma dos endereços) × cada recontagem."""
+    cols = ["produto", "descricao", "fator", "sistema_un", "contado_un", "final_un", "dif_un", "status", "rodadas",
+            "enderecos", "sem_conv"]
+    cd = _contagem_dia(inv_id)
+    if cd.empty:
+        return pd.DataFrame(columns=cols)
+    g = cd.groupby("produto", as_index=False).agg(
+        descricao=("descricao", "first"), contado_un=("qtd_un", lambda s: s.sum(min_count=len(s))),
+        enderecos=("endereco", lambda s: ", ".join(sorted(set(s)))))
+    g["sem_conv"] = g["contado_un"].isna()
+    b = base(inv_id)
+    g = g.merge(b[["produto", "sistema_un", "fator"]], on="produto", how="left")
+    conv = conversoes(inv_id, g["produto"].tolist()).set_index("produto")["un_cx_f"]
+    g["fator"] = pd.to_numeric(g["fator"], errors="coerce").fillna(g["produto"].map(conv)).fillna(1.0)
+    g["sistema_un"] = pd.to_numeric(g["sistema_un"], errors="coerce").fillna(0.0)
+    rec = query_df("SELECT produto, COALESCE(rodada, 1) AS rodada, status, qtd_un FROM inv_recontagem WHERE inv_id = ?",
+                   (int(inv_id),))
+    g["rodadas"] = 0
+    abertos = set()
+    if not rec.empty:
+        rec["rodada"] = pd.to_numeric(rec["rodada"], errors="coerce").fillna(1).astype(int)
+        rec["qtd_un"] = pd.to_numeric(rec["qtd_un"], errors="coerce")
+        aberto = rec["status"].isin(["pendente", "contado"])
+        abertos = set(rec.loc[aberto, "produto"])
+        tot = (rec[~aberto].groupby(["produto", "rodada"])["qtd_un"].sum(min_count=1).unstack())
+        tot.columns = [f"r{int(k)}_un" for k in tot.columns]
+        g = g.merge(tot.reset_index(), on="produto", how="left")
+        g["rodadas"] = g["produto"].map(rec.groupby("produto")["rodada"].max()).fillna(0).astype(int)
+    rcols = sorted([c for c in g.columns if re.fullmatch(r"r\d+_un", c)], key=lambda x: int(x[1:-3]))
+    st_, final = [], []
+    for _, r in g.iterrows():
+        seq = [r["contado_un"]] + [r[c] for c in rcols if pd.notna(r[c])]
+        ult = seq[-1]
+        final.append(ult)
+        if r["produto"] in abertos:
+            st_.append("pendente")
+        elif ult is None or pd.isna(ult):
+            st_.append("sem_conversao")
+        elif abs(float(ult) - float(r["sistema_un"])) <= TOLERANCIA_UN:
+            st_.append("ok" if len(seq) == 1 else "ok_rec")
+        elif len(seq) > 1 and any(pd.notna(v) and abs(float(ult) - float(v)) <= TOLERANCIA_UN for v in seq[:-1]):
+            st_.append("confirmado")
+        else:
+            st_.append("divergente")
+    g["status"] = st_
+    g["final_un"] = pd.to_numeric(pd.Series(final, index=g.index), errors="coerce")
+    g["dif_un"] = g["final_un"] - g["sistema_un"]
+    return g[cols + rcols].sort_values("produto").reset_index(drop=True)
+
+
+def enviar_recontagem_diaria(inv_id: int, produtos: list[str], usuario: str = "") -> int:
+    """Manda os produtos para o app: uma linha por endereço onde foram contados (nova rodada para cada produto)."""
+    inv = _aberto(inv_id)
+    cd = _contagem_dia(inv_id)
+    cd = cd[cd["produto"].isin([str(p) for p in produtos])]
+    conv = conversoes(inv_id, cd["produto"].unique().tolist()).set_index("produto")["un_cx_f"]
+    n = 0
+    with get_conn() as conn:
+        for prod, linhas in cd.groupby("produto"):
+            ant = conn.execute("SELECT status, COALESCE(rodada, 1) FROM inv_recontagem WHERE inv_id = ? AND produto = ?",
+                               (int(inv_id), prod)).fetchall()
+            if any(x[0] in ("pendente", "contado") for x in ant):
+                continue
+            rodada = max([int(x[1] or 1) for x in ant], default=0) + 1
+            conn.execute("UPDATE inv_recontagem SET status = 'superado' WHERE inv_id = ? AND produto = ? AND "
+                         "status IN ('recontado', 'conciliado')", (int(inv_id), prod))
+            for r in linhas.itertuples(index=False):
+                conn.execute("INSERT INTO inv_recontagem (inv_id, operacao_id, area, endereco, produto, descricao, "
+                             "c1_un, c2_un, fator, status, enviado_por, enviado_em, rodada) VALUES (?, ?, ?, ?, ?, ?, ?, "
+                             "NULL, ?, 'pendente', ?, ?, ?)",
+                             (int(inv_id), int(inv["operacao_id"]), r.area, r.endereco or "", prod, r.descricao,
+                              None if pd.isna(r.qtd_un) else float(r.qtd_un), float(conv.get(prod, 1.0) or 1.0),
+                              usuario, agora(), rodada))
+            n += 1
+    return n
+
+
+def auto_primeira_recontagem(inv_id: int, usuario: str = "") -> int:
+    """Diária: tudo que não bateu com o estoque e ainda não foi recontado vai direto para a 1ª recontagem."""
+    d = conciliacao_diaria(inv_id)
+    if d.empty:
+        return 0
+    alvo = d[(d["status"] == "divergente") & (d["rodadas"] == 0)]
+    return enviar_recontagem_diaria(inv_id, alvo["produto"].tolist(), usuario) if len(alvo) else 0

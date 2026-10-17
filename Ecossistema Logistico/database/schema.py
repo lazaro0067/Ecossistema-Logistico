@@ -1661,6 +1661,11 @@ MIGRACOES: list[tuple[str, str]] = [
         ALTER TABLE inv_inventarios ADD COLUMN finalizado_por TEXT;
         UPDATE inv_recontagem SET rodada = 1 WHERE rodada IS NULL;
     """),
+    ("048_inv_diario", """
+        ALTER TABLE inv_inventarios ADD COLUMN tipo TEXT DEFAULT 'mensal';
+        ALTER TABLE inv_inventarios ADD COLUMN data TEXT;
+        UPDATE inv_inventarios SET tipo = 'mensal' WHERE tipo IS NULL;
+    """),
 ]
 
 

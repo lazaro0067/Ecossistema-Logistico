@@ -36,9 +36,7 @@ def _q(un, fator) -> str:
 def render(usuario: dict, operacao_id: int) -> None:
     pasta = ui._escolha("acu_pasta", list(_PASTAS), "mensal", formatar=_PASTAS.get)
     if pasta == "diaria":
-        tema.secao("🔄 Conciliação diária", "Contagem cíclica do dia × sistema — vamos montar depois do inventário "
-                                           "mensal.")
-        st.info("🚧 Em montagem. Comece pelo 📦 Inventário mensal.")
+        _diaria(usuario, operacao_id)
         return
     _mensal(usuario, operacao_id)
 
@@ -370,8 +368,12 @@ def _recontagem(usuario: dict, op: int, inv_id: int) -> None:
         {"titulo": "Aguardando no app", "valor": _n(cont.get("pendente", 0)), "icone": "📨", "status": "info"},
         {"titulo": "Contados (falta descarga)", "valor": _n(cont.get("contado", 0)), "icone": "✍️",
          "status": "atencao" if cont.get("contado", 0) else "info"},
-        {"titulo": "Descarga feita — conciliar", "valor": _n(cont.get("recontado", 0)), "icone": "📥",
-         "status": "critico" if cont.get("recontado", 0) else "bom"},
+        {"titulo": "Bateu — conciliar", "valor": _n(((rc["sit"] == "recontado") if not rc.empty else
+                                                       pd.Series(dtype=bool)).sum()), "icone": "📥",
+         "status": "atencao" if cont.get("recontado", 0) else "bom"},
+        {"titulo": "Não bateu — recontar", "valor": _n(((rc["sit"] == "nao_bateu") if not rc.empty else
+                                                         pd.Series(dtype=bool)).sum()), "icone": "🔁",
+         "status": "critico" if not rc.empty and (rc["sit"] == "nao_bateu").any() else "bom"},
         {"titulo": "Conciliados", "valor": _n(cont.get("conciliado", 0)), "icone": "✔️", "status": "bom"},
     ], key="kp_inv_rec")
     with st.expander("📱 Link do app de recontagem desta revenda (abrir no celular)"):
@@ -383,11 +385,37 @@ def _recontagem(usuario: dict, op: int, inv_id: int) -> None:
     if rc.empty:
         st.info("Nada enviado para recontagem ainda — mande pelo 📊 Painel.")
         return
-    para = rc[rc["status"] == "recontado"]
-    tema.secao("📥 Conciliar", "A recontagem confirma uma das contagens: o sistema já sugere a que bateu. Ajuste se "
-                              "precisar e concilie.")
+    nb = rc[rc["sit"] == "nao_bateu"]
+    if not nb.empty:
+        tema.secao("🔁 Não bateu — criar nova recontagem",
+                   "A recontagem não ficou igual a nenhuma contagem anterior (1ª, 2ª nem recontagens). Selecione o que "
+                   "precisa contar de novo e crie a próxima recontagem — até fechar o número.")
+        ant = [", ".join(_cx(float(x), f) + " cx" for x in str(a).split(",") if x not in ("", "nan", "None"))
+               for a, f in zip(nb["anteriores"], nb["fator"])]
+        vis_nb = pd.DataFrame({
+            "Recontar": True, "Rodada": nb["rodada"].map(lambda r: f"{r}ª"), "Área": nb["area"],
+            "Endereço": nb["endereco"], "Cód": nb["produto"], "Produto": nb["descricao"],
+            "1ª contagem": [_cx(v, f) + " cx" if pd.notna(v) else "—" for v, f in zip(nb["c1_un"], nb["fator"])],
+            "2ª contagem": [_cx(v, f) + " cx" if pd.notna(v) else "—" for v, f in zip(nb["c2_un"], nb["fator"])],
+            "Recontagens anteriores": [a or "—" for a in ant],
+            "Última recontagem": [_cx(v, f) + " cx" for v, f in zip(nb["qtd_un"], nb["fator"])]}).reset_index(drop=True)
+        ed_nb = st.data_editor(vis_nb, hide_index=True, key=f"inv_ed_nb_{inv_id}", **ui.LARGURA,
+                               disabled=[c for c in vis_nb.columns if c != "Recontar"])
+        sel = [int(i) for i, ok in zip(nb["id"], ed_nb["Recontar"]) if ok]
+        b1, b2 = st.columns(2)
+        if b1.button(f"📨 Criar nova recontagem ({len(sel)} item(ns))", type="primary", key="inv_nova_rec",
+                     disabled=not sel, **ui.LARGURA):
+            ui.acao(inv.nova_recontagem, inv_id, sel, usuario.get("nome", ""),
+                    sucesso=f"Nova recontagem criada para {len(sel)} item(ns) — já está no app.")
+        if b2.button(f"✅ Aceitar a última recontagem ({len(sel)})", key="inv_aceita_rec", disabled=not sel,
+                     **ui.LARGURA):
+            ui.acao(inv.conciliar, {i: "rec" for i in sel}, usuario.get("nome", ""),
+                    sucesso="Última recontagem aceita como quantidade final.")
+    para = rc[(rc["status"] == "recontado") & (rc["sit"] == "recontado")]
+    tema.secao("📥 Bateu — conciliar", "A recontagem ficou igual a uma das contagens: o sistema já sugere qual usar. "
+                                       "Ajuste se precisar e concilie.")
     if para.empty:
-        st.caption("Nenhuma descarga para conciliar agora.")
+        st.caption("Nenhuma recontagem que bateu esperando conciliação.")
     else:
         vis = pd.DataFrame({
             "Conciliar": True, "Rodada": para["rodada"].fillna(1).astype(int).map(lambda r: f"{r}ª"),
@@ -771,3 +799,190 @@ def _conferentes(usuario: dict, op: int) -> None:
         ui.acao(inv.zerar_senha_conferente, sel, sucesso="Senha zerada.")
     if e_master(usuario) and b3.button("🗑️ Excluir", key="inv_conf_del", **ui.LARGURA):
         ui.acao(inv.excluir_conferente, sel, sucesso="Conferente excluído.")
+
+
+# =====================================================================================================================
+# 🔄 Conciliação diária — uma contagem × estoque da 02.05.02; o que não bate vai para a 1ª recontagem sozinho
+# =====================================================================================================================
+_TELAS_D = {"painel": "📊 Painel", "recontagem": "🔁 Recontagem", "bases": "📥 Bases"}
+
+
+def _diaria(usuario: dict, op: int) -> None:
+    invs = inv.inventarios(op, "diario")
+    c1, c2 = st.columns([2.2, 1])
+    with c2.popover("➕ Nova contagem do dia"):
+        dia = st.date_input("Dia", value=tempo.hoje(), format="DD/MM/YYYY", key="invd_novo_dia")
+        if st.button("Criar", type="primary", key="invd_criar"):
+            try:
+                novo = inv.criar(op, "", "", usuario.get("nome", ""), tipo="diario", data=dia.isoformat())
+            except RegraNegocioError as e:
+                st.error(str(e))
+            else:
+                st.session_state["invd_sel"] = novo
+                st.session_state["invd_tela"] = st.session_state["invd_tela__ultima"] = "bases"
+                ui.avisar("Contagem do dia criada — suba o 02.05.02 e a contagem do WMS.")
+                st.rerun()
+    if invs.empty:
+        c1.info("Nenhuma contagem diária ainda. Clique em **➕ Nova contagem do dia**.")
+        return
+    ids = invs["id"].astype(int).tolist()
+    rot = {int(r.id): f"{pd.to_datetime(r.data).strftime('%d/%m/%Y') if r.data else r.mes} · {r.nome} · "
+                      f"{'🟢 aberta' if r.status == 'aberto' else '🔒 fechada'}" for r in invs.itertuples()}
+    if st.session_state.get("invd_sel") not in ids:
+        st.session_state["invd_sel"] = ids[0]
+    inv_id = int(c1.selectbox("Contagem", ids, key="invd_sel", format_func=rot.get, label_visibility="collapsed"))
+    tela = ui._escolha("invd_tela", list(_TELAS_D), "painel", pills=True, formatar=_TELAS_D.get)
+    {"painel": _d_painel, "recontagem": _d_recontagem, "bases": _d_bases}[tela](usuario, op, inv_id)
+
+
+def _d_tab(d: pd.DataFrame) -> pd.DataFrame:
+    t = pd.DataFrame({
+        "": ["✔️" if s_ in ("ok", "ok_rec") else "📨" if s_ == "pendente" else "❔" if s_ == "sem_conversao" else "❌"
+             for s_ in d["status"]],
+        "Cód": d["produto"].values, "Produto": d["descricao"].fillna("").values,
+        "Estoque 02.05.02": [_cx(v, f) + " cx" for v, f in zip(d["sistema_un"], d["fator"])],
+        "Contagem": [_cx(v, f) + " cx" if pd.notna(v) else "—" for v, f in zip(d["contado_un"], d["fator"])]})
+    for c in sorted([c for c in d.columns if c.startswith("r") and c.endswith("_un") and c[1:-3].isdigit()],
+                    key=lambda c: int(c[1:-3])):
+        if d[c].notna().any():
+            t[f"Recontagem {c[1:-3]}"] = [_cx(v, f) + " cx" if pd.notna(v) else "" for v, f in zip(d[c], d["fator"])]
+    t["Diferença"] = [("+" if v > 0 else "") + _cx(v, f) + " cx" if pd.notna(v) else "—"
+                      for v, f in zip(d["dif_un"], d["fator"])]
+    t["Endereços"] = d["enderecos"].values
+    t["Situação"] = d["status"].map(inv.DIA_STATUS).values
+    return t
+
+
+def _d_painel(usuario: dict, op: int, inv_id: int) -> None:
+    d = inv.conciliacao_diaria(inv_id)
+    if d.empty:
+        st.info("Suba o 02.05.02 e a contagem do dia em 📥 Bases.")
+        return
+    if not (inv.inventario(inv_id) or {}).get("base_em"):
+        st.warning("Sem 02.05.02 nesta contagem — o estoque está zerado. Suba em 📥 Bases.")
+    cont = d["status"].value_counts()
+    ok = int(cont.get("ok", 0) + cont.get("ok_rec", 0))
+    fechados = len(d) - int(cont.get("pendente", 0)) - int(cont.get("sem_conversao", 0))
+    acur = ok / fechados * 100 if fechados else None
+    tema.kpis([
+        {"titulo": "Produtos contados", "valor": _n(len(d)), "icone": "📦", "status": "info", "dados": _d_tab(d)},
+        {"titulo": "Bateram ✔️", "valor": _n(ok), "icone": "✅", "status": "bom",
+         "detalhe": f"{_n(cont.get('ok_rec', 0))} depois da recontagem",
+         "dados": _d_tab(d[d["status"].isin(["ok", "ok_rec"])]) if ok else None},
+        {"titulo": "Com diferença ❌", "valor": _n(cont.get("divergente", 0) + cont.get("confirmado", 0)),
+         "icone": "⚠️", "status": "critico" if cont.get("divergente", 0) + cont.get("confirmado", 0) else "bom",
+         "detalhe": f"{_n(cont.get('confirmado', 0))} confirmada(s) por 2 contagens",
+         "dados": _d_tab(d[d["status"].isin(["divergente", "confirmado"])])
+         if cont.get("divergente", 0) + cont.get("confirmado", 0) else None},
+        {"titulo": "Em recontagem", "valor": _n(cont.get("pendente", 0)), "icone": "📨", "status": "info",
+         "dados": _d_tab(d[d["status"] == "pendente"]) if cont.get("pendente", 0) else None},
+        {"titulo": "Acuracidade do dia", "valor": _pct(acur), "icone": "🎯",
+         "status": "bom" if (acur or 0) >= 98 else "atencao" if (acur or 0) >= 95 else "critico",
+         "detalhe": f"{_n(ok)} de {_n(fechados)} produtos"},
+    ], key="kp_invd")
+    f = st.radio("Mostrar", ["todos", "ok", "nok"], horizontal=True, key="invd_filtro",
+                 format_func={"todos": f"Todos ({len(d)})", "ok": f"✔️ OK ({ok})",
+                              "nok": f"❌ Com diferença ({len(d) - ok})"}.get)
+    v = d[d["status"].isin(["ok", "ok_rec"])] if f == "ok" else d[~d["status"].isin(["ok", "ok_rec"])] \
+        if f == "nok" else d
+    ui.tabela(_d_tab(v), vazio="Nenhum produto nesse filtro.", baixar=f"conciliacao_diaria_{inv_id}")
+    tema.secao("🔎 Endereços do produto")
+    nomes = dict(zip(d["produto"], d["descricao"]))
+    p_ = st.selectbox("Produto", d["produto"].tolist(), key="invd_prod", format_func=lambda p: f"{p} · {nomes.get(p)}")
+    cd = inv._contagem_dia(inv_id)
+    x = cd[cd["produto"] == p_]
+    fator = float(d.loc[d["produto"] == p_, "fator"].iloc[0])
+    ui.tabela(pd.DataFrame({"Área": x["area"], "Endereço": x["endereco"], "Contou": x["usuario"],
+                            "Quantidade": [_cx(q, fator) + " cx" if pd.notna(q) else "—" for q in x["qtd_un"]],
+                            "Unid. contada": x["unidades"]}), baixar=False)
+
+
+def _d_recontagem(usuario: dict, op: int, inv_id: int) -> None:
+    d = inv.conciliacao_diaria(inv_id)
+    with st.expander("📱 Link do app de recontagem desta revenda"):
+        st.code(_link_app(op), language=None)
+    if d.empty:
+        st.info("Sem contagem ainda.")
+        return
+    pend = d[d["status"] == "pendente"]
+    if len(pend):
+        st.info(f"📨 {len(pend)} produto(s) no app para recontar.")
+    alvo = d[d["status"].isin(["divergente", "confirmado"])]
+    tema.secao("🔁 Criar recontagem", "Aparecem todos os produtos que ainda têm diferença com o estoque. Selecione "
+                                     "os que precisam contar de novo — o app recebe os endereços onde cada um foi "
+                                     "contado.")
+    if alvo.empty:
+        st.success("Nenhum produto com diferença esperando recontagem. 👏")
+        return
+    t = _d_tab(alvo)
+    t.insert(0, "Recontar", [s_ == "divergente" for s_ in alvo["status"]])
+    ed = st.data_editor(t, hide_index=True, key=f"invd_ed_{inv_id}", **ui.LARGURA,
+                        disabled=[c for c in t.columns if c != "Recontar"])
+    sel = [p for p, ok in zip(alvo["produto"], ed["Recontar"]) if ok]
+    if st.button(f"📨 Criar recontagem para {len(sel)} produto(s)", type="primary", key="invd_criar_rec",
+                 disabled=not sel or (inv.inventario(inv_id) or {}).get("status") != "aberto"):
+        ui.acao(inv.enviar_recontagem_diaria, inv_id, sel, usuario.get("nome", ""),
+                sucesso=f"Recontagem criada para {len(sel)} produto(s) — já está no app.")
+
+
+def _d_bases(usuario: dict, op: int, inv_id: int) -> None:
+    i = inv.inventario(inv_id) or {}
+    aberto = i.get("status") == "aberto"
+    c1, c2 = st.columns(2)
+    with c1, st.container(border=True):
+        st.markdown(f"**1. 02.05.02 do dia (estoque)**  \nÚltima carga: "
+                    f"{pd.to_datetime(i['base_em']).strftime('%d/%m/%Y %H:%M') if i.get('base_em') else 'nunca'}")
+        v = st.session_state.get("invd_up_b_v", 0)
+        arq = st.file_uploader("02.05.02", type=arquivos.FORMATOS, key=f"invd_up_b_{v}", label_visibility="collapsed",
+                               disabled=not aberto)
+        if arq is not None and st.button("Gravar 02.05.02", type="primary", key="invd_grava_b"):
+            try:
+                a2 = arquivos.preparar(arq)
+                r = inv.importar_base(inv_id, a2.getvalue(), a2.name, usuario.get("nome", ""))
+                n = inv.auto_primeira_recontagem(inv_id, usuario.get("nome", ""))
+            except RegraNegocioError as e:
+                st.error(str(e))
+            else:
+                st.session_state["invd_up_b_v"] = v + 1
+                ui.avisar(f"02.05.02: {r['produtos']} produtos." + (f" {n} produto(s) com diferença foram para a 1ª "
+                                                                    "recontagem." if n else ""))
+                st.rerun()
+        deps = inv.depositos_base(inv_id)
+        if deps:
+            atuais = [x for x in str(i.get("depositos") or "").split(",") if x in deps] or deps
+            sel = st.multiselect("Depósitos", deps, default=atuais, key=f"invd_deps_{inv_id}", disabled=not aberto)
+            if aberto and sorted(sel) != sorted(atuais):
+                inv.salvar_depositos(inv_id, sel)
+                ui.salvo_automatico("Depósitos salvos.")
+    with c2, st.container(border=True):
+        st.markdown("**2. Contagem do dia (WMS)**")
+        st.caption("Uma contagem só: o que não bater com o estoque vai sozinho para a 1ª recontagem no app.")
+        v2 = st.session_state.get("invd_up_c_v", 0)
+        arqs = st.file_uploader("Contagem", type=arquivos.FORMATOS, key=f"invd_up_c_{v2}", accept_multiple_files=True,
+                                label_visibility="collapsed", disabled=not aberto)
+        arqs = [a for a in (arqs or []) if a is not None]
+        if arqs and st.button(f"Gravar {len(arqs)} arquivo(s)", type="primary", key="invd_grava_c"):
+            erros, n = [], 0
+            for a in arqs:
+                try:
+                    a2 = arquivos.preparar(a)
+                    r = inv.importar_contagem(inv_id, a2.getvalue(), a2.name, usuario.get("nome", ""))
+                except RegraNegocioError as e:
+                    erros.append(f"{a.name}: {e}")
+                else:
+                    ui.avisar(f"{a.name}: {r['linhas']} linhas · {r['enderecos']} endereços · {r['itens']} produtos.")
+            if not erros and i.get("base_em"):
+                n = inv.auto_primeira_recontagem(inv_id, usuario.get("nome", ""))
+                if n:
+                    ui.avisar(f"{n} produto(s) com diferença foram para a 1ª recontagem no app.")
+            for e in erros:
+                st.error(e)
+            if not erros:
+                st.session_state["invd_up_c_v"] = v2 + 1
+                st.rerun()
+    b1, _ = st.columns([1, 3])
+    if aberto:
+        if b1.button("🔒 Fechar a contagem do dia", key="invd_fechar"):
+            ui.acao(inv.mudar_status, inv_id, "fechado", sucesso="Contagem do dia fechada.")
+    elif b1.button("🔓 Reabrir", key="invd_reabrir"):
+        ui.acao(inv.mudar_status, inv_id, "aberto", sucesso="Contagem reaberta.")
