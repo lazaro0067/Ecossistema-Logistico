@@ -319,10 +319,13 @@ def _enderecos(usuario: dict, op: int, inv_id: int) -> None:
 
 
 # --- 🔁 Recontagem ------------------------------------------------------------------------------------------------------
-def _link_app() -> str:
+def _link_app(op: int | None = None) -> str:
+    """Link do app de recontagem da revenda (cada revenda tem o seu)."""
     from modules.puxada.app_motorista import link_do_app
 
-    return link_do_app().replace("?app=motorista", "?app=recontagem")
+    base = link_do_app().replace("?app=motorista", "?app=recontagem")
+    tok = inv.link_token(op) if op and not operacoes_repo.e_consolidada(op) else None
+    return f"{base}&k={tok}" if tok else base
 
 
 def _recontagem(usuario: dict, op: int, inv_id: int) -> None:
@@ -336,10 +339,11 @@ def _recontagem(usuario: dict, op: int, inv_id: int) -> None:
          "status": "critico" if cont.get("recontado", 0) else "bom"},
         {"titulo": "Conciliados", "valor": _n(cont.get("conciliado", 0)), "icone": "✔️", "status": "bom"},
     ], key="kp_inv_rec")
-    with st.expander("📱 Link do app de recontagem (abrir no celular)"):
-        link = _link_app()
+    with st.expander("📱 Link do app de recontagem desta revenda (abrir no celular)"):
+        link = _link_app(op)
         st.code(link, language=None)
-        st.caption("O conferente entra com o login dele no sistema e vê só as áreas e endereços a recontar.")
+        st.caption("O conferente entra com o login cadastrado em ⚙️ Cadastros › 📱 App & conferentes e vê só as "
+                   "áreas e endereços a recontar.")
         st.link_button("Abrir o app", link)
     if rc.empty:
         st.info("Nada enviado para recontagem ainda — mande pelo 📊 Painel.")
@@ -560,9 +564,9 @@ def _bases(usuario: dict, op: int, inv_id: int) -> None:
 
 # --- ⚙️ Cadastros -------------------------------------------------------------------------------------------------------
 def _cadastros(usuario: dict, op: int, inv_id: int) -> None:
-    aba = ui._escolha("inv_cad", ["areas", "armazens", "conv", "resp"], "areas",
+    aba = ui._escolha("inv_cad", ["areas", "armazens", "conv", "app", "resp"], "areas",
                       formatar={"areas": "🗺️ Áreas", "armazens": "🏬 Armazéns", "conv": "🔁 Conversões (01.11)",
-                                "resp": "👥 Responsáveis"}.get)
+                                "app": "📱 App & conferentes", "resp": "👥 Responsáveis"}.get)
     if operacoes_repo.e_consolidada(op) and aba != "conv":
         st.info("Escolha uma revenda no menu para cadastrar.")
         return
@@ -603,6 +607,8 @@ def _cadastros(usuario: dict, op: int, inv_id: int) -> None:
             ui.acao(inv.salvar_areas, op, linhas, sucesso="Áreas salvas.")
     elif aba == "conv":
         _conversoes(usuario, inv_id)
+    elif aba == "app":
+        _conferentes(usuario, op)
     else:
         from repositories import usuarios_repo
 
@@ -684,3 +690,48 @@ def _upload_0111(usuario: dict) -> None:
                 st.session_state["inv_0111_v"] = v + 1
                 ui.avisar(f"01.11: conversões de {r['produtos']} produto(s) gravadas.")
                 st.rerun()
+
+
+def _conferentes(usuario: dict, op: int) -> None:
+    from core.auth import e_master
+
+    nome_rev = (operacoes_repo.buscar(op) or {}).get("nome", "")
+    tema.secao(f"📱 Link do app de recontagem — {nome_rev}",
+               "Cada revenda tem o seu link. Mande para os conferentes: eles entram com o login cadastrado abaixo (no "
+               "primeiro acesso criam a senha).")
+    link = _link_app(op)
+    st.code(link, language=None)
+    c1, c2, _ = st.columns([1, 1, 2])
+    c1.link_button("Abrir o app", link, **ui.LARGURA)
+    if c2.button("♻️ Gerar novo link", key="inv_novo_link", help="O link antigo para de funcionar.", **ui.LARGURA):
+        ui.acao(inv.novo_link, op, sucesso="Novo link gerado — mande de novo para os conferentes.")
+    tema.secao("👷 Conferentes (login do app)")
+    with st.form("inv_conf_novo", clear_on_submit=True, border=True):
+        f1, f2, f3 = st.columns([2, 1.4, 1])
+        nome = f1.text_input("Nome do conferente")
+        login = f2.text_input("Login (CPF, matrícula…)")
+        f3.write("")
+        if f3.form_submit_button("➕ Cadastrar", type="primary", **ui.LARGURA):
+            ui.acao(inv.salvar_conferente, op, nome, login, usuario.get("nome", ""),
+                    sucesso="Conferente cadastrado — no primeiro acesso ele cria a senha.")
+    cf = inv.conferentes(op)
+    if cf.empty:
+        st.caption("Nenhum conferente cadastrado ainda.")
+        return
+    ui.tabela(pd.DataFrame({
+        "Nome": cf["nome"], "Login": cf["login"], "Situação": ["🟢 Ativo" if a else "🔒 Bloqueado" for a in cf["ativo"]],
+        "Senha": ["✅ criada" if t else "⏳ cria no 1º acesso" for t in cf["tem_senha"]],
+        "Último acesso": cf["ultimo_acesso"].fillna("nunca").astype(str).str[:16]}), baixar=False)
+    ids = cf["id"].astype(int).tolist()
+    nomes = dict(zip(ids, cf["nome"] + " · " + cf["login"]))
+    sel = st.selectbox("Conferente", ids, format_func=nomes.get, key="inv_conf_sel")
+    r = cf.set_index("id").loc[sel]
+    b1, b2, b3, _ = st.columns([1, 1, 1, 1.5])
+    if b1.button("🔒 Bloquear" if r["ativo"] else "🔓 Liberar", key="inv_conf_bloq", **ui.LARGURA):
+        ui.acao(inv.salvar_conferente, op, r["nome"], r["login"], "", sel, not bool(r["ativo"]),
+                sucesso="Conferente atualizado.")
+    if b2.button("🔑 Zerar senha", key="inv_conf_zera", **ui.LARGURA,
+                 help="No próximo acesso o conferente cria outra senha."):
+        ui.acao(inv.zerar_senha_conferente, sel, sucesso="Senha zerada.")
+    if e_master(usuario) and b3.button("🗑️ Excluir", key="inv_conf_del", **ui.LARGURA):
+        ui.acao(inv.excluir_conferente, sel, sucesso="Conferente excluído.")

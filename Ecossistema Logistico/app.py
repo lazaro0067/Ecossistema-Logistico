@@ -441,6 +441,11 @@ def main() -> None:
         return
     if paginas_publicas():
         return
+    if MODO_RECONTAGEM and st.query_params.get("k"):  # link da revenda: login próprio dos conferentes
+        from modules.armazem import recontagem_app
+
+        recontagem_app.app_link(str(st.query_params.get("k")))
+        return
     session.iniciar()
 
     usuario = session.usuario() or _entrar_lembrado()

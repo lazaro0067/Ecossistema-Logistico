@@ -127,3 +127,80 @@ def _endereco(pend: pd.DataFrame, area: str, end: str, usuario: dict) -> None:
                 _ir(area)
                 ui.avisar(f"Endereço {end} salvo.")
                 st.rerun()
+
+
+# --- link da revenda (…?app=recontagem&k=…): login próprio dos conferentes -------------------------------------------
+def app_link(token: str) -> None:
+    """Abre o app pelo link da revenda: o conferente entra com o login cadastrado em Acuracidade › Cadastros."""
+    op = inv.op_por_link(token)
+    if not op:
+        tema.cabecalho("Recontagem", "", "📱")
+        st.warning("🔒 Link inválido ou trocado. Peça o link atualizado à gestão do armazém.")
+        return
+    from repositories import operacoes_repo
+
+    revenda = (operacoes_repo.buscar(op) or {}).get("nome", "")
+    conf = st.session_state.get("rapp_conf")
+    if conf and int(conf.get("operacao_id", 0)) != op:
+        conf = None
+    if not conf and st.query_params.get("c"):
+        conf = inv.conferente_por_token(st.query_params.get("c"), op)
+        if conf:
+            st.session_state["rapp_conf"] = conf
+        else:
+            del st.query_params["c"]
+    ui.mostrar_avisos()
+    if not conf:
+        _login(op, revenda)
+        return
+    st.caption(f"🏢 {revenda}")
+    render(conf, op, modo_app=True)
+    if st.button("🚪 Sair", key="rapp_sair_conf"):
+        st.session_state.pop("rapp_conf", None)
+        if "c" in st.query_params:
+            del st.query_params["c"]
+        st.rerun()
+
+
+def _login(op: int, revenda: str) -> None:
+    tema.cabecalho("Recontagem do inventário", revenda, "📱")
+    st.markdown("#### 🔐 Entrar")
+    login = st.text_input("Login (o que a gestão cadastrou: CPF, matrícula…)", key="rapp_login")
+    if not login.strip():
+        return
+    sit = inv.situacao_conferente(op, login)
+    if sit == "sem_cadastro":
+        st.error("Login não cadastrado nesta revenda. Peça à gestão do armazém.")
+    elif sit == "bloqueado":
+        st.error("Acesso bloqueado. Fale com a gestão do armazém.")
+    elif sit == "criar_senha":
+        st.info("👋 Primeiro acesso: crie a sua senha (mínimo 4 caracteres).")
+        s1 = st.text_input("Nova senha", type="password", key="rapp_s1")
+        s2 = st.text_input("Confirme a senha", type="password", key="rapp_s2")
+        if st.button("Criar senha e entrar", type="primary", key="rapp_criar", **ui.LARGURA):
+            try:
+                conf = inv.criar_senha_conferente(op, login, s1, s2)
+            except RegraNegocioError as e:
+                st.error(str(e))
+            else:
+                _logar(conf)
+    else:
+        senha = st.text_input("Senha", type="password", key="rapp_senha")
+        manter = st.checkbox("Manter conectado neste celular", value=True, key="rapp_manter")
+        if st.button("Entrar", type="primary", key="rapp_entrar", **ui.LARGURA):
+            try:
+                conf = inv.entrar_conferente(op, login, senha)
+            except RegraNegocioError as e:
+                st.error(str(e))
+            else:
+                _logar(conf, manter)
+        st.caption("Esqueceu a senha? Peça à gestão para zerar — no próximo acesso você cria outra.")
+
+
+def _logar(conf: dict, manter: bool = True) -> None:
+    st.session_state["rapp_conf"] = conf
+    if manter:
+        tok = inv.token_conferente(conf)
+        if tok:
+            st.query_params["c"] = tok
+    st.rerun()

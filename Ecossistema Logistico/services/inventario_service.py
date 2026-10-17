@@ -581,11 +581,11 @@ def conciliacao(inv_id: int) -> pd.DataFrame:
     base_["sem_conv"] = [bool(sem_c.get((a, e, p_, 1), False) or sem_c.get((a, e, p_, 2), False))
                          for a, e, p_ in zip(base_["area"], base_["endereco"], base_["produto"])]
     base_["t1"] = base_["t1"].replace("", "0")
-    base_.loc[tem2, "t2"] = base_.loc[tem2, "t2"].replace("", "0")
+    base_["t2"] = [("0" if t == "" else t) if t2_ else t for t, t2_ in zip(base_["t2"], tem2)]
     base_["dif_txt"] = [_dif_cru(r1, r2) if t2_ else "" for r1, r2, t2_ in zip(base_["_r1"], base_["_r2"], tem2)]
     base_["c1_un"] = base_["c1_un"].where(base_["c1_un"].notna() | base_["sem_conv"], 0.0)
-    base_.loc[tem2, "c2_un"] = base_.loc[tem2, "c2_un"].where(base_.loc[tem2, "c2_un"].notna()
-                                                              | base_.loc[tem2, "sem_conv"], 0.0)
+    base_["c2_un"] = pd.to_numeric(base_["c2_un"], errors="coerce").astype(float)
+    base_["c2_un"] = base_["c2_un"].where(~tem2 | base_["c2_un"].notna() | base_["sem_conv"], 0.0)
     conv = conversoes(inv_id, base_["produto"].unique().tolist()).set_index("produto")["un_cx_f"]
     base_["fator"] = base_["produto"].map(conv).fillna(1.0)
     st_ = []
@@ -611,9 +611,14 @@ def conciliacao(inv_id: int) -> pd.DataFrame:
         tem = base_["rec_id"].notna() & base_["status"].isin(["divergente", "ok", "aguardando"])
         novo = base_["rec_status"].map({"pendente": "pendente", "contado": "pendente", "recontado": "recontado",
                                         "conciliado": "conciliado"})
-        base_.loc[tem, "status"] = novo[tem]
+        base_["status"] = novo.where(tem, base_["status"])
         conc = base_["status"] == "conciliado"
-        base_.loc[conc, "final_un"] = base_.loc[conc, "rec_final"]
+        # pandas 3 não aceita gravar coluna "object" (None) dentro de coluna numérica: converte antes
+        base_["final_un"] = pd.to_numeric(base_["final_un"], errors="coerce").astype(float)
+        rf = pd.to_numeric(base_["rec_final"], errors="coerce").astype(float)
+        base_["final_un"] = rf.where(conc, base_["final_un"])
+        for c_ in ("rec_un", "rec_id"):
+            base_[c_] = pd.to_numeric(base_[c_], errors="coerce")
         base_ = base_.drop(columns="rec_final")
     else:
         for c_ in ("rec_id", "rec_status", "rec_un", "escolha"):
@@ -856,3 +861,153 @@ def _avisar_descarga(operacao_id: int, area: str, n: int, usuario: dict) -> None
                 agora())
     except Exception:  # noqa: BLE001 — o aviso nunca impede a descarga
         pass
+
+
+# --- link do app por revenda e login dos conferentes ------------------------------------------------------------------
+TOKEN_DIAS = 30
+
+
+def link_token(operacao_id: int, criar: bool = True) -> str | None:
+    import secrets
+
+    r = query_one("SELECT valor FROM inv_config WHERE operacao_id = ? AND chave = 'link_app'", (int(operacao_id),))
+    if r and r.get("valor"):
+        return r["valor"]
+    if not criar or operacoes_repo.e_consolidada(operacao_id):
+        return None
+    tok = secrets.token_urlsafe(12)
+    with get_conn() as conn:
+        conn.execute("INSERT INTO inv_config (operacao_id, chave, valor) VALUES (?, 'link_app', ?)",
+                     (int(operacao_id), tok))
+    return tok
+
+
+def novo_link(operacao_id: int) -> str:
+    """Gera outro link (o anterior para de funcionar)."""
+    execute("DELETE FROM inv_config WHERE operacao_id = ? AND chave = 'link_app'", (int(operacao_id),))
+    return link_token(operacao_id)
+
+
+def op_por_link(token: str) -> int | None:
+    if not token:
+        return None
+    r = query_one("SELECT operacao_id FROM inv_config WHERE chave = 'link_app' AND valor = ?", (str(token),))
+    return int(r["operacao_id"]) if r else None
+
+
+def _login(v) -> str:
+    return re.sub(r"\s+", "", str(v or "")).lower()
+
+
+def conferentes(operacao_id: int) -> pd.DataFrame:
+    return query_df("SELECT id, nome, login, ativo, senha_hash IS NOT NULL AS tem_senha, criado_por, criado_em, "
+                    "ultimo_acesso FROM inv_conferentes WHERE operacao_id = ? ORDER BY nome", (int(operacao_id),))
+
+
+def salvar_conferente(operacao_id: int, nome: str, login: str, usuario: str = "", conf_id: int | None = None,
+                      ativo: bool = True) -> int:
+    if operacoes_repo.e_consolidada(operacao_id):
+        raise RegraNegocioError("Escolha uma revenda para cadastrar os conferentes.")
+    nome, lg = (nome or "").strip(), _login(login)
+    if not nome:
+        raise RegraNegocioError("Informe o nome do conferente.")
+    if len(lg) < 3:
+        raise RegraNegocioError("Informe o login (CPF, matrícula ou apelido — mínimo 3 caracteres).")
+    outro = query_one("SELECT id FROM inv_conferentes WHERE operacao_id = ? AND login = ?", (int(operacao_id), lg))
+    if outro and int(outro["id"]) != int(conf_id or 0):
+        raise RegraNegocioError("Já existe um conferente com esse login nesta revenda.")
+    if conf_id:
+        execute("UPDATE inv_conferentes SET nome = ?, login = ?, ativo = ? WHERE id = ?",
+                (nome, lg, 1 if ativo else 0, int(conf_id)))
+        return int(conf_id)
+    return execute("INSERT INTO inv_conferentes (operacao_id, nome, login, ativo, criado_por, criado_em) "
+                   "VALUES (?, ?, ?, 1, ?, ?)", (int(operacao_id), nome, lg, usuario, agora()))
+
+
+def excluir_conferente(conf_id: int) -> None:
+    execute("DELETE FROM inv_conferentes WHERE id = ?", (int(conf_id),))
+
+
+def zerar_senha_conferente(conf_id: int) -> None:
+    execute("UPDATE inv_conferentes SET senha_hash = NULL WHERE id = ?", (int(conf_id),))
+
+
+def _conf(operacao_id: int, login: str) -> dict | None:
+    return query_one("SELECT * FROM inv_conferentes WHERE operacao_id = ? AND login = ?",
+                     (int(operacao_id), _login(login)))
+
+
+def situacao_conferente(operacao_id: int, login: str) -> str:
+    """'sem_cadastro' | 'bloqueado' | 'criar_senha' | 'ok'"""
+    r = _conf(operacao_id, login)
+    if not r:
+        return "sem_cadastro"
+    if not int(r["ativo"] or 0):
+        return "bloqueado"
+    return "criar_senha" if not r["senha_hash"] else "ok"
+
+
+def _sessao_conf(r: dict) -> dict:
+    return {"id": int(r["id"]), "nome": r["nome"], "login": r["login"], "operacao_id": int(r["operacao_id"]),
+            "conferente": True}
+
+
+def criar_senha_conferente(operacao_id: int, login: str, senha: str, confirmacao: str) -> dict:
+    from core.auth import hash_senha
+
+    r = _conf(operacao_id, login)
+    if not r or not int(r["ativo"] or 0):
+        raise RegraNegocioError("Login não liberado. Peça o acesso à gestão do armazém.")
+    if r["senha_hash"]:
+        raise RegraNegocioError("Este login já tem senha. Entre com ela (ou peça para zerar).")
+    if len(senha or "") < 4:
+        raise RegraNegocioError("A senha precisa ter pelo menos 4 caracteres.")
+    if senha != confirmacao:
+        raise RegraNegocioError("As senhas não conferem.")
+    execute("UPDATE inv_conferentes SET senha_hash = ? WHERE id = ?", (hash_senha(senha), int(r["id"])))
+    return entrar_conferente(operacao_id, login, senha)
+
+
+def entrar_conferente(operacao_id: int, login: str, senha: str) -> dict:
+    from core.auth import verificar_senha
+
+    r = _conf(operacao_id, login)
+    if not r or not r["senha_hash"] or not int(r["ativo"] or 0) or not verificar_senha(senha or "", r["senha_hash"]):
+        raise RegraNegocioError("Login ou senha inválidos.")
+    execute("UPDATE inv_conferentes SET ultimo_acesso = ? WHERE id = ?", (agora(), int(r["id"])))
+    return _sessao_conf(r)
+
+
+def _assinar_conf(cid: int, expira: int, senha_hash: str) -> str:
+    import hashlib
+    import hmac
+
+    return hmac.new(senha_hash.encode(), f"conf.{cid}.{expira}".encode(), hashlib.sha256).hexdigest()[:32]
+
+
+def token_conferente(conf: dict) -> str | None:
+    import time
+
+    r = query_one("SELECT senha_hash FROM inv_conferentes WHERE id = ?", (int(conf["id"]),))
+    if not r or not r["senha_hash"]:
+        return None
+    expira = int(time.time()) + TOKEN_DIAS * 86400
+    return f"{conf['id']}.{expira}.{_assinar_conf(int(conf['id']), expira, r['senha_hash'])}"
+
+
+def conferente_por_token(token: str, operacao_id: int) -> dict | None:
+    import hmac
+    import time
+
+    try:
+        cid, expira, ass = str(token).split(".")
+        cid, expira = int(cid), int(expira)
+    except (ValueError, AttributeError):
+        return None
+    if expira < time.time():
+        return None
+    r = query_one("SELECT * FROM inv_conferentes WHERE id = ?", (cid,))
+    if not r or int(r["operacao_id"]) != int(operacao_id) or not r["senha_hash"] or not int(r["ativo"] or 0) or \
+            not hmac.compare_digest(_assinar_conf(cid, expira, r["senha_hash"]), ass):
+        return None
+    return _sessao_conf(r)

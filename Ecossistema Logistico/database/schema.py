@@ -990,6 +990,18 @@ CREATE TABLE IF NOT EXISTS inv_conversao (
     atualizado_em  TEXT
 );
 
+CREATE TABLE IF NOT EXISTS inv_conferentes (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id   INTEGER NOT NULL,
+    nome          TEXT NOT NULL,
+    login         TEXT NOT NULL,
+    senha_hash    TEXT,
+    ativo         INTEGER DEFAULT 1,
+    criado_por    TEXT,
+    criado_em     TEXT,
+    ultimo_acesso TEXT
+);
+
 CREATE TABLE IF NOT EXISTS inv_config (
     operacao_id INTEGER NOT NULL,
     chave       TEXT NOT NULL,
@@ -1636,6 +1648,9 @@ MIGRACOES: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS ix_inv_base ON inv_base(inv_id);
         CREATE INDEX IF NOT EXISTS ix_inv_rec ON inv_recontagem(inv_id, status);
         CREATE INDEX IF NOT EXISTS ix_inv_areas ON inv_areas(operacao_id, codigo);
+    """),
+    ("046_inv_conferentes", """
+        CREATE INDEX IF NOT EXISTS ix_inv_conf ON inv_conferentes(operacao_id, login);
     """),
 ]
 
