@@ -164,7 +164,7 @@ def conversoes(inv_id: int | None = None, produtos: list[str] | None = None) -> 
         df["fator_b"] = float("nan")
     for c in ("un_cx", "cx_pallet", "cx_lastro", "un_cx_m", "cx_pallet_m", "cx_lastro_m", "fator_b"):
         df[c] = pd.to_numeric(df[c], errors="coerce")
-    df["un_cx_f"] = df["un_cx_m"].fillna(df["fator_b"]).fillna(df["un_cx"]).fillna(1.0)
+    df["un_cx_f"] = df["un_cx_m"].fillna(df["un_cx"].where(df["un_cx"] > 0)).fillna(df["fator_b"]).fillna(1.0)
     df["cx_pallet_f"] = df["cx_pallet_m"].fillna(df["cx_pallet"].where(df["cx_pallet"] > 0))
     df["cx_lastro_f"] = df["cx_lastro_m"].fillna(df["cx_lastro"].where(df["cx_lastro"] > 0))
     if produtos is not None:
@@ -187,6 +187,82 @@ def salvar_conversoes(linhas: list[dict], usuario: str = "") -> int:
                              "atualizado_em) VALUES (?, ?, ?, ?, ?, ?)", (prod, *vals, usuario, agora()))
             n += 1
     return n
+
+
+_CHAVES_0111 = {"cod": (["cod", "codigo", "cod_produto", "codigo_produto", "sku", "produto"], []),
+                "un_cx": (["un_cx", "unid_cx", "unidades_cx", "unidades_caixa", "qtd_unidades", "qtde_unidades",
+                           "unidades_por_caixa", "qtd_embalagem", "embalagem", "fator_conversao", "multiplo"],
+                          ["unidades_por", "unid_por", "un_por", "qtd_unid", "qtde_unid", "unid_cx", "embalag",
+                           "multiplo"]),
+                "cx_pallet": (["cx_pallet", "caixas_pallet", "caixas_palete", "cx_palete", "qtd_pallet",
+                               "qtde_pallet", "pallet", "palete", "palet"], ["pallet", "palete", "palet", "plt"]),
+                "cx_lastro": (["cx_lastro", "caixas_lastro", "qtd_lastro", "qtde_lastro", "lastro", "camada"],
+                              ["lastro", "camada"])}
+
+
+def ler_0111(conteudo: bytes, nome: str) -> tuple[pd.DataFrame, dict]:
+    """Lê a 01.11 e sugere as colunas de código, unidades/caixa, caixas/palete e caixas/lastro."""
+    from services import importacao_service as imp
+
+    try:
+        df = imp.ler_arquivo(nome, conteudo, "produtos")
+    except Exception as e:  # noqa: BLE001
+        raise RegraNegocioError(f"Não consegui ler a 01.11: {e}") from e
+    norm = {c: imp._norm(c) for c in df.columns}
+    mapa, usadas = {}, set()
+    for campo, (exatos, contem) in _CHAVES_0111.items():
+        col = next((c for c, n in norm.items() if n in exatos and c not in usadas), None)
+        if col is None:
+            col = next((c for c, n in norm.items() if any(k in n for k in contem) and c not in usadas
+                        and "desc" not in n), None)
+        mapa[campo] = col
+        if col:
+            usadas.add(col)
+    if not mapa["cod"] and len(df.columns):
+        mapa["cod"] = df.columns[0]
+    return df, mapa
+
+
+def importar_conversoes_0111(df: pd.DataFrame, mapa: dict, usuario: str = "") -> dict:
+    """Grava na base de produtos (01.11) as unidades/caixa, caixas/palete e caixas/lastro das colunas escolhidas."""
+    from services import importacao_service as imp
+
+    if not mapa.get("cod"):
+        raise RegraNegocioError("Escolha a coluna do código do produto.")
+    campos = [c for c in ("un_cx", "cx_pallet", "cx_lastro") if mapa.get(c)]
+    if not campos:
+        raise RegraNegocioError("Escolha pelo menos uma coluna: unidades por caixa, caixas por palete ou por lastro.")
+    cod = imp._to_int(df[mapa["cod"]])
+    vals = {c: pd.to_numeric(imp._to_float(df[mapa[c]]), errors="coerce") for c in campos}
+    n = 0
+    with get_conn() as conn:
+        exist = {int(r[0]) for r in conn.execute("SELECT cod FROM produtos").fetchall()}
+        for i in df.index:
+            if pd.isna(cod[i]) or int(cod[i]) <= 0:
+                continue
+            c = int(cod[i])
+            atual = {k: (float(vals[k][i]) if pd.notna(vals[k][i]) and vals[k][i] > 0 else None) for k in campos}
+            if not any(v is not None for v in atual.values()):
+                continue
+            if c in exist:
+                sets = [k for k, v in atual.items() if v is not None]
+                conn.execute(f"UPDATE produtos SET {', '.join(k + ' = ?' for k in sets)} WHERE cod = ?",
+                             (*[atual[k] for k in sets], c))
+            else:
+                conn.execute(f"INSERT INTO produtos (cod, {', '.join(campos)}) VALUES (?, {', '.join('?' * len(campos))})",
+                             (c, *[atual[k] for k in campos]))
+                exist.add(c)
+            n += 1
+    with get_conn() as conn:  # lembra o de/para para a próxima vez
+        conn.execute("DELETE FROM inv_config WHERE operacao_id = 0 AND chave = 'map0111'")
+        conn.execute("INSERT INTO inv_config (operacao_id, chave, valor) VALUES (0, 'map0111', ?)",
+                     ("|".join(f"{k}={v or ''}" for k, v in mapa.items()),))
+    return {"produtos": n, "campos": campos}
+
+
+def mapa_0111_salvo() -> dict:
+    r = query_one("SELECT valor FROM inv_config WHERE operacao_id = 0 AND chave = 'map0111'")
+    return dict(x.split("=", 1) for x in str((r or {}).get("valor") or "").split("|") if "=" in x)
 
 
 def _multiplicador(unidade: str, conv: dict) -> float | None:
@@ -369,12 +445,24 @@ def ler_contagem(conteudo: bytes) -> pd.DataFrame:
     return out.reset_index(drop=True)
 
 
-def importar_contagem(inv_id: int, conteudo: bytes, nome: str, usuario: str = "") -> dict:
-    """Grava as contagens do WMS. Sobe de novo a mesma contagem (área × usuário × finalização) → substitui."""
+def importar_contagem(inv_id: int, conteudo: bytes, nome: str, usuario: str = "", area: str | None = None) -> dict:
+    """Grava as contagens do WMS. Sobe de novo a mesma contagem (área × usuário × finalização) → substitui.
+    Com `area`, grava só as linhas dessa área (coluna C) — para subir área por área."""
     inv = _aberto(inv_id)
     df = ler_contagem(conteudo)
     if df.empty:
         raise RegraNegocioError("Nenhuma contagem no arquivo.")
+    outras = 0
+    if area:
+        alvo = _norm(area)
+        no_arq = sorted(df["area"].unique())
+        df_a = df[df["area"].map(_norm) == alvo]
+        if df_a.empty:
+            raise RegraNegocioError(f"O arquivo não tem contagem da área “{_nome_area(area)}”. Áreas no arquivo: "
+                                    + ", ".join(_nome_area(a) for a in no_arq[:8]) + ("…" if len(no_arq) > 8 else "")
+                                    + ". Escolha a área certa ou suba como “Todas as áreas”.")
+        outras = len(df) - len(df_a)
+        df = df_a.assign(area=area)
     df["finalizacao"] = df["finalizacao"].fillna(df["inicio"]).fillna("")
     with get_conn() as conn:
         _garantir_areas(conn, int(inv["operacao_id"]), df["area"].unique().tolist())
@@ -387,7 +475,22 @@ def importar_contagem(inv_id: int, conteudo: bytes, nome: str, usuario: str = ""
             [(int(inv_id), r.area, r.endereco, r.usuario, r.inicio, r.finalizacao or None, r.produto, r.descricao,
               float(r.qtd), r.unidade, r.validade, str(nome)[:200], agora()) for r in df.itertuples(index=False)])
     return {"linhas": len(df), "areas": int(df["area"].nunique()), "usuarios": sorted(df["usuario"].unique()),
-            "enderecos": int(df["endereco"].nunique()), "itens": int(df["produto"].nunique())}
+            "enderecos": int(df["endereco"].nunique()), "itens": int(df["produto"].nunique()), "outras": outras}
+
+
+def situacao_areas(inv_id: int, operacao_id: int) -> pd.DataFrame:
+    """Áreas cadastradas + as que já têm contagem, com quantas contagens (usuários) cada uma já tem."""
+    a = areas(operacao_id)
+    rc = resumo_contagens(inv_id)
+    cods = list(dict.fromkeys((a["codigo"].tolist() if not a.empty else []) +
+                              (rc["area"].tolist() if not rc.empty else [])))
+    nomes = dict(zip(a["codigo"], a["nome"])) if not a.empty else {}
+    linhas = []
+    for c in cods:
+        x = rc[rc["area"] == c] if not rc.empty else rc
+        linhas.append({"area": c, "nome": nomes.get(c) or _nome_area(c), "contagens": len(x),
+                       "usuarios": ", ".join(x["usuario"]) if len(x) else ""})
+    return pd.DataFrame(linhas, columns=["area", "nome", "contagens", "usuarios"])
 
 
 def limpar_contagens(inv_id: int, area: str | None = None, usuario: str | None = None) -> None:
@@ -434,11 +537,15 @@ def conciliacao(inv_id: int) -> pd.DataFrame:
             "rec_id", "rec_status", "rec_un", "escolha", "unidades", "sem_conv"]
     if c.empty:
         return pd.DataFrame(columns=cols)
-    ordem = (c.groupby(["area", "usuario"])["finalizacao"].max().reset_index()
-              .sort_values(["area", "finalizacao"]))
-    ordem["n"] = ordem.groupby("area").cumcount() + 1
-    c = c.merge(ordem[["area", "usuario", "n"]], on=["area", "usuario"], how="left")
-    usuarios_area = ordem.groupby("area")["usuario"].apply(list).to_dict()
+    # cada contagem = usuário × finalização (o mesmo usuário pode fazer a 1ª e a 2ª). A ordem é POR ENDEREÇO:
+    # a 1ª contagem do endereço é a que terminou primeiro, a 2ª a seguinte.
+    c["finalizacao"] = c["finalizacao"].fillna(c["inicio"]).fillna("")
+    sess = (c.groupby(["area", "endereco", "usuario", "finalizacao"], as_index=False).size()
+             .sort_values(["area", "endereco", "finalizacao", "usuario"]))
+    sess["n"] = sess.groupby(["area", "endereco"]).cumcount() + 1
+    c = c.merge(sess[["area", "endereco", "usuario", "finalizacao", "n"]],
+                on=["area", "endereco", "usuario", "finalizacao"], how="left")
+    c = c[c["n"] <= 2]
     g = (c.groupby(["area", "endereco", "produto", "n"], as_index=False)
           .agg(descricao=("descricao", "first"), qtd_un=("qtd_un", lambda s: s.sum(min_count=len(s))),
                unidades=("unidade", lambda s: ", ".join(sorted(set(s))))))
@@ -449,10 +556,14 @@ def conciliacao(inv_id: int) -> pd.DataFrame:
     for n in (1, 2):
         x = g[g["n"] == n][chave + ["qtd_un"]].rename(columns={"qtd_un": f"c{n}_un"})
         base_ = base_.merge(x, on=chave, how="left")
-    base_["u1"] = base_["area"].map(lambda a: (usuarios_area.get(a) or [None])[0])
-    base_["u2"] = base_["area"].map(lambda a: (usuarios_area.get(a) or [None, None])[1]
-                                    if len(usuarios_area.get(a) or []) > 1 else None)
-    # quem contou a área e não achou o produto no endereço contou ZERO
+    quem = sess[sess["n"] <= 2].pivot_table(index=["area", "endereco"], columns="n", values="usuario",
+                                            aggfunc="first")
+    quem = quem.rename(columns={1: "u1", 2: "u2"}).reset_index()
+    for col in ("u1", "u2"):
+        if col not in quem:
+            quem[col] = None
+    base_ = base_.merge(quem[["area", "endereco", "u1", "u2"]], on=["area", "endereco"], how="left")
+    # endereço contado pelas duas contagens: quem não achou o produto contou ZERO
     tem2 = base_["u2"].notna()
     sem_c = c.groupby(chave + ["n"])["qtd_un"].apply(lambda s: s.isna().any())
     base_["sem_conv"] = [bool(sem_c.get((a, e, p_, 1), False) or sem_c.get((a, e, p_, 2), False))
@@ -493,11 +604,32 @@ def conciliacao(inv_id: int) -> pd.DataFrame:
     return base_[cols].sort_values(chave).reset_index(drop=True)
 
 
+END_STATUS = {"validado": "✅ Validado", "divergente": "⚠️ Divergente", "recontagem": "📨 Em recontagem",
+              "conciliar": "📥 Conciliar", "aguardando": "⏳ Só 1 contagem", "sem_conversao": "❔ Sem conversão"}
+
+
+def por_endereco(conc: pd.DataFrame) -> pd.DataFrame:
+    """Uma linha por área × endereço: quem fez a 1ª e a 2ª contagem, itens, quantos bateram e a situação."""
+    cols = ["area", "endereco", "u1", "u2", "itens", "ok", "divergente", "situacao"]
+    if conc.empty:
+        return pd.DataFrame(columns=cols)
+    x = conc.assign(ok_=conc["status"].isin(["ok", "conciliado"]), div_=conc["status"] == "divergente",
+                    pend_=conc["status"] == "pendente", rec_=conc["status"] == "recontado",
+                    ag_=conc["status"] == "aguardando", sc_=conc["status"] == "sem_conversao")
+    e = x.groupby(["area", "endereco"], as_index=False).agg(
+        u1=("u1", "first"), u2=("u2", "first"), itens=("produto", "size"), ok=("ok_", "sum"),
+        divergente=("div_", "sum"), pend=("pend_", "sum"), rec=("rec_", "sum"), ag=("ag_", "sum"), sc=("sc_", "sum"))
+    e["situacao"] = ["divergente" if d else "conciliar" if r_ else "recontagem" if p_ else "aguardando" if a_
+                     else "sem_conversao" if s_ else "validado"
+                     for d, r_, p_, a_, s_ in zip(e["divergente"], e["rec"], e["pend"], e["ag"], e["sc"])]
+    return e[cols]
+
+
 def painel_areas(conc: pd.DataFrame, operacao_id: int) -> pd.DataFrame:
     """Uma linha por área: endereços, itens, bateu, divergentes, em recontagem, acerto 1ª × 2ª."""
     if conc.empty:
         return pd.DataFrame(columns=["area", "nome", "armazem", "enderecos", "itens", "ok", "divergente", "pendente",
-                                     "recontado", "conciliado", "aguardando", "sem_conversao", "acerto"])
+                                     "recontado", "conciliado", "aguardando", "sem_conversao", "acerto", "end_validados"])
     p = pd.crosstab(conc["area"], conc["status"])
     for s in STATUS:
         if s not in p:
@@ -505,6 +637,9 @@ def painel_areas(conc: pd.DataFrame, operacao_id: int) -> pd.DataFrame:
     p = p.reset_index()
     e = conc.groupby("area").agg(enderecos=("endereco", "nunique"), itens=("produto", "size"))
     p = p.merge(e.reset_index(), on="area")
+    pe = por_endereco(conc)
+    ev = pe.assign(v=pe["situacao"] == "validado").groupby("area")["v"].sum()
+    p["end_validados"] = p["area"].map(ev).fillna(0).astype(int)
     a = areas(operacao_id)
     nomes = dict(zip(a["codigo"], a["nome"])) if not a.empty else {}
     arm = dict(zip(a["codigo"], a["armazem"])) if not a.empty else {}

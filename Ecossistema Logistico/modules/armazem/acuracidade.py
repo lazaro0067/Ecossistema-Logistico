@@ -14,7 +14,7 @@ from services import inventario_service as inv
 from services.erros import RegraNegocioError
 
 _PASTAS = {"mensal": "📦 Inventário mensal", "diaria": "🔄 Conciliação diária"}
-_TELAS = {"painel": "📊 Painel", "recontagem": "🔁 Recontagem", "resultado": "📋 Resultado", "bases": "📥 Bases",
+_TELAS = {"painel": "📊 Painel", "enderecos": "📍 Por endereço", "recontagem": "🔁 Recontagem", "resultado": "📋 Resultado", "bases": "📥 Bases",
           "cadastros": "⚙️ Cadastros"}
 VERDE, VERMELHO, AMARELO, AZUL, ROXO, CINZA = "#1baf7a", "#e34948", "#eda100", "#2a78d6", "#7c5cd6", "#9aa4b2"
 _COR = {"ok": VERDE, "divergente": VERMELHO, "pendente": AMARELO, "recontado": ROXO, "conciliado": AZUL,
@@ -71,7 +71,7 @@ def _mensal(usuario: dict, op: int) -> None:
         st.session_state["inv_sel"] = ids[0]
     inv_id = c1.selectbox("Inventário", ids, key="inv_sel", format_func=rot.get, label_visibility="collapsed")
     tela = ui._escolha("inv_tela", list(_TELAS), "painel", pills=True, formatar=_TELAS.get)
-    {"painel": _painel, "recontagem": _recontagem, "resultado": _resultado, "bases": _bases,
+    {"painel": _painel, "enderecos": _enderecos, "recontagem": _recontagem, "resultado": _resultado, "bases": _bases,
      "cadastros": _cadastros}[tela](usuario, op, int(inv_id))
 
 
@@ -79,8 +79,8 @@ def _mensal(usuario: dict, op: int) -> None:
 def _tab_div(d: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame({
         "Área": d["area"], "Endereço": d["endereco"], "Cód": d["produto"], "Produto": d["descricao"],
-        "1ª contagem": [_q(v, f) for v, f in zip(d["c1_un"], d["fator"])],
-        "2ª contagem": [_q(v, f) for v, f in zip(d["c2_un"], d["fator"])],
+        "Contador 1": d["u1"].fillna("—"), "1ª contagem": [_q(v, f) for v, f in zip(d["c1_un"], d["fator"])],
+        "Contador 2": d["u2"].fillna("—"), "2ª contagem": [_q(v, f) for v, f in zip(d["c2_un"], d["fator"])],
         "Diferença": [_q((b or 0) - (a or 0), f) for a, b, f in zip(d["c1_un"], d["c2_un"], d["fator"])],
         "Situação": d["status"].map(inv.STATUS)}).reset_index(drop=True)
 
@@ -112,7 +112,7 @@ def _painel(usuario: dict, op: int, inv_id: int) -> None:
          "status": "atencao" if cont.get("aguardando", 0) else "bom", "detalhe": "áreas com um usuário só",
          "dados": _tab_div(conc[conc["status"] == "aguardando"]) if cont.get("aguardando", 0) else None},
         {"titulo": "Sem conversão", "valor": _n(sem["produto"].nunique()), "icone": "❔",
-         "status": "atencao" if len(sem) else "bom", "detalhe": "cadastre em ⚙️ Cadastros › Conversões",
+         "status": "atencao" if len(sem) else "bom", "detalhe": "suba a 01.11 em ⚙️ Cadastros › Conversões",
          "dados": _tab_div(sem) if len(sem) else None},
     ], key="kp_inv_geral")
     pa = inv.painel_areas(conc, op)
@@ -123,7 +123,8 @@ def _painel(usuario: dict, op: int, inv_id: int) -> None:
         cards.append({"titulo": f"{r.nome}"[:34], "valor": f"{n_div} p/ recontar" if n_div else "ok",
                       "icone": "⚠️" if n_div else "✅", "status": "critico" if n_div else (
                           "atencao" if r.aguardando or r.sem_conversao else "bom"),
-                      "detalhe": f"{r.armazem} · {int(r.enderecos)} end. · acerto {_pct(r.acerto)}",
+                      "detalhe": f"{r.armazem} · {int(r.end_validados)}/{int(r.enderecos)} end. validados · "
+                                 f"acerto {_pct(r.acerto)}",
                       "ao_clicar": (lambda a=r.area: st.session_state.update(inv_area=a))})
     tema.kpis(cards, key=f"kp_inv_areas_{inv_id}")
     g = pa.iloc[::-1]
@@ -164,6 +165,80 @@ def _enviar(usuario: dict, inv_id: int, conc: pd.DataFrame, pa: pd.DataFrame) ->
                  disabled=marcados.empty):
         ui.acao(inv.enviar_recontagem, inv_id, marcados, usuario.get("nome", ""),
                 sucesso=f"{len(marcados)} item(ns) enviados para o app de recontagem.")
+
+
+# --- 📍 Por endereço ----------------------------------------------------------------------------------------------------
+def _enderecos(usuario: dict, op: int, inv_id: int) -> None:
+    conc = inv.conciliacao(inv_id)
+    if conc.empty:
+        st.info("Ainda não há contagens neste inventário — suba em 📥 Bases.")
+        return
+    pe = inv.por_endereco(conc)
+    nomes = dict(zip(*[inv.painel_areas(conc, op)[c] for c in ("area", "nome")]))
+    cont = pe["situacao"].value_counts()
+    tema.kpis([
+        {"titulo": "Endereços", "valor": _n(len(pe)), "icone": "📍", "status": "info",
+         "detalhe": f"{_n(pe['area'].nunique())} áreas"},
+        {"titulo": "Validados", "valor": _n(cont.get("validado", 0)), "icone": "✅", "status": "bom",
+         "detalhe": _pct(cont.get("validado", 0) / len(pe) * 100) + " dos endereços"},
+        {"titulo": "Com divergência", "valor": _n(cont.get("divergente", 0)), "icone": "⚠️",
+         "status": "critico" if cont.get("divergente", 0) else "bom", "detalhe": "1ª ≠ 2ª contagem"},
+        {"titulo": "Em recontagem / conciliar", "valor": f"{_n(cont.get('recontagem', 0))} / "
+                                                         f"{_n(cont.get('conciliar', 0))}", "icone": "📨",
+         "status": "atencao" if cont.get("conciliar", 0) else "info"},
+        {"titulo": "Só 1 contagem", "valor": _n(cont.get("aguardando", 0)), "icone": "⏳",
+         "status": "atencao" if cont.get("aguardando", 0) else "bom", "detalhe": "falta a 2ª contagem do endereço"},
+    ], key="kp_inv_end")
+    c1, c2, c3 = st.columns([1.4, 1.2, 1.4])
+    areas_ = ["__todas__"] + sorted(pe["area"].unique(), key=lambda a: nomes.get(a, a))
+    area = c1.selectbox("Área", areas_, key="inv_end_area",
+                        format_func=lambda a: "Todas as áreas" if a == "__todas__" else nomes.get(a, a))
+    sit = c2.selectbox("Situação", ["__todas__", *inv.END_STATUS], key="inv_end_sit",
+                       format_func=lambda s: "Todas" if s == "__todas__" else inv.END_STATUS[s])
+    busca = c3.text_input("Buscar endereço ou produto", key="inv_end_busca").strip().upper()
+    v = pe if area == "__todas__" else pe[pe["area"] == area]
+    if sit != "__todas__":
+        v = v[v["situacao"] == sit]
+    if busca:
+        tem_prod = set(conc.loc[conc["produto"].astype(str).str.contains(busca, regex=False)
+                                | conc["descricao"].fillna("").str.upper().str.contains(busca, regex=False),
+                                "endereco"])
+        v = v[v["endereco"].astype(str).str.upper().str.contains(busca, regex=False) | v["endereco"].isin(tem_prod)]
+    tema.secao("📍 Endereços", "Cada endereço com quem fez a 1ª e a 2ª contagem. Validado = todos os produtos do "
+                              "endereço bateram (ou foram conciliados).")
+    ui.tabela(pd.DataFrame({
+        "": v["situacao"].map(lambda s: inv.END_STATUS[s].split(" ")[0]), "Área": v["area"].map(
+            lambda a: nomes.get(a, a)), "Endereço": v["endereco"], "Contador 1": v["u1"].fillna("—"),
+        "Contador 2": v["u2"].fillna("— (falta)"), "Itens": v["itens"], "Bateram": v["ok"],
+        "Divergentes": v["divergente"], "Situação": v["situacao"].map(inv.END_STATUS)}),
+        baixar=f"inventario_enderecos_{inv_id}")
+    if v.empty:
+        return
+    chaves = [f"{a}|{e}" for a, e in zip(v["area"], v["endereco"])]
+    esc = st.selectbox("🔎 Abrir endereço", chaves, key="inv_end_sel",
+                       format_func=lambda k: f"{k.split('|', 1)[1]} · {nomes.get(k.split('|', 1)[0], '')} · "
+                                             + inv.END_STATUS[v.set_index(['area', 'endereco']).loc[
+                                                 tuple(k.split('|', 1)), 'situacao']])
+    a, e = esc.split("|", 1)
+    d = conc[(conc["area"] == a) & (conc["endereco"] == e)]
+    u1, u2 = d["u1"].iloc[0] or "1ª contagem", d["u2"].iloc[0] or "2ª contagem (falta)"
+    st.markdown(f"#### 📍 {e} · {nomes.get(a, a)}")
+    det = pd.DataFrame({
+        "Cód": d["produto"], "Produto": d["descricao"],
+        f"1ª · {u1}": [_q(x, f) for x, f in zip(d["c1_un"], d["fator"])],
+        f"2ª · {u2}": [_q(x, f) for x, f in zip(d["c2_un"], d["fator"])],
+        "Diferença": [_q((y if pd.notna(y) else 0) - (x if pd.notna(x) else 0), f) if pd.notna(y) else "—"
+                      for x, y, f in zip(d["c1_un"], d["c2_un"], d["fator"])],
+        "Recontagem": [_q(x, f) if pd.notna(x) else "" for x, f in zip(d["rec_un"], d["fator"])],
+        "Final": [_q(x, f) for x, f in zip(d["final_un"], d["fator"])],
+        "Unid. contada": d["unidades"], "Situação": d["status"].map(inv.STATUS)}).reset_index(drop=True)
+    ui.tabela(det, baixar=f"inventario_endereco_{e}")
+    dv = d[d["status"] == "divergente"]
+    if len(dv) and (inv.inventario(inv_id) or {}).get("status") == "aberto" and st.button(
+            f"📨 Mandar os {len(dv)} item(ns) divergentes deste endereço para recontagem", type="primary",
+            key=f"inv_env_end_{a}_{e}"):
+        ui.acao(inv.enviar_recontagem, inv_id, dv, usuario.get("nome", ""),
+                sucesso=f"{len(dv)} item(ns) do endereço {e} enviados para recontagem.")
 
 
 # --- 🔁 Recontagem ------------------------------------------------------------------------------------------------------
@@ -276,6 +351,7 @@ def _resultado(usuario: dict, op: int, inv_id: int) -> None:
     tema.secao("🗺️ Por área")
     pa = inv.painel_areas(conc, op)
     ui.tabela(pd.DataFrame({"Armazém": pa["armazem"], "Área": pa["nome"], "Endereços": pa["enderecos"],
+                            "Endereços validados": pa["end_validados"],
                             "Itens": pa["itens"], "Bateu": pa["ok"], "Divergentes": pa["divergente"],
                             "Em recontagem": pa["pendente"] + pa["recontado"], "Conciliados": pa["conciliado"],
                             "Acerto 1ª × 2ª": pa["acerto"].map(_pct)}), baixar=f"inventario_areas_{inv_id}")
@@ -337,24 +413,43 @@ def _bases(usuario: dict, op: int, inv_id: int) -> None:
                 ui.salvo_automatico("Depósitos salvos.")
     with c2, st.container(border=True):
         st.markdown("**2. Contagens do WMS**")
-        st.caption("C = área · D = endereço · E = usuário · K = quantidade · L = unidade. Pode subir vários arquivos; "
-                   "a mesma contagem subida de novo substitui a anterior. A 1ª e a 2ª contagem da área são definidas "
-                   "pela ordem em que cada usuário terminou.")
+        st.caption("C = área · D = endereço · E = usuário · K = quantidade · L = unidade. A mesma contagem subida de "
+                   "novo substitui a anterior. A 1ª e a 2ª contagem da área são definidas pela ordem em que cada "
+                   "usuário terminou.")
+        modo = st.radio("Como subir", ["area", "total"], horizontal=True, key="inv_up_modo",
+                        format_func={"area": "📍 Por área", "total": "📦 Todas as áreas (arquivo completo)"}.get,
+                        disabled=not aberto)
+        area_up = None
+        if modo == "area":
+            sa = inv.situacao_areas(inv_id, op)
+            if sa.empty:
+                st.info("Nenhuma área cadastrada ainda. Cadastre em ⚙️ Cadastros › Áreas ou suba o primeiro arquivo "
+                        "como “Todas as áreas” (as áreas entram sozinhas).")
+            else:
+                rot = {r.area: f"{'✅' if r.contagens >= 2 else '1️⃣' if r.contagens == 1 else '⬜'} {r.nome} · "
+                               f"{r.contagens} contagem(ns)" + (f" ({r.usuarios})" if r.usuarios else "")
+                       for r in sa.itertuples()}
+                area_up = st.selectbox("Área", list(rot), key="inv_up_area", format_func=rot.get)
         v2 = st.session_state.get("inv_up_c_v", 0)
         arqs = st.file_uploader("Contagens", type=arquivos.FORMATOS, key=f"inv_up_c_{v2}", accept_multiple_files=True,
                                 label_visibility="collapsed", disabled=not aberto)
         arqs = [a for a in (arqs or []) if a is not None]
-        if arqs and st.button(f"Gravar {len(arqs)} arquivo(s)", type="primary", key="inv_grava_c"):
+        pronto = bool(arqs) and (modo == "total" or area_up is not None)
+        rot_b = (f"Gravar na área {inv._nome_area(area_up)}" if modo == "area" and area_up else
+                 f"Gravar {len(arqs)} arquivo(s) — todas as áreas")
+        if pronto and st.button(rot_b, type="primary", key="inv_grava_c"):
             erros = []
             for a in arqs:
                 try:
                     a2 = arquivos.preparar(a)
-                    r = inv.importar_contagem(inv_id, a2.getvalue(), a2.name, usuario.get("nome", ""))
+                    r = inv.importar_contagem(inv_id, a2.getvalue(), a2.name, usuario.get("nome", ""),
+                                              area_up if modo == "area" else None)
                 except RegraNegocioError as e:
                     erros.append(f"{a.name}: {e}")
                 else:
-                    ui.avisar(f"{a.name}: {r['linhas']} linhas · {r['areas']} áreas · {r['enderecos']} endereços · "
-                              f"{', '.join(r['usuarios'])}.")
+                    ui.avisar(f"{a.name}: {r['linhas']} linhas · {r['areas']} área(s) · {r['enderecos']} endereços · "
+                              f"{', '.join(r['usuarios'])}."
+                              + (f" {r['outras']} linha(s) de outras áreas ignoradas." if r.get("outras") else ""))
             for e in erros:
                 st.error(e)
             if not erros:
@@ -447,6 +542,7 @@ def _conversoes(usuario: dict, inv_id: int) -> None:
     st.caption("Conversão das unidades contadas para unidades: CX = un/cx · PL = cx/palete × un/cx · LST = cx/lastro × "
                "un/cx. Vem da 01.11 (cx/palete, cx/lastro) e do fator da 02.05.02 (un/cx); o que você ajustar aqui "
                "vale para todos os inventários.")
+    _upload_0111(usuario)
     if c.empty:
         st.info("Suba as contagens para ver os produtos.")
         return
@@ -473,3 +569,41 @@ def _conversoes(usuario: dict, inv_id: int) -> None:
                   .fillna(-1)).any(axis=1)]
         ui.acao(inv.salvar_conversoes, mud.to_dict("records"), usuario.get("nome", ""),
                 sucesso=f"{len(mud)} conversão(ões) salvas.")
+
+
+def _upload_0111(usuario: dict) -> None:
+    with st.expander("📥 Trazer as conversões da 01.11 (unidades por caixa, caixas por palete e por lastro)",
+                     expanded=True):
+        st.caption("Suba a 01.11 e confira as colunas — o sistema grava no cadastro de produtos e passa a converter "
+                   "CX, PL e LST automaticamente em todos os inventários.")
+        v = st.session_state.get("inv_0111_v", 0)
+        arq = st.file_uploader("01.11", type=arquivos.FORMATOS, key=f"inv_0111_{v}", label_visibility="collapsed")
+        if arq is None:
+            return
+        try:
+            a2 = arquivos.preparar(arq)
+            df, mapa = inv.ler_0111(a2.getvalue(), a2.name)
+        except RegraNegocioError as e:
+            st.error(str(e))
+            return
+        salvo = inv.mapa_0111_salvo()
+        cols = [None] + list(df.columns)
+        rot = {"cod": "Código do produto *", "un_cx": "Unidades por caixa", "cx_pallet": "Caixas por palete",
+               "cx_lastro": "Caixas por lastro"}
+        esc = {}
+        c = st.columns(4)
+        for i, (k, r) in enumerate(rot.items()):
+            pad = salvo.get(k) if salvo.get(k) in df.columns else mapa.get(k)
+            esc[k] = c[i].selectbox(r, cols, index=cols.index(pad) if pad in cols else 0, key=f"inv_0111_m_{k}",
+                                    format_func=lambda x: "— não usar —" if x is None else x)
+        with st.expander("Prévia da 01.11"):
+            ui.tabela(df[[x for x in esc.values() if x]].head(10) if any(esc.values()) else df.head(10), baixar=False)
+        if st.button("💾 Gravar conversões da 01.11", type="primary", key="inv_0111_g"):
+            try:
+                r = inv.importar_conversoes_0111(df, esc, usuario.get("nome", ""))
+            except RegraNegocioError as e:
+                st.error(str(e))
+            else:
+                st.session_state["inv_0111_v"] = v + 1
+                ui.avisar(f"01.11: conversões de {r['produtos']} produto(s) gravadas.")
+                st.rerun()
