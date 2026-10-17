@@ -534,7 +534,7 @@ def conciliacao(inv_id: int) -> pd.DataFrame:
     """Uma linha por área × endereço × produto com a 1ª e a 2ª contagem (em unidades), status e quantidade final."""
     c = _contagens_un(inv_id)
     cols = ["area", "endereco", "produto", "descricao", "u1", "c1_un", "u2", "c2_un", "status", "final_un", "fator",
-            "rec_id", "rec_status", "rec_un", "escolha", "unidades", "sem_conv"]
+            "rec_id", "rec_status", "rec_un", "escolha", "unidades", "sem_conv", "t1", "t2", "dif_txt"]
     if c.empty:
         return pd.DataFrame(columns=cols)
     # cada contagem = usuário × finalização (o mesmo usuário pode fazer a 1ª e a 2ª). A ordem é POR ENDEREÇO:
@@ -556,6 +556,18 @@ def conciliacao(inv_id: int) -> pd.DataFrame:
     for n in (1, 2):
         x = g[g["n"] == n][chave + ["qtd_un"]].rename(columns={"qtd_un": f"c{n}_un"})
         base_ = base_.merge(x, on=chave, how="left")
+    # quantidade como foi contada (ex.: "2 PL + 5 CX") — compara direto quando as unidades são as mesmas
+    cru = c.groupby(chave + ["n", "unidade"], as_index=False)["qtd"].sum()
+    cru["unidade"] = cru["unidade"].fillna("").astype(str).str.upper().str.strip()
+    cru = cru[cru["qtd"] != 0]
+    txt = cru.groupby(chave + ["n"]).apply(
+        lambda d: " + ".join(f"{_fmt_q(q)} {u}" for u, q in sorted(zip(d["unidade"], d["qtd"]))),
+        include_groups=False)
+    raw = cru.groupby(chave + ["n"]).apply(lambda d: dict(zip(d["unidade"], d["qtd"])), include_groups=False)
+    base_["t1"] = [txt.get((a, e, p_, 1), "") for a, e, p_ in zip(base_["area"], base_["endereco"], base_["produto"])]
+    base_["t2"] = [txt.get((a, e, p_, 2), "") for a, e, p_ in zip(base_["area"], base_["endereco"], base_["produto"])]
+    base_["_r1"] = [raw.get((a, e, p_, 1), {}) for a, e, p_ in zip(base_["area"], base_["endereco"], base_["produto"])]
+    base_["_r2"] = [raw.get((a, e, p_, 2), {}) for a, e, p_ in zip(base_["area"], base_["endereco"], base_["produto"])]
     quem = sess[sess["n"] <= 2].pivot_table(index=["area", "endereco"], columns="n", values="usuario",
                                             aggfunc="first")
     quem = quem.rename(columns={1: "u1", 2: "u2"}).reset_index()
@@ -568,24 +580,29 @@ def conciliacao(inv_id: int) -> pd.DataFrame:
     sem_c = c.groupby(chave + ["n"])["qtd_un"].apply(lambda s: s.isna().any())
     base_["sem_conv"] = [bool(sem_c.get((a, e, p_, 1), False) or sem_c.get((a, e, p_, 2), False))
                          for a, e, p_ in zip(base_["area"], base_["endereco"], base_["produto"])]
+    base_["t1"] = base_["t1"].replace("", "0")
+    base_.loc[tem2, "t2"] = base_.loc[tem2, "t2"].replace("", "0")
+    base_["dif_txt"] = [_dif_cru(r1, r2) if t2_ else "" for r1, r2, t2_ in zip(base_["_r1"], base_["_r2"], tem2)]
     base_["c1_un"] = base_["c1_un"].where(base_["c1_un"].notna() | base_["sem_conv"], 0.0)
     base_.loc[tem2, "c2_un"] = base_.loc[tem2, "c2_un"].where(base_.loc[tem2, "c2_un"].notna()
                                                               | base_.loc[tem2, "sem_conv"], 0.0)
     conv = conversoes(inv_id, base_["produto"].unique().tolist()).set_index("produto")["un_cx_f"]
     base_["fator"] = base_["produto"].map(conv).fillna(1.0)
     st_ = []
-    for a, c1, c2, t2, sc in zip(base_["area"], base_["c1_un"], base_["c2_un"], tem2, base_["sem_conv"]):
-        if sc:
-            st_.append("sem_conversao")
-        elif not t2:
+    for a, c1, c2, t2, sc, r1, r2 in zip(base_["area"], base_["c1_un"], base_["c2_un"], tem2, base_["sem_conv"],
+                                         base_["_r1"], base_["_r2"]):
+        if not t2:
             st_.append("aguardando")
+        elif sc:  # sem conversão: compara do jeito que foi contado (mesma unidade)
+            st_.append("ok" if _iguais(r1, r2) else "divergente")
         elif abs(float(c1) - float(c2)) <= TOLERANCIA_UN:
             st_.append("ok")
         else:
             st_.append("divergente")
     base_["status"] = st_
-    base_["final_un"] = [c1 if s in ("ok", "aguardando") else None
-                         for s, c1 in zip(base_["status"], base_["c1_un"])]
+    base_["final_un"] = [c1 if s in ("ok", "aguardando") and not sc else None
+                         for s, c1, sc in zip(base_["status"], base_["c1_un"], base_["sem_conv"])]
+    base_ = base_.drop(columns=["_r1", "_r2"])
     rec = query_df("SELECT id AS rec_id, area, endereco, produto, status AS rec_status, qtd_un AS rec_un, escolha, "
                    "final_un AS rec_final FROM inv_recontagem WHERE inv_id = ?", (int(inv_id),))
     if not rec.empty:
@@ -625,6 +642,27 @@ def por_endereco(conc: pd.DataFrame) -> pd.DataFrame:
     return e[cols]
 
 
+def _fmt_q(q) -> str:
+    q = float(q)
+    return f"{q:,.0f}".replace(",", ".") if q.is_integer() else f"{q:,.2f}".replace(",", "X").replace(".", ",").replace(
+        "X", ".")
+
+
+def _iguais(r1: dict, r2: dict) -> bool:
+    us = set(r1) | set(r2)
+    return all(abs(float(r1.get(u, 0)) - float(r2.get(u, 0))) < 1e-9 for u in us)
+
+
+def _dif_cru(r1: dict, r2: dict) -> str:
+    """Diferença 2ª − 1ª do jeito que foi contado (por unidade): ex. "+2 CX", "−1 PL + 3 CX"."""
+    partes = []
+    for u in sorted(set(r1) | set(r2)):
+        d = float(r2.get(u, 0)) - float(r1.get(u, 0))
+        if abs(d) > 1e-9:
+            partes.append(("+" if d > 0 else "−") + f"{_fmt_q(abs(d))} {u}")
+    return " ".join(partes) if partes else "0"
+
+
 def painel_areas(conc: pd.DataFrame, operacao_id: int) -> pd.DataFrame:
     """Uma linha por área: endereços, itens, bateu, divergentes, em recontagem, acerto 1ª × 2ª."""
     if conc.empty:
@@ -657,24 +695,26 @@ def resultado(inv_id: int, conc: pd.DataFrame | None = None) -> pd.DataFrame:
     conc = conciliacao(inv_id) if conc is None else conc
     b = base(inv_id)
     if conc.empty:
-        cont = pd.DataFrame(columns=["produto", "descricao_c", "contado_un", "pendentes", "enderecos"])
+        cont = pd.DataFrame(columns=["produto", "descricao_c", "contado_un", "pendentes", "enderecos", "sem_conv"])
     else:
-        x = conc.assign(pend=conc["final_un"].isna())
+        x = conc.assign(pend=conc["final_un"].isna() & ~conc["sem_conv"].fillna(False).astype(bool),
+                        sc=conc["sem_conv"].fillna(False).astype(bool))
         cont = x.groupby("produto", as_index=False).agg(
             descricao_c=("descricao", "first"), contado_un=("final_un", "sum"), pendentes=("pend", "sum"),
+            sem_conv=("sc", "sum"),
             enderecos=("endereco", "nunique"))
     r = b.merge(cont, on="produto", how="outer")
     r["descricao"] = r["descricao"].fillna(r.pop("descricao_c")) if "descricao_c" in r else r["descricao"]
     conv = conversoes(inv_id, r["produto"].unique().tolist()).set_index("produto")["un_cx_f"]
     r["fator"] = r["fator"].fillna(r["produto"].map(conv)).fillna(1.0)
-    for c in ("sistema_un", "contado_un", "pendentes", "enderecos"):
+    for c in ("sistema_un", "contado_un", "pendentes", "enderecos", "sem_conv"):
         r[c] = pd.to_numeric(r[c], errors="coerce").fillna(0.0)
     r["dif_un"] = r["contado_un"] - r["sistema_un"]
     r["dif_cx"] = r["dif_un"] / r["fator"]
-    r["situacao"] = ["⏳ pendente" if p_ else ("✅ ok" if abs(d) <= TOLERANCIA_UN else ("🔺 sobra" if d > 0 else
+    r["situacao"] = ["❔ sem conversão" if sc else "⏳ pendente" if p_ else ("✅ ok" if abs(d) <= TOLERANCIA_UN else ("🔺 sobra" if d > 0 else
                                                                                       "🔻 falta"))
-                     for p_, d in zip(r["pendentes"], r["dif_un"])]
-    r = r[(r["sistema_un"] != 0) | (r["contado_un"] != 0) | (r["pendentes"] > 0)]
+                     for sc, p_, d in zip(r["sem_conv"], r["pendentes"], r["dif_un"])]
+    r = r[(r["sistema_un"] != 0) | (r["contado_un"] != 0) | (r["pendentes"] > 0) | (r["sem_conv"] > 0)]
     return r.sort_values("dif_cx", key=lambda s: -s.abs()).reset_index(drop=True)
 
 

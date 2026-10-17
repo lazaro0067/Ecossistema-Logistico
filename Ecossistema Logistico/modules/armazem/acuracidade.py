@@ -76,13 +76,20 @@ def _mensal(usuario: dict, op: int) -> None:
 
 
 # --- 📊 Painel ---------------------------------------------------------------------------------------------------------
-def _tab_div(d: pd.DataFrame) -> pd.DataFrame:
-    return pd.DataFrame({
+def _dif_cxun(d: pd.DataFrame) -> list[str]:
+    return [_q(b - a, f) if pd.notna(a) and pd.notna(b) else "—"
+            for a, b, f in zip(d["c1_un"], d["c2_un"], d["fator"])]
+
+
+def _tab_div(d: pd.DataFrame, area: bool = True) -> pd.DataFrame:
+    """Uma linha por endereço × produto: quem contou, quanto contou (do jeito que contou) e a diferença."""
+    t = pd.DataFrame({
         "Área": d["area"], "Endereço": d["endereco"], "Cód": d["produto"], "Produto": d["descricao"],
-        "Contador 1": d["u1"].fillna("—"), "1ª contagem": [_q(v, f) for v, f in zip(d["c1_un"], d["fator"])],
-        "Contador 2": d["u2"].fillna("—"), "2ª contagem": [_q(v, f) for v, f in zip(d["c2_un"], d["fator"])],
-        "Diferença": [_q((b or 0) - (a or 0), f) for a, b, f in zip(d["c1_un"], d["c2_un"], d["fator"])],
+        "Contador 1": d["u1"].fillna("—"), "Contagem 1": d["t1"].fillna(""),
+        "Contador 2": d["u2"].fillna("— (falta)"), "Contagem 2": d["t2"].fillna("").replace("", "—"),
+        "Diferença": d["dif_txt"].replace("", "—"), "Diferença (cx/un)": _dif_cxun(d),
         "Situação": d["status"].map(inv.STATUS)}).reset_index(drop=True)
+    return t if area else t.drop(columns="Área")
 
 
 def _painel(usuario: dict, op: int, inv_id: int) -> None:
@@ -95,7 +102,7 @@ def _painel(usuario: dict, op: int, inv_id: int) -> None:
     div = conc[conc["status"] == "divergente"]
     comparados = len(conc) - int(cont.get("aguardando", 0)) - int(cont.get("sem_conversao", 0))
     acerto = int(cont.get("ok", 0)) / comparados * 100 if comparados else None
-    sem = conc[conc["status"] == "sem_conversao"]
+    sem = conc[conc["sem_conv"].fillna(False).astype(bool)]
     tema.kpis([
         {"titulo": "Endereços contados", "valor": _n(conc["endereco"].nunique()), "icone": "📍", "status": "info",
          "detalhe": f"{_n(conc['area'].nunique())} áreas · {_n(len(conc))} itens × endereço"},
@@ -112,7 +119,8 @@ def _painel(usuario: dict, op: int, inv_id: int) -> None:
          "status": "atencao" if cont.get("aguardando", 0) else "bom", "detalhe": "áreas com um usuário só",
          "dados": _tab_div(conc[conc["status"] == "aguardando"]) if cont.get("aguardando", 0) else None},
         {"titulo": "Sem conversão", "valor": _n(sem["produto"].nunique()), "icone": "❔",
-         "status": "atencao" if len(sem) else "bom", "detalhe": "suba a 01.11 em ⚙️ Cadastros › Conversões",
+         "status": "atencao" if len(sem) else "bom", "detalhe": "compara na unidade contada; para o sistema "
+                                                                "falta a 01.11 (⚙️ Conversões)",
          "dados": _tab_div(sem) if len(sem) else None},
     ], key="kp_inv_geral")
     pa = inv.painel_areas(conc, op)
@@ -204,18 +212,47 @@ def _enderecos(usuario: dict, op: int, inv_id: int) -> None:
                                 | conc["descricao"].fillna("").str.upper().str.contains(busca, regex=False),
                                 "endereco"])
         v = v[v["endereco"].astype(str).str.upper().str.contains(busca, regex=False) | v["endereco"].isin(tem_prod)]
-    tema.secao("📍 Endereços", "Cada endereço com quem fez a 1ª e a 2ª contagem. Validado = todos os produtos do "
-                              "endereço bateram (ou foram conciliados).")
-    ui.tabela(pd.DataFrame({
-        "": v["situacao"].map(lambda s: inv.END_STATUS[s].split(" ")[0]), "Área": v["area"].map(
-            lambda a: nomes.get(a, a)), "Endereço": v["endereco"], "Contador 1": v["u1"].fillna("—"),
-        "Contador 2": v["u2"].fillna("— (falta)"), "Itens": v["itens"], "Bateram": v["ok"],
-        "Divergentes": v["divergente"], "Situação": v["situacao"].map(inv.END_STATUS)}),
-        baixar=f"inventario_enderecos_{inv_id}")
     if v.empty:
+        st.info("Nenhum endereço com esses filtros.")
         return
-    chaves = [f"{a}|{e}" for a, e in zip(v["area"], v["endereco"])]
-    esc = st.selectbox("🔎 Abrir endereço", chaves, key="inv_end_sel",
+    modo = ui._escolha("inv_end_modo", ["produtos", "resumo"], "produtos",
+                       formatar={"produtos": "📦 Produtos de cada endereço", "resumo": "📍 Resumo por endereço"}.get)
+    sel = conc.merge(v[["area", "endereco"]], on=["area", "endereco"])
+    if busca:
+        so_prod = sel["produto"].astype(str).str.contains(busca, regex=False) | sel["descricao"].fillna(
+            "").str.upper().str.contains(busca, regex=False) | sel["endereco"].astype(str).str.upper().str.contains(
+            busca, regex=False)
+        sel = sel[so_prod]
+    if modo == "produtos":
+        tema.secao("📦 Produtos contados em cada endereço",
+                   "Na frente de cada produto: quem contou, quanto contou (na unidade em que contou) e a diferença "
+                   "(2ª − 1ª).")
+        t = _tab_div(sel.sort_values(["area", "endereco", "produto"]))
+        t["Área"] = t["Área"].map(lambda a: nomes.get(a, a))
+        ui.tabela(t, baixar=f"inventario_enderecos_produtos_{inv_id}")
+    else:
+        tema.secao("📍 Resumo por endereço", "Validado = todos os produtos do endereço bateram (ou foram conciliados). "
+                                            "Clique na linha para abrir os produtos.")
+        resumo = pd.DataFrame({
+            "": v["situacao"].map(lambda s: inv.END_STATUS[s].split(" ")[0]), "Área": v["area"].map(
+                lambda a: nomes.get(a, a)), "Endereço": v["endereco"], "Contador 1": v["u1"].fillna("—"),
+            "Contador 2": v["u2"].fillna("— (falta)"), "Itens": v["itens"], "Bateram": v["ok"],
+            "Divergentes": v["divergente"], "Situação": v["situacao"].map(inv.END_STATUS)}).reset_index(drop=True)
+        try:
+            ev = st.dataframe(resumo, hide_index=True, on_select="rerun", selection_mode="single-row",
+                              key=f"inv_end_tab_{inv_id}", **ui.LARGURA)
+            linhas = list(ev["selection"]["rows"]) if ev else []
+        except (TypeError, KeyError, AttributeError):
+            ui.tabela(resumo, baixar=False)
+            linhas = []
+        if linhas:
+            r = v.iloc[linhas[0]]
+            tema.detalhe(f"📍 {r['endereco']} · {nomes.get(r['area'], r['area'])}",
+                         _tab_div(conc[(conc["area"] == r["area"]) & (conc["endereco"] == r["endereco"])], False))
+    chaves = list(dict.fromkeys(f"{a}|{e}" for a, e in zip(sel["area"], sel["endereco"])))
+    if not chaves:
+        return
+    esc = st.selectbox("🔎 Abrir um endereço", chaves, key="inv_end_sel",
                        format_func=lambda k: f"{k.split('|', 1)[1]} · {nomes.get(k.split('|', 1)[0], '')} · "
                                              + inv.END_STATUS[v.set_index(['area', 'endereco']).loc[
                                                  tuple(k.split('|', 1)), 'situacao']])
@@ -225,13 +262,11 @@ def _enderecos(usuario: dict, op: int, inv_id: int) -> None:
     st.markdown(f"#### 📍 {e} · {nomes.get(a, a)}")
     det = pd.DataFrame({
         "Cód": d["produto"], "Produto": d["descricao"],
-        f"1ª · {u1}": [_q(x, f) for x, f in zip(d["c1_un"], d["fator"])],
-        f"2ª · {u2}": [_q(x, f) for x, f in zip(d["c2_un"], d["fator"])],
-        "Diferença": [_q((y if pd.notna(y) else 0) - (x if pd.notna(x) else 0), f) if pd.notna(y) else "—"
-                      for x, y, f in zip(d["c1_un"], d["c2_un"], d["fator"])],
+        f"1ª · {u1}": d["t1"].fillna(""), f"2ª · {u2}": d["t2"].fillna("").replace("", "—"),
+        "Diferença": d["dif_txt"].replace("", "—"), "Diferença (cx/un)": _dif_cxun(d),
         "Recontagem": [_q(x, f) if pd.notna(x) else "" for x, f in zip(d["rec_un"], d["fator"])],
-        "Final": [_q(x, f) for x, f in zip(d["final_un"], d["fator"])],
-        "Unid. contada": d["unidades"], "Situação": d["status"].map(inv.STATUS)}).reset_index(drop=True)
+        "Final (cx/un)": [_q(x, f) for x, f in zip(d["final_un"], d["fator"])],
+        "Situação": d["status"].map(inv.STATUS)}).reset_index(drop=True)
     ui.tabela(det, baixar=f"inventario_endereco_{e}")
     dv = d[d["status"] == "divergente"]
     if len(dv) and (inv.inventario(inv_id) or {}).get("status") == "aberto" and st.button(
@@ -322,12 +357,12 @@ def _resultado(usuario: dict, op: int, inv_id: int) -> None:
     if r.empty:
         st.info("Suba o 02.05.02 e as contagens em 📥 Bases.")
         return
-    fechados = r[r["situacao"] != "⏳ pendente"]
+    fechados = r[~r["situacao"].isin(["⏳ pendente", "❔ sem conversão"])]
     ok = (fechados["situacao"] == "✅ ok").sum()
     acur = ok / len(fechados) * 100 if len(fechados) else None
     sobra = r.loc[r["dif_cx"] > 0, "dif_cx"].sum()
     falta = r.loc[r["dif_cx"] < 0, "dif_cx"].sum()
-    pend = r[r["situacao"] == "⏳ pendente"]
+    pend = r[r["situacao"].isin(["⏳ pendente", "❔ sem conversão"])]
     tema.kpis([
         {"titulo": "Acuracidade (itens)", "valor": _pct(acur), "icone": "🎯",
          "status": "bom" if (acur or 0) >= 98 else "atencao" if (acur or 0) >= 95 else "critico",
