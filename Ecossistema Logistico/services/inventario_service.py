@@ -359,7 +359,8 @@ def _cx_barra_un(v: str, fator: float) -> float | None:
 
 
 def ler_base(conteudo: bytes) -> pd.DataFrame:
-    """02.05.02: depósito (B), produto (D), descrição (E), unidade (F), Disponível (L, cx/un), fator (X)."""
+    """02.05.02: depósito (B), produto (D), descrição (E), unidade (F), Trânsito (K) e Disponível (L) em cx/un,
+    fator (X)."""
     df = pd.read_csv(io.StringIO(_texto(conteudo)), sep=";", dtype=str, header=0, keep_default_na=False,
                      on_bad_lines="skip")
     if len(df.columns) < 24 or "dispon" not in _norm(df.columns[11]):
@@ -374,9 +375,11 @@ def ler_base(conteudo: bytes) -> pd.DataFrame:
     out["fator"] = out["fator"].where(out["fator"] > 0, 1.0)
     out["disp_un"] = [_cx_barra_un(v, f) for v, f in zip(df.loc[out.index, c[11]], out["fator"])]
     out["disp_un"] = pd.to_numeric(out["disp_un"], errors="coerce").fillna(0.0)
+    out["transito_un"] = [_cx_barra_un(v, f) for v, f in zip(df.loc[out.index, c[10]], out["fator"])]
+    out["transito_un"] = pd.to_numeric(out["transito_un"], errors="coerce").fillna(0.0)
     return out.groupby(["deposito", "produto"], as_index=False).agg(
         descricao=("descricao", "first"), unidade=("unidade", "first"), fator=("fator", "max"),
-        disp_un=("disp_un", "sum"))
+        disp_un=("disp_un", "sum"), transito_un=("transito_un", "sum"))
 
 
 def importar_base(inv_id: int, conteudo: bytes, nome: str, usuario: str = "") -> dict:
@@ -384,10 +387,10 @@ def importar_base(inv_id: int, conteudo: bytes, nome: str, usuario: str = "") ->
     df = ler_base(conteudo)
     with get_conn() as conn:
         conn.execute("DELETE FROM inv_base WHERE inv_id = ?", (int(inv_id),))
-        conn.executemany("INSERT INTO inv_base (inv_id, deposito, produto, descricao, unidade, fator, disp_un) "
-                         "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        conn.executemany("INSERT INTO inv_base (inv_id, deposito, produto, descricao, unidade, fator, disp_un, "
+                         "transito_un) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                          [(int(inv_id), r.deposito, r.produto, r.descricao, r.unidade, float(r.fator),
-                           float(r.disp_un)) for r in df.itertuples(index=False)])
+                           float(r.disp_un), float(r.transito_un)) for r in df.itertuples(index=False)])
         conn.execute("UPDATE inv_inventarios SET base_arquivo = ?, base_em = ? WHERE id = ?",
                      (str(nome)[:200], agora(), int(inv_id)))
     return {"produtos": int(df["produto"].nunique()), "depositos": sorted(df["deposito"].unique(), key=lambda x: (
@@ -406,14 +409,30 @@ def salvar_depositos(inv_id: int, deps: list[str]) -> None:
 def base(inv_id: int) -> pd.DataFrame:
     inv = inventario(inv_id) or {}
     deps = [d for d in str(inv.get("depositos") or "").split(",") if d]
-    b = query_df("SELECT deposito, produto, descricao, unidade, fator, disp_un FROM inv_base WHERE inv_id = ?",
-                 (int(inv_id),))
+    b = query_df("SELECT deposito, produto, descricao, unidade, fator, disp_un, COALESCE(transito_un, 0) AS "
+                 "transito_un FROM inv_base WHERE inv_id = ?", (int(inv_id),))
     if deps:
         b = b[b["deposito"].astype(str).isin(deps)]
     if b.empty:
-        return pd.DataFrame(columns=["produto", "descricao", "unidade", "fator", "sistema_un"])
+        return pd.DataFrame(columns=["produto", "descricao", "unidade", "fator", "sistema_un", "transito_un"])
+    b["transito_un"] = pd.to_numeric(b["transito_un"], errors="coerce").fillna(0.0)
     return b.groupby("produto", as_index=False).agg(descricao=("descricao", "first"), unidade=("unidade", "first"),
-                                                    fator=("fator", "max"), sistema_un=("disp_un", "sum"))
+                                                    fator=("fator", "max"), sistema_un=("disp_un", "sum"),
+                                                    transito_un=("transito_un", "sum"))
+
+
+def base_sem_transito(inv_id: int) -> bool:
+    """02.05.02 subida antes de o sistema ler o trânsito (coluna K) — precisa subir de novo."""
+    r = query_one("SELECT COUNT(*) AS n FROM inv_base WHERE inv_id = ? AND transito_un IS NULL", (int(inv_id),))
+    return bool(r and int(r["n"] or 0))
+
+
+def contab_transito(inv_id: int) -> bool:
+    return bool((inventario(inv_id) or {}).get("contab_transito") or 0)
+
+
+def salvar_contab_transito(inv_id: int, sim: bool) -> None:
+    execute("UPDATE inv_inventarios SET contab_transito = ? WHERE id = ?", (1 if sim else 0, int(inv_id)))
 
 
 _COLS_WMS = {"area": ["tarefa"], "endereco": ["endereco"], "usuario": ["usuario"], "inicio": ["data contagem"],
@@ -722,7 +741,8 @@ def painel_areas(conc: pd.DataFrame, operacao_id: int) -> pd.DataFrame:
 
 
 def resultado(inv_id: int, conc: pd.DataFrame | None = None) -> pd.DataFrame:
-    """Por produto: sistema (02.05.02 disponível) × contado (soma das quantidades finais dos endereços)."""
+    """Por produto: sistema (02.05.02 col. L) − trânsito (col. K, se “contabilizar trânsito”) = estoque real ×
+    contado (soma das quantidades finais dos endereços)."""
     conc = conciliacao(inv_id) if conc is None else conc
     b = base(inv_id)
     if conc.empty:
@@ -738,14 +758,15 @@ def resultado(inv_id: int, conc: pd.DataFrame | None = None) -> pd.DataFrame:
     r["descricao"] = r["descricao"].fillna(r.pop("descricao_c")) if "descricao_c" in r else r["descricao"]
     conv = conversoes(inv_id, r["produto"].unique().tolist()).set_index("produto")["un_cx_f"]
     r["fator"] = r["fator"].fillna(r["produto"].map(conv)).fillna(1.0)
-    for c in ("sistema_un", "contado_un", "pendentes", "enderecos", "sem_conv"):
+    for c in ("sistema_un", "transito_un", "contado_un", "pendentes", "enderecos", "sem_conv"):
         r[c] = pd.to_numeric(r[c], errors="coerce").fillna(0.0)
-    r["dif_un"] = r["contado_un"] - r["sistema_un"]
+    r["real_un"] = r["sistema_un"] - r["transito_un"] if contab_transito(inv_id) else r["sistema_un"]
+    r["dif_un"] = r["contado_un"] - r["real_un"]
     r["dif_cx"] = r["dif_un"] / r["fator"]
     r["situacao"] = ["❔ sem conversão" if sc else "⏳ pendente" if p_ else ("✅ ok" if abs(d) <= TOLERANCIA_UN else ("🔺 sobra" if d > 0 else
                                                                                       "🔻 falta"))
                      for sc, p_, d in zip(r["sem_conv"], r["pendentes"], r["dif_un"])]
-    r = r[(r["sistema_un"] != 0) | (r["contado_un"] != 0) | (r["pendentes"] > 0) | (r["sem_conv"] > 0)]
+    r = r[(r["sistema_un"] != 0) | (r["transito_un"] != 0) | (r["contado_un"] != 0) | (r["pendentes"] > 0) | (r["sem_conv"] > 0)]
     return r.sort_values("dif_cx", key=lambda s: -s.abs()).reset_index(drop=True)
 
 

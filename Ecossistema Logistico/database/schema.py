@@ -1683,6 +1683,9 @@ MIGRACOES: list[tuple[str, str]] = [
     """),
     ("049_inv_diario_final", """
         CREATE INDEX IF NOT EXISTS ix_inv_dfinal ON inv_diario_final(inv_id);
+    """),    ("050_inv_transito", """
+        ALTER TABLE inv_base ADD COLUMN transito_un REAL;
+        ALTER TABLE inv_inventarios ADD COLUMN contab_transito INTEGER DEFAULT 0;
     """),
 ]
 

@@ -469,6 +469,14 @@ def _recontagem(usuario: dict, op: int, inv_id: int) -> None:
 # --- 📋 Resultado -------------------------------------------------------------------------------------------------------
 def _resultado(usuario: dict, op: int, inv_id: int) -> None:
     conc = inv.conciliacao(inv_id)
+    i = inv.inventario(inv_id) or {}
+    atual = inv.contab_transito(inv_id)
+    ct = st.toggle("🚚 Contabilizar trânsito (estoque real = sistema − trânsito)", value=atual,
+                   key=f"inv_ct_{inv_id}", disabled=i.get("status") != "aberto",
+                   help="Desmarcado: o estoque real é o próprio sistema (coluna L da 02.05.02).")
+    if ct != atual:
+        inv.salvar_contab_transito(inv_id, ct)
+        ui.salvo_automatico("Trânsito " + ("contabilizado." if ct else "não contabilizado."))
     r = inv.resultado(inv_id, conc)
     if r.empty:
         st.info("Suba o 02.05.02 e as contagens em 📥 Bases.")
@@ -482,9 +490,13 @@ def _resultado(usuario: dict, op: int, inv_id: int) -> None:
     tema.kpis([
         {"titulo": "Acuracidade (itens)", "valor": _pct(acur), "icone": "🎯",
          "status": "bom" if (acur or 0) >= 98 else "atencao" if (acur or 0) >= 95 else "critico",
-         "detalhe": f"{_n(ok)} de {_n(len(fechados))} produtos iguais ao sistema"},
+         "detalhe": f"{_n(ok)} de {_n(len(fechados))} produtos iguais ao estoque real"},
         {"titulo": "Produtos", "valor": _n(len(r)), "icone": "📦", "status": "info",
          "detalhe": f"{_n((r['sistema_un'] != 0).sum())} no sistema · {_n((r['contado_un'] != 0).sum())} contados"},
+        {"titulo": "Trânsito", "valor": f"{_n(_cx_tot(r, 'transito_un'), 1)} cx", "icone": "🚚",
+         "status": "atencao" if ct and r["transito_un"].any() else "info",
+         "detalhe": "descontado do estoque real" if ct else "não contabilizado",
+         "dados": _tab_res(r[r["transito_un"] != 0]) if r["transito_un"].any() else None},
         {"titulo": "Sobra", "valor": f"{_n(sobra, 1)} cx", "icone": "🔺", "status": "atencao" if sobra else "bom",
          "dados": _tab_res(r[r["dif_cx"] > 0]) if sobra else None},
         {"titulo": "Falta", "valor": f"{_n(falta, 1)} cx", "icone": "🔻", "status": "critico" if falta else "bom",
@@ -494,10 +506,14 @@ def _resultado(usuario: dict, op: int, inv_id: int) -> None:
     ], key="kp_inv_res")
     if not (inv.inventario(inv_id) or {}).get("base_em"):
         st.warning("Sem 02.05.02 neste inventário — o “sistema” está zerado. Suba em 📥 Bases.")
+    elif inv.base_sem_transito(inv_id):
+        st.warning("Esta 02.05.02 foi subida antes de o sistema ler o trânsito (coluna K) — suba de novo em 📥 Bases "
+                   "para trazer o trânsito.")
     so = st.toggle("Só produtos com diferença ou pendentes", value=True, key="inv_res_so")
     vis = r[r["situacao"] != "✅ ok"] if so else r
-    tema.secao("📋 Sistema × contado por produto", "Sistema = disponível da 02.05.02; contado = soma dos endereços "
-                                                   "(contagem que bateu ou conciliada).")
+    tema.secao("📋 Estoque real × contado por produto",
+               "Sistema = coluna L da 02.05.02 · Trânsito = coluna K · Estoque real = sistema − trânsito quando "
+               "“Contabilizar trânsito” está marcado (senão, igual ao sistema) · Contado = soma dos endereços.")
     ui.tabela(_tab_res(vis), baixar=f"inventario_resultado_{inv_id}")
     tema.secao("🗺️ Por área")
     pa = inv.painel_areas(conc, op)
@@ -519,10 +535,16 @@ def _resultado(usuario: dict, op: int, inv_id: int) -> None:
         ui.tabela(t, baixar=f"inventario_enderecos_{p_}")
 
 
+def _cx_tot(r: pd.DataFrame, col: str) -> float:
+    return float((r[col] / r["fator"].replace(0, 1)).sum()) if len(r) else 0.0
+
+
 def _tab_res(r: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame({
         "Cód": r["produto"], "Produto": r["descricao"].fillna(""),
         "Sistema": [_q(v, f) for v, f in zip(r["sistema_un"], r["fator"])],
+        "Trânsito": [_q(v, f) for v, f in zip(r["transito_un"], r["fator"])],
+        "Estoque real": [_q(v, f) for v, f in zip(r["real_un"], r["fator"])],
         "Contado": [_q(v, f) for v, f in zip(r["contado_un"], r["fator"])],
         "Diferença": [_q(v, f) for v, f in zip(r["dif_un"], r["fator"])],
         "Diferença (cx)": r["dif_cx"].map(lambda v: f"{v:+.2f}".replace(".", ",")),
