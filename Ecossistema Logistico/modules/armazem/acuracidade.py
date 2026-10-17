@@ -213,21 +213,31 @@ def _enviar(usuario: dict, inv_id: int, conc: pd.DataFrame, pa: pd.DataFrame) ->
         st.session_state["inv_area"] = "__todas__"
     tema.secao("📨 Mandar para recontagem", "Analise e desmarque o que não precisa recontar. Os marcados vão para o "
                                           "app, com a área e o endereço de cada produto.")
-    area = st.selectbox("Área", opcs, key="inv_area",
+    f1, f2 = st.columns([1, 1.6])
+    area = f1.selectbox("Área", opcs, key="inv_area",
                         format_func=lambda a: "Todas as áreas com diferença" if a == "__todas__" else nomes.get(a, a))
     d = conc[conc["status"] == "divergente"]
     if area != "__todas__":
         d = d[d["area"] == area]
+    ends = sorted(d["endereco"].fillna("").unique().tolist())
+    sel_end = f2.multiselect("Endereços (vazio = todos da área)", ends, key=f"inv_env_ends_{area}",
+                             format_func=lambda e: e or "(sem endereço)")
+    if sel_end:
+        d = d[d["endereco"].fillna("").isin(sel_end)]
     if d.empty:
         st.success("Nenhum item com diferença entre a 1ª e a 2ª contagem aqui. 👏")
         return
+    todos = st.checkbox("Marcar todos", value=True, key=f"inv_env_todos_{area}")
     vis = _tab_div(d).drop(columns="Situação")
-    vis.insert(0, "Recontar", True)
-    ed = st.data_editor(vis, hide_index=True, key=f"inv_ed_env_{inv_id}_{area}", **ui.LARGURA,
+    vis.insert(0, "Recontar", todos)
+    ed = st.data_editor(vis, hide_index=True, key=f"inv_ed_env_{inv_id}_{area}_{'|'.join(sel_end)}_{todos}",
+                        **ui.LARGURA,
                         disabled=[c for c in vis.columns if c != "Recontar"],
                         column_config={"Recontar": st.column_config.CheckboxColumn("Recontar", default=True)})
     marcados = d.reset_index(drop=True)[ed["Recontar"].fillna(False).astype(bool).values]
-    if st.button(f"📨 Enviar {len(marcados)} item(ns) para recontagem", type="primary", key="inv_enviar",
+    alvo = (f"área {nomes.get(area, area)}" if area != "__todas__" else "todas as áreas") + \
+        (f" · {len(sel_end)} endereço(s)" if sel_end else "")
+    if st.button(f"📨 Enviar {len(marcados)} item(ns) para recontagem ({alvo})", type="primary", key="inv_enviar",
                  disabled=marcados.empty):
         ui.acao(inv.enviar_recontagem, inv_id, marcados, usuario.get("nome", ""),
                 sucesso=f"{len(marcados)} item(ns) enviados para o app de recontagem.")
@@ -440,11 +450,7 @@ def _recontagem(usuario: dict, op: int, inv_id: int) -> None:
         ui.tabela(pd.DataFrame({"Área": abertos["area"], "Endereço": abertos["endereco"], "Cód": abertos["produto"],
                                 "Produto": abertos["descricao"], "Situação": abertos["status"].map(inv.REC_STATUS),
                                 "Enviado por": abertos["enviado_por"].fillna("")}), baixar="inv_no_app")
-        canc = st.multiselect("Tirar da recontagem", abertos["id"].tolist(), key="inv_canc",
-                              format_func=lambda i: " · ".join(str(x) for x in abertos.set_index("id").loc[
-                                  i, ["endereco", "produto", "descricao"]]))
-        if canc and st.button("Tirar da recontagem", key="inv_canc_b"):
-            ui.acao(inv.cancelar_recontagem, canc, sucesso="Itens retirados da recontagem.")
+    _excluir_enviadas(inv_id, "mensal")
     feitos = rc[rc["status"] == "conciliado"]
     if not feitos.empty:
         tema.secao("✔️ Conciliados")
@@ -819,7 +825,7 @@ _TELAS_D = {"painel": "📊 Painel", "recontagem": "🔁 Recontagem", "bases": "
 
 
 def _diaria(usuario: dict, op: int) -> None:
-    invs = inv.inventarios(op, "diario")
+    meses = inv.meses_diarios(op)
     c1, c2 = st.columns([2.2, 1])
     with c2.popover("➕ Nova contagem do dia"):
         dia = st.date_input("Dia", value=tempo.hoje(), format="DD/MM/YYYY", key="invd_novo_dia")
@@ -829,21 +835,80 @@ def _diaria(usuario: dict, op: int) -> None:
             except RegraNegocioError as e:
                 st.error(str(e))
             else:
+                st.session_state["invd_mes"] = dia.isoformat()[:7]
                 st.session_state["invd_sel"] = novo
                 st.session_state["invd_tela"] = st.session_state["invd_tela__ultima"] = "bases"
                 ui.avisar("Contagem do dia criada — suba o 02.05.02 e a contagem do WMS.")
                 st.rerun()
-    if invs.empty:
-        c1.info("Nenhuma contagem diária ainda. Clique em **➕ Nova contagem do dia**.")
+    if st.session_state.get("invd_mes") not in meses:
+        st.session_state["invd_mes"] = meses[0]
+    mes = c1.selectbox("📁 Pasta do mês", meses, key="invd_mes", format_func=lambda m: f"📁 {ui.nome_mes(m)}",
+                       label_visibility="collapsed")
+    pasta = inv.pasta_mes(op, mes)
+    if pasta.empty:
+        st.info(f"Nenhuma contagem em {ui.nome_mes(mes)}. Clique em **➕ Nova contagem do dia**.")
         return
-    ids = invs["id"].astype(int).tolist()
-    rot = {int(r.id): f"{pd.to_datetime(r.data).strftime('%d/%m/%Y') if r.data else r.mes} · {r.nome} · "
-                      f"{'🟢 aberta' if r.status == 'aberto' else '🔒 fechada'}" for r in invs.itertuples()}
+    salvas = pasta[pasta["status"] == "fechado"]
+    andamento = pasta[pasta["status"] != "fechado"]
+    _pasta(mes, pasta, salvas, andamento)
+    ids = pasta["id"].astype(int).tolist()
+    rot = {int(r.id): f"{'💾' if r.status == 'fechado' else '🟢'} {_dia(r.data)} · {r.nome}"
+           + ("" if r.status == "fechado" else " · em andamento") for r in pasta.itertuples()}
     if st.session_state.get("invd_sel") not in ids:
-        st.session_state["invd_sel"] = ids[0]
-    inv_id = int(c1.selectbox("Contagem", ids, key="invd_sel", format_func=rot.get, label_visibility="collapsed"))
+        st.session_state["invd_sel"] = int(andamento["id"].iloc[0]) if len(andamento) else ids[0]
+    inv_id = int(st.selectbox("Conciliação", ids, key="invd_sel", format_func=rot.get))
+    i = inv.inventario(inv_id) or {}
+    fechado = i.get("status") == "fechado"
+    st.markdown(f"### 📅 Conciliação de {_dia(i.get('data'))}"
+                + (f" — {i.get('nome')}" if fechado else ""))
+    if fechado:
+        st.caption(f"💾 Salva na pasta de {ui.nome_mes(mes)} por {i.get('finalizado_por') or '—'} em "
+                   f"{_dia_hora(i.get('finalizado_em'))}. Para mexer de novo, reabra em 📊 Painel.")
+    else:
+        st.caption("🟢 Em andamento — tudo é salvo automaticamente a cada carga e recontagem. Finalize só quando "
+                   "estiver tudo OK (no fim do 📊 Painel).")
     tela = ui._escolha("invd_tela", list(_TELAS_D), "painel", pills=True, formatar=_TELAS_D.get)
     {"painel": _d_painel, "recontagem": _d_recontagem, "bases": _d_bases}[tela](usuario, op, inv_id)
+
+
+def _dia(v) -> str:
+    try:
+        return pd.to_datetime(v).strftime("%d/%m/%Y")
+    except Exception:  # noqa: BLE001
+        return str(v or "—")
+
+
+def _dia_hora(v) -> str:
+    try:
+        return pd.to_datetime(v).strftime("%d/%m/%Y %H:%M")
+    except Exception:  # noqa: BLE001
+        return str(v or "—")
+
+
+def _pasta(mes: str, pasta: pd.DataFrame, salvas: pd.DataFrame, andamento: pd.DataFrame) -> None:
+    """Resumo da pasta do mês: as conciliações salvas e as em andamento."""
+    tot = salvas["ok"].sum() if len(salvas) else 0
+    fech = (salvas["produtos"] - salvas["pendentes"]).sum() if len(salvas) else 0
+    media = tot / fech * 100 if fech else None
+
+    def tab(d):
+        return pd.DataFrame({
+            "Dia": [_dia(x) for x in d["data"]], "Nome": d["nome"].values,
+            "Situação": ["💾 Salva" if x == "fechado" else "🟢 Em andamento" for x in d["status"]],
+            "Produtos": d["produtos"].values, "Bateram": d["ok"].values, "Com diferença": d["diferenca"].values,
+            "No app": d["pendentes"].values, "Acuracidade": [_pct(x) for x in d["acuracidade"]],
+            "Salva por": d["finalizado_por"].fillna("").values})
+    tema.kpis([
+        {"titulo": f"Salvas em {ui.nome_mes(mes)}", "valor": _n(len(salvas)), "icone": "💾", "status": "info",
+         "dados": tab(salvas) if len(salvas) else None},
+        {"titulo": "Em andamento", "valor": _n(len(andamento)), "icone": "🟢", "status": "info",
+         "dados": tab(andamento) if len(andamento) else None},
+        {"titulo": "Acuracidade do mês", "valor": _pct(media), "icone": "🎯",
+         "status": "bom" if (media or 0) >= 98 else "atencao" if (media or 0) >= 95 else "critico",
+         "detalhe": "das conciliações salvas"},
+    ], key=f"kp_invd_pasta_{mes}")
+    with st.expander(f"📁 Conciliações de {ui.nome_mes(mes)} ({len(pasta)})"):
+        ui.tabela(tab(pasta), baixar=f"conciliacoes_{mes}")
 
 
 def _d_tab(d: pd.DataFrame) -> pd.DataFrame:
@@ -865,7 +930,7 @@ def _d_tab(d: pd.DataFrame) -> pd.DataFrame:
 
 
 def _d_painel(usuario: dict, op: int, inv_id: int) -> None:
-    d = inv.conciliacao_diaria(inv_id)
+    d = inv.conciliacao_dia(inv_id)
     if d.empty:
         st.info("Suba o 02.05.02 e a contagem do dia em 📥 Bases.")
         return
@@ -906,9 +971,46 @@ def _d_painel(usuario: dict, op: int, inv_id: int) -> None:
     ui.tabela(pd.DataFrame({"Área": x["area"], "Endereço": x["endereco"], "Contou": x["usuario"],
                             "Quantidade": [_cx(q, fator) + " cx" if pd.notna(q) else "—" for q in x["qtd_un"]],
                             "Unid. contada": x["unidades"]}), baixar=False)
+    _d_finalizar(usuario, inv_id, d)
+
+
+def _d_finalizar(usuario: dict, inv_id: int, d: pd.DataFrame) -> None:
+    i = inv.inventario(inv_id) or {}
+    if i.get("status") == "fechado":
+        tema.secao("💾 Conciliação salva")
+        st.caption(f"**{i.get('nome')}** — salva por {i.get('finalizado_por') or '—'} em "
+                   f"{_dia_hora(i.get('finalizado_em'))}.")
+        if st.button("🔓 Reabrir para ajustar", key=f"invd_reabrir_p_{inv_id}"):
+            ui.acao(inv.reabrir_diaria, inv_id, sucesso="Conciliação reaberta — finalize de novo quando terminar.")
+        return
+    tema.secao("✅ Finalizar e salvar conciliação",
+               "Vai salvando automático enquanto vocês trabalham. Quando estiver tudo OK, dê um nome e finalize: a "
+               "conciliação vai para a pasta do mês.")
+    pend = int((d["status"] == "pendente").sum())
+    dif = int(d["status"].isin(["divergente"]).sum())
+    if pend:
+        st.warning(f"📨 {pend} produto(s) ainda estão no app — finalize depois da descarga.")
+    elif dif:
+        st.info(f"❌ {dif} produto(s) com diferença ainda sem recontagem. Se está certo assim, pode finalizar.")
+    with st.form(f"invd_fin_{inv_id}", border=False):
+        f1, f2 = st.columns([2, 1])
+        nome = f1.text_input("Nome da conciliação", value=f"Conciliação {_dia(i.get('data'))}",
+                             key=f"invd_fin_nome_{inv_id}")
+        f2.write("")
+        if f2.form_submit_button("💾 Finalizar e salvar", type="primary", disabled=bool(pend), **ui.LARGURA):
+            try:
+                r = inv.finalizar_diaria(inv_id, nome, usuario.get("nome", ""))
+            except RegraNegocioError as e:
+                st.error(str(e))
+            else:
+                ui.avisar(f"💾 “{r['nome']}” salva na pasta do mês ({r['ok']} de {r['produtos']} produtos OK).")
+                st.rerun()
 
 
 def _d_recontagem(usuario: dict, op: int, inv_id: int) -> None:
+    if (inv.inventario(inv_id) or {}).get("status") == "fechado":
+        st.info("💾 Conciliação salva — reabra em 📊 Painel para criar nova recontagem.")
+        return
     d = inv.conciliacao_diaria(inv_id)
     with st.expander("📱 Link do app de recontagem desta revenda"):
         st.code(_link_app(op), language=None)
@@ -919,11 +1021,17 @@ def _d_recontagem(usuario: dict, op: int, inv_id: int) -> None:
     if len(pend):
         st.info(f"📨 {len(pend)} produto(s) no app para recontar.")
     alvo = d[d["status"].isin(["divergente", "confirmado"])]
-    tema.secao("🔁 Criar recontagem", "Aparecem todos os produtos que ainda têm diferença com o estoque. Selecione "
-                                     "os que precisam contar de novo — o app recebe os endereços onde cada um foi "
-                                     "contado.")
+    tema.secao("🔁 Criar recontagem", "Aparecem todos os produtos que ainda têm diferença com o estoque. Envie por "
+                                     "produto (todos os endereços dele) ou escolha a área e os endereços.")
     if alvo.empty:
         st.success("Nenhum produto com diferença esperando recontagem. 👏")
+        _excluir_enviadas(inv_id, "diario")
+        return
+    modo = ui._escolha("invd_modo", ["produto", "endereco"], "produto",
+                       formatar={"produto": "📦 Por produto", "endereco": "📍 Por área e endereço"}.get)
+    if modo == "endereco":
+        _d_enviar_endereco(usuario, op, inv_id, alvo)
+        _excluir_enviadas(inv_id, "diario")
         return
     t = _d_tab(alvo)
     t.insert(0, "Recontar", [s_ == "divergente" for s_ in alvo["status"]])
@@ -934,9 +1042,83 @@ def _d_recontagem(usuario: dict, op: int, inv_id: int) -> None:
                  disabled=not sel or (inv.inventario(inv_id) or {}).get("status") != "aberto"):
         ui.acao(inv.enviar_recontagem_diaria, inv_id, sel, usuario.get("nome", ""),
                 sucesso=f"Recontagem criada para {len(sel)} produto(s) — já está no app.")
+    _excluir_enviadas(inv_id, "diario")
+
+
+def _d_enviar_endereco(usuario: dict, op: int, inv_id: int, alvo: pd.DataFrame) -> None:
+    """Diária por área / endereço: só os endereços escolhidos vão para o app (os outros do produto ficam como estão)."""
+    cd = inv._contagem_dia(inv_id)
+    cd = cd[cd["produto"].isin(alvo["produto"])].copy()
+    cd["endereco"] = cd["endereco"].fillna("")
+    if cd.empty:
+        st.info("Nenhum endereço com diferença.")
+        return
+    a = inv.areas(op)
+    nomes = dict(zip(a["codigo"], a["nome"])) if not a.empty else {}
+    areas_ = sorted(cd["area"].unique().tolist())
+    f1, f2 = st.columns([1, 1.6])
+    area = f1.selectbox("Área", areas_, key=f"invd_env_area_{inv_id}", format_func=lambda x: nomes.get(x, x))
+    x = cd[cd["area"] == area]
+    ends = sorted(x["endereco"].unique().tolist())
+    sel_end = f2.multiselect("Endereços (vazio = todos da área)", ends, key=f"invd_env_ends_{inv_id}_{area}",
+                             format_func=lambda e: e or "(sem endereço)")
+    if sel_end:
+        x = x[x["endereco"].isin(sel_end)]
+    fat = dict(zip(alvo["produto"], alvo["fator"]))
+    stt = dict(zip(alvo["produto"], alvo["status"]))
+    todos = st.checkbox("Marcar todos", value=True, key=f"invd_env_todos_{area}")
+    vis = pd.DataFrame({
+        "Recontar": todos, "Endereço": x["endereco"].values, "Cód": x["produto"].values,
+        "Produto": x["descricao"].fillna("").values,
+        "Contou": [_cx(q, fat.get(p, 1)) + " cx" if pd.notna(q) else "—" for q, p in zip(x["qtd_un"], x["produto"])],
+        "Situação do produto": [inv.DIA_STATUS.get(stt.get(p), "") for p in x["produto"]]})
+    ed = st.data_editor(vis, hide_index=True, key=f"invd_ed_end_{inv_id}_{area}_{'|'.join(sel_end)}_{todos}",
+                        **ui.LARGURA, disabled=[c for c in vis.columns if c != "Recontar"])
+    marc = x.reset_index(drop=True)[ed["Recontar"].fillna(False).astype(bool).values]
+    linhas = list(zip(marc["area"], marc["endereco"], marc["produto"]))
+    st.caption("Os outros endereços desses produtos não vão para o app: ficam com a quantidade que já tinham.")
+    if st.button(f"📨 Enviar {len(linhas)} endereço×produto para recontagem", type="primary",
+                 key=f"invd_env_end_b_{inv_id}", disabled=not linhas):
+        ui.acao(inv.enviar_recontagem_diaria, inv_id, [], usuario.get("nome", ""), linhas,
+                sucesso=f"{len(linhas)} item(ns) enviados para o app.")
+
+
+def _excluir_enviadas(inv_id: int, tipo: str) -> None:
+    """Local para excluir recontagens já enviadas (no app, contadas ou já descarregadas e não conciliadas)."""
+    e = inv.enviadas(inv_id)
+    if e.empty:
+        return
+    with st.expander(f"🗑️ Excluir recontagens enviadas ({len(e)})"):
+        st.caption("Tira do app o que foi enviado por engano ou não precisa mais. A contagem anterior volta a valer."
+                   + (" Na diária a recontagem é excluída do produto inteiro (todos os endereços dele)."
+                      if tipo == "diario" else " O que já foi conciliado não aparece aqui."))
+        areas_ = ["__todas__"] + sorted(e["area"].unique().tolist())
+        f1, f2 = st.columns([1, 1.6])
+        area = f1.selectbox("Área", areas_, key=f"inv_exc_area_{inv_id}",
+                            format_func=lambda a: "Todas" if a == "__todas__" else inv._nome_area(a))
+        x = e if area == "__todas__" else e[e["area"] == area]
+        ends = sorted(x["endereco"].unique().tolist())
+        sel_end = f2.multiselect("Endereços", ends, key=f"inv_exc_ends_{inv_id}_{area}",
+                                 format_func=lambda v: v or "(sem endereço)")
+        if sel_end:
+            x = x[x["endereco"].isin(sel_end)]
+        todos = st.checkbox("Marcar todos", value=False, key=f"inv_exc_todos_{inv_id}_{area}")
+        vis = pd.DataFrame({
+            "Excluir": todos, "Rodada": x["rodada"].astype(int).map(lambda r: f"{r}ª").values,
+            "Área": x["area"].values, "Endereço": x["endereco"].values, "Cód": x["produto"].values,
+            "Produto": x["descricao"].fillna("").values, "Situação": x["status"].map(inv.REC_STATUS).values,
+            "Enviado por": x["enviado_por"].fillna("").values,
+            "Enviado em": [_dia_hora(v) for v in x["enviado_em"]]})
+        ed = st.data_editor(vis, hide_index=True, key=f"inv_exc_ed_{inv_id}_{area}_{'|'.join(sel_end)}_{todos}",
+                            **ui.LARGURA, disabled=[c for c in vis.columns if c != "Excluir"])
+        ids = [int(i) for i, ok in zip(x["id"], ed["Excluir"].fillna(False)) if ok]
+        if st.button(f"🗑️ Excluir {len(ids)} recontagem(ns)", key=f"inv_exc_b_{inv_id}", disabled=not ids):
+            ui.acao(inv.excluir_recontagem, ids, sucesso=f"{len(ids)} recontagem(ns) excluída(s).")
 
 
 def _d_bases(usuario: dict, op: int, inv_id: int) -> None:
+    from core.auth import e_master
+
     i = inv.inventario(inv_id) or {}
     aberto = i.get("status") == "aberto"
     c1, c2 = st.columns(2)
@@ -991,9 +1173,7 @@ def _d_bases(usuario: dict, op: int, inv_id: int) -> None:
             if not erros:
                 st.session_state["invd_up_c_v"] = v2 + 1
                 st.rerun()
-    b1, _ = st.columns([1, 3])
-    if aberto:
-        if b1.button("🔒 Fechar a contagem do dia", key="invd_fechar"):
-            ui.acao(inv.mudar_status, inv_id, "fechado", sucesso="Contagem do dia fechada.")
-    elif b1.button("🔓 Reabrir", key="invd_reabrir"):
-        ui.acao(inv.mudar_status, inv_id, "aberto", sucesso="Contagem reaberta.")
+    if not aberto:
+        st.caption("💾 Conciliação salva — para subir de novo, reabra em 📊 Painel.")
+    elif e_master(usuario) and st.button("🗑️ Excluir esta contagem do dia", key=f"invd_excluir_{inv_id}"):
+        ui.acao(inv.excluir, inv_id, sucesso="Contagem do dia excluída.")

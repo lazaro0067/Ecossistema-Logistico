@@ -1002,6 +1002,21 @@ CREATE TABLE IF NOT EXISTS inv_conferentes (
     ultimo_acesso TEXT
 );
 
+CREATE TABLE IF NOT EXISTS inv_diario_final (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    inv_id      INTEGER NOT NULL,
+    produto     TEXT,
+    descricao   TEXT,
+    fator       REAL,
+    sistema_un  REAL,
+    contado_un  REAL,
+    final_un    REAL,
+    dif_un      REAL,
+    status      TEXT,
+    rodadas     INTEGER,
+    enderecos   TEXT
+);
+
 CREATE TABLE IF NOT EXISTS inv_config (
     operacao_id INTEGER NOT NULL,
     chave       TEXT NOT NULL,
@@ -1665,6 +1680,9 @@ MIGRACOES: list[tuple[str, str]] = [
         ALTER TABLE inv_inventarios ADD COLUMN tipo TEXT DEFAULT 'mensal';
         ALTER TABLE inv_inventarios ADD COLUMN data TEXT;
         UPDATE inv_inventarios SET tipo = 'mensal' WHERE tipo IS NULL;
+    """),
+    ("049_inv_diario_final", """
+        CREATE INDEX IF NOT EXISTS ix_inv_dfinal ON inv_diario_final(inv_id);
     """),
 ]
 

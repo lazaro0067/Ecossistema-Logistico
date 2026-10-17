@@ -315,7 +315,7 @@ def mudar_status(inv_id: int, status: str) -> None:
 
 def excluir(inv_id: int) -> None:
     with get_conn() as conn:
-        for t in ("inv_base", "inv_contagens", "inv_recontagem"):
+        for t in ("inv_base", "inv_contagens", "inv_recontagem", "inv_diario_final"):
             conn.execute(f"DELETE FROM {t} WHERE inv_id = ?", (int(inv_id),))
         conn.execute("DELETE FROM inv_inventarios WHERE id = ?", (int(inv_id),))
 
@@ -774,10 +774,48 @@ def enviar_recontagem(inv_id: int, itens: pd.DataFrame, usuario: str = "") -> in
     return n
 
 
-def cancelar_recontagem(rec_ids: list[int]) -> None:
+MANTIDO = "(mantido da contagem anterior)"
+
+
+def cancelar_recontagem(rec_ids: list[int]) -> int:
+    return excluir_recontagem(rec_ids)
+
+
+def excluir_recontagem(rec_ids: list[int]) -> int:
+    """Exclui recontagens já enviadas (no app, contadas ou descarregadas — só não mexe no que já foi conciliado).
+    A rodada anterior do item volta a valer. Na diária a rodada é do produto inteiro (todos os endereços)."""
+    n = 0
     with get_conn() as conn:
         for i in rec_ids:
-            conn.execute("DELETE FROM inv_recontagem WHERE id = ? AND status <> 'conciliado'", (int(i),))
+            r = conn.execute("SELECT r.inv_id, r.area, COALESCE(r.endereco, ''), r.produto, COALESCE(r.rodada, 1), "
+                             "r.status, COALESCE(i.tipo, 'mensal') FROM inv_recontagem r JOIN inv_inventarios i ON "
+                             "i.id = r.inv_id WHERE r.id = ?", (int(i),)).fetchone()
+            if not r or r[5] in ("conciliado", "superado"):
+                continue
+            inv_id, area, end, prod, rod, tipo = r[0], r[1], r[2], r[3], int(r[4] or 1), r[6]
+            if tipo == "diario":
+                conn.execute("DELETE FROM inv_recontagem WHERE inv_id = ? AND produto = ? AND COALESCE(rodada, 1) = ?",
+                             (inv_id, prod, rod))
+                conn.execute("UPDATE inv_recontagem SET status = 'recontado' WHERE inv_id = ? AND produto = ? AND "
+                             "COALESCE(rodada, 1) = ? AND status = 'superado'", (inv_id, prod, int(rod) - 1))
+            else:
+                conn.execute("DELETE FROM inv_recontagem WHERE id = ?", (int(i),))
+                conn.execute("UPDATE inv_recontagem SET status = 'recontado' WHERE inv_id = ? AND area = ? AND "
+                             "COALESCE(endereco, '') = ? AND produto = ? AND COALESCE(rodada, 1) = ? AND "
+                             "status = 'superado'", (inv_id, area, end, prod, int(rod) - 1))
+            n += 1
+    return n
+
+
+def enviadas(inv_id: int) -> pd.DataFrame:
+    """Recontagens enviadas que ainda podem ser excluídas (não conciliadas)."""
+    df = query_df("SELECT id, area, COALESCE(endereco, '') AS endereco, produto, descricao, fator, "
+                  "COALESCE(rodada, 1) AS rodada, status, qtd_un, enviado_por, enviado_em, contado_por "
+                  "FROM inv_recontagem WHERE inv_id = ? AND status IN ('pendente', 'contado', 'recontado') "
+                  "ORDER BY area, endereco, produto, rodada", (int(inv_id),))
+    if not df.empty:
+        df = df[df["contado_por"].fillna("") != MANTIDO].reset_index(drop=True)
+    return df
 
 
 def _marcar_bateu(rec: pd.DataFrame) -> pd.DataFrame:
@@ -880,10 +918,11 @@ def desfazer_conciliacao(rec_id: int) -> None:
 def app_pendentes(operacao_id: int) -> pd.DataFrame:
     """Itens a recontar nos inventários abertos (pendente = falta contar; contado = falta a descarga)."""
     trecho, p = operacoes_repo.filtro("r.operacao_id", operacao_id)
-    df = query_df(f"""SELECT r.*, i.nome AS inventario, i.mes FROM inv_recontagem r
+    df = query_df(f"""SELECT r.*, i.nome AS inventario, i.mes, COALESCE(i.tipo, 'mensal') AS tipo, i.data
+                      FROM inv_recontagem r
                       JOIN inv_inventarios i ON i.id = r.inv_id
                       WHERE {trecho} AND i.status = 'aberto' AND r.status IN ('pendente', 'contado')
-                      ORDER BY r.area, r.endereco, r.produto""", p)
+                      ORDER BY i.data, r.inv_id, r.area, r.endereco, r.produto""", p)
     if not df.empty:
         df["endereco"] = df["endereco"].fillna("")
         a = areas(operacao_id)
@@ -927,9 +966,12 @@ def finalizar(inv_id: int, usuario: str = "") -> dict:
     return {"itens": len(conc), "pendentes": pend}
 
 
-def descarga(operacao_id: int, area: str, usuario: dict) -> int:
-    """Finaliza a recontagem da área: os itens contados vão para a gestão conciliar e os responsáveis são avisados."""
+def descarga(operacao_id: int, area: str, usuario: dict, inv_id: int | None = None) -> int:
+    """Finaliza a recontagem da área: os itens contados vão para a gestão conciliar e os responsáveis são avisados.
+    Com inv_id, só a área daquele inventário (mensal ou contagem do dia)."""
     trecho, p = operacoes_repo.filtro("operacao_id", operacao_id)
+    if inv_id is not None:
+        trecho, p = f"{trecho} AND inv_id = ?", (*p, int(inv_id))
     falta = query_df(f"SELECT COUNT(*) AS n FROM inv_recontagem WHERE {trecho} AND area = ? AND status = 'pendente'",
                      (*p, area))
     if int(falta["n"].iloc[0] or 0):
@@ -942,22 +984,26 @@ def descarga(operacao_id: int, area: str, usuario: dict) -> int:
         for i in ids["id"]:
             conn.execute("UPDATE inv_recontagem SET status = 'recontado', descarga_em = ? WHERE id = ?",
                          (agora(), int(i)))
-    _avisar_descarga(operacao_id, area, len(ids), usuario)
+    _avisar_descarga(operacao_id, area, len(ids), usuario, inventario(int(ids["inv_id"].iloc[0])))
     return len(ids)
 
 
-def _avisar_descarga(operacao_id: int, area: str, n: int, usuario: dict) -> None:
+def _avisar_descarga(operacao_id: int, area: str, n: int, usuario: dict, inv: dict | None = None) -> None:
     try:
         from repositories import motoristas_repo
 
         filial = (operacoes_repo.buscar(operacao_id) or {}).get("nome", "")
         nome = _nome_area(area)
+        if (inv or {}).get("tipo") == "diario":
+            onde = (f"Conciliação diária ({_dia_br((inv or {}).get('data'))}) › 🔁 Recontagem")
+        else:
+            onde = "Inventário mensal › 🔁 Recontagem"
         for uid in responsaveis(operacao_id):
             motoristas_repo.criar_notificacao(
                 uid, "inventario", f"inv_desc:{operacao_id}:{area}:{agora()}:{uid}",
                 f"📥 Descarga da recontagem — {nome}",
                 f"{usuario.get('nome', '')} terminou a recontagem de {n} item(ns) da área {nome} ({filial}). "
-                "Concilie em Armazém › 🎯 Acuracidade › Inventário mensal › 🔁 Recontagem.", "armazem",
+                f"Concilie em Armazém › 🎯 Acuracidade › {onde}.", "armazem",
                 agora())
     except Exception:  # noqa: BLE001 — o aviso nunca impede a descarga
         pass
@@ -1211,23 +1257,44 @@ def conciliacao_diaria(inv_id: int) -> pd.DataFrame:
     return g[cols + rcols].sort_values("produto").reset_index(drop=True)
 
 
-def enviar_recontagem_diaria(inv_id: int, produtos: list[str], usuario: str = "") -> int:
-    """Manda os produtos para o app: uma linha por endereço onde foram contados (nova rodada para cada produto)."""
+def enviar_recontagem_diaria(inv_id: int, produtos: list[str], usuario: str = "",
+                              linhas: list[tuple] | None = None) -> int:
+    """Manda os produtos para o app: uma linha por endereço onde foram contados (nova rodada para cada produto).
+    Com `linhas` [(área, endereço, produto)…] vai só o que foi escolhido (por área / endereço); os outros endereços
+    do produto ficam com a quantidade da contagem anterior (não vão para o app)."""
     inv = _aberto(inv_id)
     cd = _contagem_dia(inv_id)
+    escolhidas = None
+    if linhas is not None:
+        produtos = sorted({str(x[2]) for x in linhas})
+        escolhidas = {(str(a), str(e or ""), str(p)) for a, e, p in linhas}
     cd = cd[cd["produto"].isin([str(p) for p in produtos])]
     conv = conversoes(inv_id, cd["produto"].unique().tolist()).set_index("produto")["un_cx_f"]
     n = 0
     with get_conn() as conn:
-        for prod, linhas in cd.groupby("produto"):
+        for prod, grupo in cd.groupby("produto"):
             ant = conn.execute("SELECT status, COALESCE(rodada, 1) FROM inv_recontagem WHERE inv_id = ? AND produto = ?",
                                (int(inv_id), prod)).fetchall()
             if any(x[0] in ("pendente", "contado") for x in ant):
                 continue
             rodada = max([int(x[1] or 1) for x in ant], default=0) + 1
+            ultimo = {}
+            for x in conn.execute("SELECT area, COALESCE(endereco, '') AS e, qtd_un, COALESCE(rodada, 1) AS rd "
+                                  "FROM inv_recontagem WHERE inv_id = ? AND produto = ? ORDER BY 4",
+                                  (int(inv_id), prod)).fetchall():
+                ultimo[(x[0], x[1])] = x[2]
             conn.execute("UPDATE inv_recontagem SET status = 'superado' WHERE inv_id = ? AND produto = ? AND "
                          "status IN ('recontado', 'conciliado')", (int(inv_id), prod))
-            for r in linhas.itertuples(index=False):
+            for r in grupo.itertuples(index=False):
+                if escolhidas is not None and (str(r.area), str(r.endereco or ""), str(prod)) not in escolhidas:
+                    q_ant = ultimo.get((r.area, r.endereco or ""), None if pd.isna(r.qtd_un) else float(r.qtd_un))
+                    conn.execute("INSERT INTO inv_recontagem (inv_id, operacao_id, area, endereco, produto, descricao, "
+                                 "c1_un, fator, status, qtd_un, contado_por, contado_em, enviado_por, enviado_em, "
+                                 "rodada) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'recontado', ?, ?, ?, ?, ?, ?)",
+                                 (int(inv_id), int(inv["operacao_id"]), r.area, r.endereco or "", prod, r.descricao,
+                                  None if pd.isna(r.qtd_un) else float(r.qtd_un), float(conv.get(prod, 1.0) or 1.0),
+                                  q_ant, MANTIDO, agora(), usuario, agora(), rodada))
+                    continue
                 conn.execute("INSERT INTO inv_recontagem (inv_id, operacao_id, area, endereco, produto, descricao, "
                              "c1_un, c2_un, fator, status, enviado_por, enviado_em, rodada) VALUES (?, ?, ?, ?, ?, ?, ?, "
                              "NULL, ?, 'pendente', ?, ?, ?)",
@@ -1245,3 +1312,86 @@ def auto_primeira_recontagem(inv_id: int, usuario: str = "") -> int:
         return 0
     alvo = d[(d["status"] == "divergente") & (d["rodadas"] == 0)]
     return enviar_recontagem_diaria(inv_id, alvo["produto"].tolist(), usuario) if len(alvo) else 0
+
+
+def _dia_br(data) -> str:
+    try:
+        return pd.to_datetime(data).strftime("%d/%m/%Y")
+    except Exception:  # noqa: BLE001
+        return str(data or "")
+
+
+# --- 💾 conciliação diária salva (pasta do mês) ----------------------------------------------------------------------
+def meses_diarios(operacao_id: int) -> list[str]:
+    """Pastas: meses com contagem diária (o atual sempre aparece), do mais novo para o mais antigo."""
+    d = inventarios(operacao_id, "diario")
+    atual = str(pd.Period(pd.Timestamp.now(), "M"))
+    return sorted(set(d["mes"].dropna().astype(str)) | {atual}, reverse=True)
+
+
+def finalizar_diaria(inv_id: int, nome: str, usuario: str = "") -> dict:
+    """Fecha a contagem do dia: grava a foto da conciliação (fica salva na pasta do mês com o nome escolhido)."""
+    inv = _aberto(inv_id)
+    d = conciliacao_diaria(inv_id)
+    if d.empty:
+        raise RegraNegocioError("Não há contagem para salvar.")
+    pend = int((d["status"] == "pendente").sum())
+    if pend:
+        raise RegraNegocioError(f"Ainda tem {pend} produto(s) no app de recontagem — espere a descarga para finalizar.")
+    nome = (nome or "").strip() or f"Conciliação {_dia_br(inv.get('data'))}"
+    with get_conn() as conn:
+        conn.execute("DELETE FROM inv_diario_final WHERE inv_id = ?", (int(inv_id),))
+        for r in d.itertuples(index=False):
+            conn.execute("INSERT INTO inv_diario_final (inv_id, produto, descricao, fator, sistema_un, contado_un, "
+                         "final_un, dif_un, status, rodadas, enderecos) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                         (int(inv_id), r.produto, r.descricao, _f(r.fator), _f(r.sistema_un), _f(r.contado_un),
+                          _f(r.final_un), _f(r.dif_un), r.status, int(r.rodadas or 0), r.enderecos))
+        conn.execute("UPDATE inv_inventarios SET status = 'fechado', nome = ?, finalizado_em = ?, finalizado_por = ? "
+                     "WHERE id = ?", (nome, agora(), usuario, int(inv_id)))
+    ok = int(d["status"].isin(["ok", "ok_rec"]).sum())
+    return {"nome": nome, "produtos": len(d), "ok": ok}
+
+
+def _f(v):
+    return None if v is None or pd.isna(v) else float(v)
+
+
+def conciliacao_salva(inv_id: int) -> pd.DataFrame:
+    """A foto gravada ao finalizar (vazia se a contagem ainda está em andamento)."""
+    return query_df("SELECT produto, descricao, fator, sistema_un, contado_un, final_un, dif_un, status, rodadas, "
+                    "enderecos FROM inv_diario_final WHERE inv_id = ? ORDER BY produto", (int(inv_id),))
+
+
+def conciliacao_dia(inv_id: int) -> pd.DataFrame:
+    """Finalizada → a foto salva; em andamento → a conciliação ao vivo (salva automático a cada carga/recontagem)."""
+    i = inventario(inv_id) or {}
+    if i.get("status") == "fechado":
+        f = conciliacao_salva(inv_id)
+        if not f.empty:
+            f["sem_conv"] = f["contado_un"].isna()
+            return f
+    return conciliacao_diaria(inv_id)
+
+
+def reabrir_diaria(inv_id: int) -> None:
+    execute("UPDATE inv_inventarios SET status = 'aberto' WHERE id = ?", (int(inv_id),))
+
+
+def pasta_mes(operacao_id: int, mes: str) -> pd.DataFrame:
+    """Contagens do dia do mês: as salvas (com resultado) e as em andamento."""
+    d = inventarios(operacao_id, "diario")
+    d = d[d["mes"].astype(str) == str(mes)].copy()
+    if d.empty:
+        return d
+    res = []
+    for r in d.itertuples():
+        c = conciliacao_dia(int(r.id))
+        n = len(c)
+        ok = int(c["status"].isin(["ok", "ok_rec"]).sum()) if n else 0
+        dif = int(c["status"].isin(["divergente", "confirmado"]).sum()) if n else 0
+        pend = int((c["status"] == "pendente").sum()) if n else 0
+        fech = n - pend - (int((c["status"] == "sem_conversao").sum()) if n else 0)
+        res.append({"produtos": n, "ok": ok, "diferenca": dif, "pendentes": pend,
+                    "acuracidade": ok / fech * 100 if fech else None})
+    return pd.concat([d.reset_index(drop=True), pd.DataFrame(res)], axis=1)
+
