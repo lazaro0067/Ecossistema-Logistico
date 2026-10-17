@@ -21,8 +21,13 @@ from config.settings import APP_EMPRESA, APP_ICONE, APP_SUBTITULO, APP_TITULO, M
 # Link exclusivo dos motoristas: ...?app=motorista  (ou um app publicado à parte com ECO_MODO=carreteiro)
 MODO_MOTORISTA = (str(st.query_params.get("app", "")).lower() in ("motorista", "carreteiro")
                   or os.environ.get("ECO_MODO", "").lower() == "carreteiro")
+# Link do app de recontagem do inventário (conferentes no celular): ...?app=recontagem
+MODO_RECONTAGEM = str(st.query_params.get("app", "")).lower() == "recontagem"
 
-if MODO_MOTORISTA:
+if MODO_RECONTAGEM:
+    st.set_page_config(page_title="Recontagem — Grupo Lima", page_icon="📱", layout="centered",
+                       initial_sidebar_state="collapsed")
+elif MODO_MOTORISTA:
     st.set_page_config(page_title="App Carreteiro — Grupo Lima", page_icon="🚛", layout="centered",
                        initial_sidebar_state="collapsed")
 else:
@@ -343,6 +348,35 @@ def app_carreteiro() -> None:
         app_motorista.render(usuario)
 
 
+def app_recontagem(usuario: dict) -> None:
+    """Link ...?app=recontagem: só o app de recontagem do inventário, em tela de celular."""
+    from core.auth import pode_acessar_aba
+    from modules.armazem import recontagem_app
+    from repositories import operacoes_repo
+
+    ui.mostrar_avisos()
+    if not pode_acessar_aba(usuario, "armazem", "recontagem"):
+        st.warning("🔒 Seu usuário não tem acesso ao app de recontagem. Peça ao administrador a permissão "
+                   "Armazém › 📱 App Recontagem.")
+        if st.button("Sair"):
+            session.sair()
+            st.rerun()
+        return
+    ops = [o for o in operacoes_permitidas(usuario) if not operacoes_repo.e_consolidada(o["id"])]
+    if not ops:
+        st.warning("Você não está vinculado a nenhuma revenda.")
+        return
+    ids = [o["id"] for o in ops]
+    nomes = {o["id"]: o["nome"] for o in ops}
+    atual = session.operacao_id() if session.operacao_id() in ids else ids[0]
+    op = st.selectbox("🏢 Revenda", ids, index=ids.index(atual), format_func=nomes.get) if len(ids) > 1 else atual
+    st.session_state.operacao_id = op
+    recontagem_app.render(usuario, op, modo_app=True)
+    if st.button("🚪 Sair", key="rapp_sair"):
+        session.sair()
+        st.rerun()
+
+
 def _entrar_lembrado() -> dict | None:
     """“Manter conectado”: o token (?s=...) no endereço refaz o login depois de recarregar a página ou de o
     servidor reiniciar (nova versão). Trocar a senha ou clicar em Sair invalida/remove o token."""
@@ -422,6 +456,9 @@ def main() -> None:
         from modules.puxada import app_motorista
 
         app_motorista.render(usuario)
+        return
+    if MODO_RECONTAGEM:
+        app_recontagem(usuario)
         return
 
     pagina = session.pagina() or "inicio"

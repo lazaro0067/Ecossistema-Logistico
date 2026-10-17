@@ -47,6 +47,12 @@ LAYOUTS: dict[str, dict] = {
                            contem=["caixas_pallet", "pallet", "palete"]),
             "tipo": C("Tipo", apelidos=["tipo"]),
             "categoria": C("Categoria", apelidos=["categoria"]),
+            "cx_lastro": C("Caixas por lastro", "float", apelidos=["cx_lastro", "caixas_lastro", "lastro",
+                                                                   "qtd_lastro", "caixas_camada", "camada"],
+                           contem=["lastro", "camada"]),
+            "un_cx": C("Unidades por caixa", "float", apelidos=["un_cx", "unidades_cx", "unid_cx", "qtd_unidades",
+                                                              "unidades_caixa", "qtd_embalagem", "fator_conversao"],
+                       contem=["unidades_por", "unid_por", "qtd_unid"]),
         },
     },
     "linear": {

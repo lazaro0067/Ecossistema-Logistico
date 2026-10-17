@@ -82,6 +82,8 @@ MODULOS = {
         "estrutura": "🏗️ Capacidade & Áreas",
         "produtos": "🔎 Catálogo de Produtos",
         "grade": "✅ Check de Grade",
+        "acuracidade": "🎯 Acuracidade Estoque",
+        "recontagem": "📱 App Recontagem",
     }},
     "distribuicao": {"rotulo": "Distribuição (Entrega)", "icone": "🚛", "abas": {
         "book": "📘 Book DPO Entrega",
@@ -180,6 +182,7 @@ GRUPOS_ABAS = {
         "🏥 Saúde & Estoque": ["saude", "grade", "produtos"],
         "📘 Book DPO": ["fundamentos", "manter", "melhorar"],
         "🏗️ Pátio & Pedidos": ["patio", "pedidos", "estrutura"],
+        "🎯 Acuracidade": ["acuracidade", "recontagem"],
     },
     "financeiro": {
         "💳 Contas": ["diario", "contas", "vencimentos"],

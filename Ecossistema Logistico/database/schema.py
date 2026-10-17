@@ -899,6 +899,104 @@ CREATE TABLE IF NOT EXISTS remun_config (
     PRIMARY KEY (operacao_id, chave)
 );
 
+CREATE TABLE IF NOT EXISTS inv_armazens (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id INTEGER NOT NULL,
+    nome        TEXT NOT NULL,
+    ativo       INTEGER DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS inv_areas (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id INTEGER NOT NULL,
+    codigo      TEXT NOT NULL,
+    nome        TEXT,
+    armazem_id  INTEGER,
+    ativo       INTEGER DEFAULT 1,
+    ordem       INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS inv_inventarios (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id  INTEGER NOT NULL,
+    mes          TEXT NOT NULL,
+    nome         TEXT,
+    status       TEXT DEFAULT 'aberto',
+    depositos    TEXT,
+    base_arquivo TEXT,
+    base_em      TEXT,
+    criado_por   TEXT,
+    criado_em    TEXT
+);
+
+CREATE TABLE IF NOT EXISTS inv_base (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    inv_id     INTEGER NOT NULL,
+    deposito   TEXT,
+    produto    TEXT NOT NULL,
+    descricao  TEXT,
+    unidade    TEXT,
+    fator      REAL,
+    disp_un    REAL
+);
+
+CREATE TABLE IF NOT EXISTS inv_contagens (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    inv_id       INTEGER NOT NULL,
+    area         TEXT NOT NULL,
+    endereco     TEXT,
+    usuario      TEXT,
+    inicio       TEXT,
+    finalizacao  TEXT,
+    produto      TEXT,
+    descricao    TEXT,
+    qtd          REAL,
+    unidade      TEXT,
+    validade     TEXT,
+    arquivo      TEXT,
+    importado_em TEXT
+);
+
+CREATE TABLE IF NOT EXISTS inv_recontagem (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    inv_id        INTEGER NOT NULL,
+    operacao_id   INTEGER NOT NULL,
+    area          TEXT NOT NULL,
+    endereco      TEXT,
+    produto       TEXT NOT NULL,
+    descricao     TEXT,
+    c1_un         REAL,
+    c2_un         REAL,
+    fator         REAL,
+    status        TEXT DEFAULT 'pendente',
+    qtd_un        REAL,
+    contado_por   TEXT,
+    contado_em    TEXT,
+    descarga_em   TEXT,
+    escolha       TEXT,
+    final_un      REAL,
+    conciliado_por TEXT,
+    conciliado_em TEXT,
+    enviado_por   TEXT,
+    enviado_em    TEXT
+);
+
+CREATE TABLE IF NOT EXISTS inv_conversao (
+    produto     TEXT PRIMARY KEY,
+    un_cx       REAL,
+    cx_pallet   REAL,
+    cx_lastro   REAL,
+    atualizado_por TEXT,
+    atualizado_em  TEXT
+);
+
+CREATE TABLE IF NOT EXISTS inv_config (
+    operacao_id INTEGER NOT NULL,
+    chave       TEXT NOT NULL,
+    valor       TEXT,
+    PRIMARY KEY (operacao_id, chave)
+);
+
 CREATE TABLE IF NOT EXISTS obz_tend_abertura (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     operacao_id   INTEGER NOT NULL,
@@ -1531,6 +1629,13 @@ MIGRACOES: list[tuple[str, str]] = [
     ("044_mapa_prod", """
         CREATE INDEX IF NOT EXISTS ix_mapa_prod ON notas_mapa_prod(operacao_id, data);
         CREATE INDEX IF NOT EXISTS ix_mapa_prod_m ON notas_mapa_prod(operacao_id, mapa);
+    """),    ("045_inventario", """
+        ALTER TABLE produtos ADD COLUMN cx_lastro REAL;
+        ALTER TABLE produtos ADD COLUMN un_cx REAL;
+        CREATE INDEX IF NOT EXISTS ix_inv_cont ON inv_contagens(inv_id, area);
+        CREATE INDEX IF NOT EXISTS ix_inv_base ON inv_base(inv_id);
+        CREATE INDEX IF NOT EXISTS ix_inv_rec ON inv_recontagem(inv_id, status);
+        CREATE INDEX IF NOT EXISTS ix_inv_areas ON inv_areas(operacao_id, codigo);
     """),
 ]
 
