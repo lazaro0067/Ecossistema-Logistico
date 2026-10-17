@@ -140,6 +140,14 @@ def _tab_div(d: pd.DataFrame, area: bool = True, nomes: tuple | None = None) -> 
         t["Contador 2"] = d["u2"].fillna("— (falta)").values
         t["Contou 2"] = c2
     t["Diferença"] = _diferenca(d)
+    # recontagens (rodada 1, 2…) e o final ficam na frente, sem apagar a 1ª e a 2ª contagem originais
+    rods = sorted([c for c in d.columns if c.startswith("r") and c.endswith("_un") and c[1:-3].isdigit()
+                   and d[c].notna().any()], key=lambda c: int(c[1:-3]))
+    for c in rods:
+        t[f"Recontagem {c[1:-3]}"] = [_contou(x, f, "") if pd.notna(x) else "" for x, f in zip(d[c], d["fator"])]
+    if rods:
+        t["Final"] = [_cx(x, f) + " cx" if pd.notna(x) else "—" for x, f in zip(d["final_un"], d["fator"])]
+    t[""] = (d["orig"] if "orig" in d else d["status"]).map(_CHECK).fillna("").values
     t["Situação"] = d["status"].map(inv.STATUS).values
     return t if area else t.drop(columns="Área")
 
@@ -287,35 +295,63 @@ def _enderecos(usuario: dict, op: int, inv_id: int) -> None:
     else:
         a_, e_ = esc.split("|", 1)
         d = ca[(ca["area"] == a_) & (ca["endereco"] == e_)]
-    n_ok = int(d["status"].isin(["ok", "conciliado"]).sum())
-    n_nok = int((d["status"] == "divergente").sum())
+    # OK/NOK = resultado da 1ª × 2ª contagem (o que deu diferença continua em NOK mesmo depois de recontado)
+    n_ok = int((d["orig"] == "ok").sum())
+    n_nok = int((d["orig"] == "divergente").sum())
     filtro = f2.radio("Mostrar", ["todos", "ok", "nok"], horizontal=True, key="inv_end_filtro",
                       format_func={"todos": f"Todos ({len(d)})", "ok": f"✔️ OK ({n_ok})",
-                                   "nok": f"❌ NOK ({n_nok})"}.get)
-    d = d[d["status"].isin(["ok", "conciliado"])] if filtro == "ok" else d[d["status"] == "divergente"] \
-        if filtro == "nok" else d
+                                   "nok": f"❌ NOK — com diferença ({n_nok})"}.get)
+    d = d[d["orig"] == "ok"] if filtro == "ok" else d[d["orig"] == "divergente"] if filtro == "nok" else d
     d = d.sort_values(["area", "endereco", "produto"])
+    aberto = (inv.inventario(inv_id) or {}).get("status") == "aberto"
     if esc == "__todos__":
         t = _tab_div(d, area == "__todas__")
         if "Área" in t:
             t["Área"] = t["Área"].map(lambda a: nomes.get(a, a))
         ui.tabela(t, vazio="Nenhum produto nesse filtro.", baixar=f"inventario_enderecos_{inv_id}")
-        return
-    base_ = ca[(ca["area"] == a_) & (ca["endereco"] == e_)]
-    u1 = base_["u1"].iloc[0] if len(base_) else None
-    u2 = base_["u2"].iloc[0] if len(base_) else None
-    st.markdown(f"#### 📍 {e_} · {nomes.get(a_, a_)}")
-    t = _tab_div(d, False, (u1 or "1ª contagem", u2 or "falta 2ª contagem")).drop(columns=["Endereço"])
-    if d["rec_un"].notna().any() or d["final_un"].notna().any():
-        t.insert(len(t.columns) - 1, "Recontagem", [_contou(x, f, "") if pd.notna(x) else "" for x, f in
-                                                     zip(d["rec_un"], d["fator"])])
-    ui.tabela(t, vazio="Nenhum produto nesse filtro.", baixar=f"inventario_endereco_{e_}")
-    dv = base_[base_["status"] == "divergente"]
-    if len(dv) and (inv.inventario(inv_id) or {}).get("status") == "aberto" and st.button(
-            f"📨 Mandar os {len(dv)} item(ns) ❌ deste endereço para recontagem", type="primary",
-            key=f"inv_env_end_{a_}_{e_}"):
-        ui.acao(inv.enviar_recontagem, inv_id, dv, usuario.get("nome", ""),
-                sucesso=f"{len(dv)} item(ns) do endereço {e_} enviados para recontagem.")
+        alvo = d
+    else:
+        base_ = ca[(ca["area"] == a_) & (ca["endereco"] == e_)]
+        u1 = base_["u1"].iloc[0] if len(base_) else None
+        u2 = base_["u2"].iloc[0] if len(base_) else None
+        st.markdown(f"#### 📍 {e_} · {nomes.get(a_, a_)}")
+        t = _tab_div(d, False, (u1 or "1ª contagem", u2 or "falta 2ª contagem")).drop(columns=["Endereço"])
+        ui.tabela(t, vazio="Nenhum produto nesse filtro.", baixar=f"inventario_endereco_{e_}")
+        alvo = base_
+    # ❌ que podem ir para o app: ainda divergentes ou já conciliados (vira a próxima rodada de recontagem)
+    env = alvo[(alvo["orig"] == "divergente") & alvo["status"].isin(["divergente", "conciliado"])]
+    if len(env) and aberto:
+        n_nova = int((env["status"] == "conciliado").sum())
+        if st.button(f"📨 Mandar {len(env)} item(ns) ❌ para recontagem"
+                     + (f" ({n_nova} em nova rodada)" if n_nova else ""), type="primary", key=f"inv_env_end_{esc}"):
+            ui.acao(inv.enviar_recontagem, inv_id, env, usuario.get("nome", ""),
+                    sucesso=f"{len(env)} item(ns) enviados para o app de recontagem.")
+    _base_final(usuario, inv_id, conc, nomes)
+
+
+def _base_final(usuario: dict, inv_id: int, conc: pd.DataFrame, nomes: dict) -> None:
+    i = inv.inventario(inv_id) or {}
+    with st.expander("🏁 Finalizar e salvar a base do inventário", expanded=bool(i.get("finalizado_em"))):
+        pend = conc[conc["final_un"].isna()]
+        abertos = conc[conc["status"].isin(["pendente", "recontado"])]
+        if i.get("finalizado_em"):
+            st.success(f"Base finalizada em {pd.to_datetime(i['finalizado_em']).strftime('%d/%m/%Y %H:%M')} por "
+                       f"{i.get('finalizado_por') or '—'}.")
+        else:
+            st.caption("A base final guarda a 1ª e a 2ª contagem originais, cada recontagem e a quantidade final de "
+                       "cada endereço. Depois de finalizar o inventário fica fechado (dá para reabrir em 📥 Bases).")
+            if len(pend):
+                st.warning(f"{len(pend)} item(ns) ainda sem quantidade final ({len(abertos)} na recontagem) — "
+                           "finalize quando estiverem resolvidos.")
+            if st.button("✅ Finalizar e salvar base", type="primary", key="inv_finalizar",
+                         disabled=i.get("status") != "aberto"):
+                ui.acao(inv.finalizar, inv_id, usuario.get("nome", ""), sucesso="Inventário finalizado e base salva.")
+        t = _tab_div(conc.sort_values(["area", "endereco", "produto"]))
+        t["Área"] = t["Área"].map(lambda a: nomes.get(a, a))
+        if "Final" not in t:
+            t["Final"] = [_cx(x, f) + " cx" if pd.notna(x) else "—" for x, f in zip(conc.sort_values(
+                ["area", "endereco", "produto"])["final_un"], conc.sort_values(["area", "endereco", "produto"])["fator"])]
+        ui.tabela(t, baixar=f"inventario_base_final_{inv_id}")
 
 
 # --- 🔁 Recontagem ------------------------------------------------------------------------------------------------------
@@ -355,7 +391,8 @@ def _recontagem(usuario: dict, op: int, inv_id: int) -> None:
         st.caption("Nenhuma descarga para conciliar agora.")
     else:
         vis = pd.DataFrame({
-            "Conciliar": True, "Área": para["area"], "Endereço": para["endereco"], "Cód": para["produto"],
+            "Conciliar": True, "Rodada": para["rodada"].fillna(1).astype(int).map(lambda r: f"{r}ª"),
+            "Área": para["area"], "Endereço": para["endereco"], "Cód": para["produto"],
             "Produto": para["descricao"], "1ª contagem (cx)": [_cx(v, f) for v, f in zip(para["c1_un"], para["fator"])],
             "2ª contagem (cx)": [_cx(v, f) for v, f in zip(para["c2_un"], para["fator"])],
             "Recontagem (cx)": [_cx(v, f) for v, f in zip(para["qtd_un"], para["fator"])],

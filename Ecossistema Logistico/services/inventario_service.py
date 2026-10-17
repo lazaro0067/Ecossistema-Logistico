@@ -534,7 +534,8 @@ def conciliacao(inv_id: int) -> pd.DataFrame:
     """Uma linha por área × endereço × produto com a 1ª e a 2ª contagem (em unidades), status e quantidade final."""
     c = _contagens_un(inv_id)
     cols = ["area", "endereco", "produto", "descricao", "u1", "c1_un", "u2", "c2_un", "status", "final_un", "fator",
-            "rec_id", "rec_status", "rec_un", "escolha", "unidades", "sem_conv", "t1", "t2", "dif_txt"]
+            "rec_id", "rec_status", "rec_un", "escolha", "unidades", "sem_conv", "t1", "t2", "dif_txt", "orig",
+            "rodadas"]
     if c.empty:
         return pd.DataFrame(columns=cols)
     # cada contagem = usuário × finalização (o mesmo usuário pode fazer a 1ª e a 2ª). A ordem é POR ENDEREÇO:
@@ -603,11 +604,23 @@ def conciliacao(inv_id: int) -> pd.DataFrame:
     base_["final_un"] = [c1 if s in ("ok", "aguardando") and not sc else None
                          for s, c1, sc in zip(base_["status"], base_["c1_un"], base_["sem_conv"])]
     base_ = base_.drop(columns=["_r1", "_r2"])
+    base_["orig"] = base_["status"]  # resultado da 1ª × 2ª contagem (fica como foi, mesmo depois da recontagem)
     rec = query_df("SELECT id AS rec_id, area, endereco, produto, status AS rec_status, qtd_un AS rec_un, escolha, "
-                   "final_un AS rec_final FROM inv_recontagem WHERE inv_id = ?", (int(inv_id),))
+                   "final_un AS rec_final, COALESCE(rodada, 1) AS rodada FROM inv_recontagem WHERE inv_id = ?",
+                   (int(inv_id),))
+    base_["rodadas"] = 0
     if not rec.empty:
         rec["endereco"] = rec["endereco"].fillna("")
-        base_ = base_.merge(rec, on=chave, how="left")
+        rec["rodada"] = pd.to_numeric(rec["rodada"], errors="coerce").fillna(1).astype(int)
+        rec["rec_un"] = pd.to_numeric(rec["rec_un"], errors="coerce")
+        # cada rodada de recontagem vira uma coluna (r1_un, r2_un…); o status vem da última rodada
+        piv = rec.pivot_table(index=chave, columns="rodada", values="rec_un", aggfunc="last")
+        piv.columns = [f"r{int(k)}_un" for k in piv.columns]
+        ult = rec.sort_values("rodada").groupby(chave, as_index=False).tail(1)
+        ult = ult.assign(rodadas=ult["rodada"]).drop(columns="rodada")
+        base_ = base_.drop(columns="rodadas").merge(ult, on=chave, how="left").merge(
+            piv.reset_index(), on=chave, how="left")
+        base_["rodadas"] = pd.to_numeric(base_["rodadas"], errors="coerce").fillna(0).astype(int)
         tem = base_["rec_id"].notna() & base_["status"].isin(["divergente", "ok", "aguardando"])
         novo = base_["rec_status"].map({"pendente": "pendente", "contado": "pendente", "recontado": "recontado",
                                         "conciliado": "conciliado"})
@@ -620,6 +633,8 @@ def conciliacao(inv_id: int) -> pd.DataFrame:
         for c_ in ("rec_un", "rec_id"):
             base_[c_] = pd.to_numeric(base_[c_], errors="coerce")
         base_ = base_.drop(columns="rec_final")
+        cols = cols + sorted([c_ for c_ in base_.columns if re.fullmatch(r"r\d+_un", c_)],
+                             key=lambda x: int(x[1:-3]))
     else:
         for c_ in ("rec_id", "rec_status", "rec_un", "escolha"):
             base_[c_] = None
@@ -725,22 +740,25 @@ def resultado(inv_id: int, conc: pd.DataFrame | None = None) -> pd.DataFrame:
 
 # --- recontagem (gestão → app → gestão) ----------------------------------------------------------------------------
 def enviar_recontagem(inv_id: int, itens: pd.DataFrame, usuario: str = "") -> int:
+    """Manda para o app. Item que já foi recontado (conciliado) ganha uma nova rodada (recontagem 2, 3…); item com
+    rodada ainda aberta (no app ou esperando conciliar) não é enviado de novo."""
     inv = _aberto(inv_id)
     n = 0
     with get_conn() as conn:
         for r in itens.itertuples(index=False):
             end = r.endereco or ""
-            conn.execute("DELETE FROM inv_recontagem WHERE inv_id = ? AND area = ? AND COALESCE(endereco, '') = ? AND "
-                         "produto = ? AND status <> 'conciliado'", (int(inv_id), r.area, end, r.produto))
-            if conn.execute("SELECT 1 FROM inv_recontagem WHERE inv_id = ? AND area = ? AND COALESCE(endereco, '') = ? "
-                            "AND produto = ?", (int(inv_id), r.area, end, r.produto)).fetchone():
+            linhas = conn.execute("SELECT status, COALESCE(rodada, 1) FROM inv_recontagem WHERE inv_id = ? AND "
+                                  "area = ? AND COALESCE(endereco, '') = ? AND produto = ?",
+                                  (int(inv_id), r.area, end, r.produto)).fetchall()
+            if any(x[0] != "conciliado" for x in linhas):
                 continue
+            rodada = max([int(x[1] or 1) for x in linhas], default=0) + 1
             conn.execute("INSERT INTO inv_recontagem (inv_id, operacao_id, area, endereco, produto, descricao, c1_un, "
-                         "c2_un, fator, status, enviado_por, enviado_em) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                         "'pendente', ?, ?)",
+                         "c2_un, fator, status, enviado_por, enviado_em, rodada) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                         "'pendente', ?, ?, ?)",
                          (int(inv_id), int(inv["operacao_id"]), r.area, end, r.produto, r.descricao,
                           None if pd.isna(r.c1_un) else float(r.c1_un), None if pd.isna(r.c2_un) else float(r.c2_un),
-                          float(r.fator or 1), usuario, agora()))
+                          float(r.fator or 1), usuario, agora(), rodada))
             n += 1
     return n
 
@@ -811,20 +829,40 @@ def app_pendentes(operacao_id: int) -> pd.DataFrame:
         arm = dict(zip(a["codigo"], a["armazem"])) if not a.empty else {}
         df["area_nome"] = df["area"].map(nomes).fillna(df["area"].map(_nome_area))
         df["armazem"] = df["area"].map(arm).fillna("")
+        cv = conversoes(None, df["produto"].astype(str).unique().tolist()).set_index("produto")["cx_pallet_f"]
+        df["cx_pallet"] = df["produto"].astype(str).map(cv)
     return df
 
 
-def registrar_app(rec_id: int, caixas: float, unidades: float, usuario: str = "") -> None:
-    r = query_one("SELECT fator, status FROM inv_recontagem WHERE id = ?", (int(rec_id),))
+def registrar_app(rec_id: int, caixas: float, unidades: float, usuario: str = "", paletes: float = 0) -> None:
+    """Recontagem do app em paletes, caixas e unidades soltas (vira unidades). Pode editar até a descarga."""
+    r = query_one("SELECT fator, status, produto FROM inv_recontagem WHERE id = ?", (int(rec_id),))
     if not r:
         raise RegraNegocioError("Item não encontrado.")
     if r["status"] not in ("pendente", "contado"):
-        raise RegraNegocioError("Este item já foi descarregado.")
-    if (caixas or 0) < 0 or (unidades or 0) < 0:
+        raise RegraNegocioError("Este item já foi descarregado — não dá mais para editar.")
+    if min(paletes or 0, caixas or 0, unidades or 0) < 0:
         raise RegraNegocioError("Quantidade não pode ser negativa.")
-    total = float(caixas or 0) * float(r["fator"] or 1) + float(unidades or 0)
-    execute("UPDATE inv_recontagem SET qtd_un = ?, status = 'contado', contado_por = ?, contado_em = ? WHERE id = ?",
-            (total, usuario, agora(), int(rec_id)))
+    fator = float(r["fator"] or 1)
+    cxp = 0.0
+    if paletes:
+        cv = conversoes(None, [str(r["produto"])])
+        cxp = float(cv["cx_pallet_f"].iloc[0]) if not cv.empty and pd.notna(cv["cx_pallet_f"].iloc[0]) else 0.0
+        if not cxp:
+            raise RegraNegocioError("Este produto não tem caixas por palete na 01.11 — informe em caixas.")
+    total = float(paletes or 0) * cxp * fator + float(caixas or 0) * fator + float(unidades or 0)
+    execute("UPDATE inv_recontagem SET qtd_un = ?, pl = ?, cx = ?, un_s = ?, status = 'contado', contado_por = ?, "
+            "contado_em = ? WHERE id = ?", (total, float(paletes or 0), float(caixas or 0), float(unidades or 0),
+                                            usuario, agora(), int(rec_id)))
+
+
+def finalizar(inv_id: int, usuario: str = "") -> dict:
+    """Fecha o inventário e grava a base final (o que ficou de cada endereço)."""
+    conc = conciliacao(inv_id)
+    pend = int(conc["final_un"].isna().sum()) if not conc.empty else 0
+    execute("UPDATE inv_inventarios SET status = 'fechado', finalizado_em = ?, finalizado_por = ? WHERE id = ?",
+            (agora(), usuario, int(inv_id)))
+    return {"itens": len(conc), "pendentes": pend}
 
 
 def descarga(operacao_id: int, area: str, usuario: dict) -> int:

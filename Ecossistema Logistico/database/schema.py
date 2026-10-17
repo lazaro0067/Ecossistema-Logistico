@@ -1652,6 +1652,15 @@ MIGRACOES: list[tuple[str, str]] = [
     ("046_inv_conferentes", """
         CREATE INDEX IF NOT EXISTS ix_inv_conf ON inv_conferentes(operacao_id, login);
     """),
+    ("047_inv_rodadas", """
+        ALTER TABLE inv_recontagem ADD COLUMN rodada INTEGER DEFAULT 1;
+        ALTER TABLE inv_recontagem ADD COLUMN pl REAL;
+        ALTER TABLE inv_recontagem ADD COLUMN cx REAL;
+        ALTER TABLE inv_recontagem ADD COLUMN un_s REAL;
+        ALTER TABLE inv_inventarios ADD COLUMN finalizado_em TEXT;
+        ALTER TABLE inv_inventarios ADD COLUMN finalizado_por TEXT;
+        UPDATE inv_recontagem SET rodada = 1 WHERE rodada IS NULL;
+    """),
 ]
 
 

@@ -76,7 +76,8 @@ def _area(pend: pd.DataFrame, area: str, usuario: dict, op: int) -> None:
     ends = d.groupby("endereco", sort=True).agg(itens=("id", "size"),
                                                 feito=("status", lambda s: (s == "contado").all()))
     for e, r in ends.iterrows():
-        rot = f"{'✅' if r.feito else '🔲'}  Endereço {e or '(sem endereço)'}  ·  {int(r.itens)} produto(s)"
+        rot = (f"{'✅' if r.feito else '🔲'}  Endereço {e or '(sem endereço)'}  ·  {int(r.itens)} produto(s)"
+               + ("  ·  ✏️ editar" if r.feito else ""))
         if st.button(rot, key=f"rapp_e_{area}_{e}", **ui.LARGURA):
             _ir(area, e)
             st.rerun()
@@ -101,31 +102,41 @@ def _endereco(pend: pd.DataFrame, area: str, end: str, usuario: dict) -> None:
         _ir(area)
         st.rerun()
     st.markdown(f"#### 🔲 {d['area_nome'].iloc[0]} · endereço **{end or '(sem endereço)'}**")
-    st.caption("Conte e informe as caixas e as unidades soltas de cada produto.")
+    st.caption("Conte e informe paletes, caixas e unidades soltas de cada produto. Dá para editar até fazer a "
+               "📤 Descarga.")
     with st.form(f"rapp_f_{area}_{end}"):
         valores = {}
         for r in d.itertuples():
             fator = float(r.fator or 1)
-            ja = r.qtd_un if r.status == "contado" and pd.notna(r.qtd_un) else None
+            cxp = float(r.cx_pallet) if pd.notna(getattr(r, "cx_pallet", None)) and r.cx_pallet else 0.0
+            contado = r.status == "contado"
+
+            def ini(v):
+                return int(v) if contado and v is not None and pd.notna(v) else 0
+            pl0, cx0, un0 = ini(getattr(r, "pl", None)), ini(getattr(r, "cx", None)), ini(getattr(r, "un_s", None))
+            if contado and pl0 == cx0 == un0 == 0 and pd.notna(r.qtd_un) and r.qtd_un:  # contado antes (sem detalhe)
+                cx0, un0 = int(r.qtd_un // fator), int(round(r.qtd_un - (r.qtd_un // fator) * fator))
+            info = ("caixa com " + str(int(fator)) + " un" if fator > 1 else "unidade de venda") + \
+                (f" · palete com {int(cxp)} cx" if cxp else "")
             st.markdown(f'<div class="rapp-prod"><b>{tema._e(r.produto)} · {tema._e(r.descricao or "")}</b><br>'
-                        f'<span>{"caixa com " + str(int(fator)) + " un" if fator > 1 else "unidade de venda"}'
-                        f'{" · já contado" if ja is not None else ""}</span></div>', unsafe_allow_html=True)
-            c1, c2 = st.columns(2)
-            cx = c1.number_input("Caixas", min_value=0, step=1, key=f"rapp_cx_{r.id}",
-                                 value=int(ja // fator) if ja is not None else 0)
-            un = c2.number_input("Unidades soltas", min_value=0, step=1, key=f"rapp_un_{r.id}",
-                                 value=int(round(ja - (ja // fator) * fator)) if ja is not None else 0,
+                        f'<span>{info}{" · ✏️ já contado — pode editar" if contado else ""}</span></div>',
+                        unsafe_allow_html=True)
+            c1, c2, c3 = st.columns(3)
+            pl = c1.number_input("Paletes", min_value=0, step=1, key=f"rapp_pl_{r.id}", value=pl0,
+                                 disabled=not cxp, help=None if cxp else "Sem caixas por palete na 01.11")
+            cx = c2.number_input("Caixas", min_value=0, step=1, key=f"rapp_cx_{r.id}", value=cx0)
+            un = c3.number_input("Unidades", min_value=0, step=1, key=f"rapp_un_{r.id}", value=un0,
                                  disabled=fator <= 1)
-            valores[int(r.id)] = (cx, un)
+            valores[int(r.id)] = (pl, cx, un)
         if st.form_submit_button("💾 Salvar endereço", type="primary", **ui.LARGURA):
             try:
-                for rid, (cx, un) in valores.items():
-                    inv.registrar_app(rid, cx, un, usuario.get("nome", ""))
+                for rid, (pl, cx, un) in valores.items():
+                    inv.registrar_app(rid, cx, un, usuario.get("nome", ""), paletes=pl)
             except RegraNegocioError as e:
                 st.error(str(e))
             else:
                 _ir(area)
-                ui.avisar(f"Endereço {end} salvo.")
+                ui.avisar(f"Endereço {end} salvo. Pode editar até a descarga.")
                 st.rerun()
 
 
