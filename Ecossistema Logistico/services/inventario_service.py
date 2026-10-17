@@ -996,7 +996,9 @@ def op_por_link(token: str) -> int | None:
 
 
 def _login(v) -> str:
-    return re.sub(r"\s+", "", str(v or "")).lower()
+    """CPF vira só os números (aceita com ou sem pontos); outro login fica em minúsculas, sem espaços."""
+    dig = re.sub(r"\D", "", str(v or ""))
+    return dig if len(dig) == 11 else re.sub(r"\s+", "", str(v or "")).lower()
 
 
 def conferentes(operacao_id: int) -> pd.DataFrame:
@@ -1005,23 +1007,49 @@ def conferentes(operacao_id: int) -> pd.DataFrame:
 
 
 def salvar_conferente(operacao_id: int, nome: str, login: str, usuario: str = "", conf_id: int | None = None,
-                      ativo: bool = True) -> int:
+                      ativo: bool = True, senha: str | None = None, confirmacao: str | None = None) -> int:
+    """Responsável pela recontagem: nome, CPF (é o login do app) e senha."""
+    from services.portal_rn_service import cpf_valido
+
     if operacoes_repo.e_consolidada(operacao_id):
-        raise RegraNegocioError("Escolha uma revenda para cadastrar os conferentes.")
+        raise RegraNegocioError("Escolha uma revenda para cadastrar os responsáveis.")
     nome, lg = (nome or "").strip(), _login(login)
     if not nome:
-        raise RegraNegocioError("Informe o nome do conferente.")
-    if len(lg) < 3:
-        raise RegraNegocioError("Informe o login (CPF, matrícula ou apelido — mínimo 3 caracteres).")
+        raise RegraNegocioError("Informe o nome.")
+    if not conf_id and not cpf_valido(lg):
+        raise RegraNegocioError("CPF inválido.")
+    if not conf_id and senha is None:
+        raise RegraNegocioError("Informe a senha.")
+    if senha is not None:
+        _validar_senha(senha, confirmacao)
     outro = query_one("SELECT id FROM inv_conferentes WHERE operacao_id = ? AND login = ?", (int(operacao_id), lg))
     if outro and int(outro["id"]) != int(conf_id or 0):
-        raise RegraNegocioError("Já existe um conferente com esse login nesta revenda.")
+        raise RegraNegocioError("Esse CPF já está cadastrado nesta revenda.")
     if conf_id:
         execute("UPDATE inv_conferentes SET nome = ?, login = ?, ativo = ? WHERE id = ?",
                 (nome, lg, 1 if ativo else 0, int(conf_id)))
+        if senha is not None:
+            definir_senha_conferente(int(conf_id), senha, confirmacao)
         return int(conf_id)
-    return execute("INSERT INTO inv_conferentes (operacao_id, nome, login, ativo, criado_por, criado_em) "
-                   "VALUES (?, ?, ?, 1, ?, ?)", (int(operacao_id), nome, lg, usuario, agora()))
+    from core.auth import hash_senha
+
+    return execute("INSERT INTO inv_conferentes (operacao_id, nome, login, senha_hash, ativo, criado_por, criado_em) "
+                   "VALUES (?, ?, ?, ?, 1, ?, ?)", (int(operacao_id), nome, lg, hash_senha(senha) if senha else None,
+                                                    usuario, agora()))
+
+
+def _validar_senha(senha: str, confirmacao: str | None) -> None:
+    if len(senha or "") < 4:
+        raise RegraNegocioError("A senha precisa ter pelo menos 4 caracteres.")
+    if confirmacao is not None and senha != confirmacao:
+        raise RegraNegocioError("As senhas não conferem.")
+
+
+def definir_senha_conferente(conf_id: int, senha: str, confirmacao: str | None = None) -> None:
+    from core.auth import hash_senha
+
+    _validar_senha(senha, confirmacao)
+    execute("UPDATE inv_conferentes SET senha_hash = ? WHERE id = ?", (hash_senha(senha), int(conf_id)))
 
 
 def excluir_conferente(conf_id: int) -> None:
@@ -1073,7 +1101,7 @@ def entrar_conferente(operacao_id: int, login: str, senha: str) -> dict:
 
     r = _conf(operacao_id, login)
     if not r or not r["senha_hash"] or not int(r["ativo"] or 0) or not verificar_senha(senha or "", r["senha_hash"]):
-        raise RegraNegocioError("Login ou senha inválidos.")
+        raise RegraNegocioError("CPF ou senha inválidos.")
     execute("UPDATE inv_conferentes SET ultimo_acesso = ? WHERE id = ?", (agora(), int(r["id"])))
     return _sessao_conf(r)
 

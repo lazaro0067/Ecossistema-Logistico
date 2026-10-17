@@ -630,7 +630,7 @@ def _bases(usuario: dict, op: int, inv_id: int) -> None:
 def _cadastros(usuario: dict, op: int, inv_id: int) -> None:
     aba = ui._escolha("inv_cad", ["areas", "armazens", "conv", "app", "resp"], "areas",
                       formatar={"areas": "🗺️ Áreas", "armazens": "🏬 Armazéns", "conv": "🔁 Conversões (01.11)",
-                                "app": "📱 App & conferentes", "resp": "👥 Responsáveis"}.get)
+                                "app": "📱 App & responsáveis", "resp": "👥 Responsáveis"}.get)
     if operacoes_repo.e_consolidada(op) and aba != "conv":
         st.info("Escolha uma revenda no menu para cadastrar.")
         return
@@ -761,44 +761,55 @@ def _conferentes(usuario: dict, op: int) -> None:
 
     nome_rev = (operacoes_repo.buscar(op) or {}).get("nome", "")
     tema.secao(f"📱 Link do app de recontagem — {nome_rev}",
-               "Cada revenda tem o seu link. Mande para os conferentes: eles entram com o login cadastrado abaixo (no "
-               "primeiro acesso criam a senha).")
+               "Cada revenda tem o seu link. Mande para os responsáveis: eles entram com o CPF e a senha cadastrados "
+               "abaixo.")
     link = _link_app(op)
     st.code(link, language=None)
     c1, c2, _ = st.columns([1, 1, 2])
     c1.link_button("Abrir o app", link, **ui.LARGURA)
     if c2.button("♻️ Gerar novo link", key="inv_novo_link", help="O link antigo para de funcionar.", **ui.LARGURA):
         ui.acao(inv.novo_link, op, sucesso="Novo link gerado — mande de novo para os conferentes.")
-    tema.secao("👷 Conferentes (login do app)")
+    tema.secao("👷 Responsáveis pelas recontagens (login do app)",
+               "Cadastre nome, CPF e senha. No app eles entram com o CPF e essa senha.")
+    from services.portal_rn_service import formatar_cpf
+
     with st.form("inv_conf_novo", clear_on_submit=True, border=True):
-        f1, f2, f3 = st.columns([2, 1.4, 1])
-        nome = f1.text_input("Nome do conferente")
-        login = f2.text_input("Login (CPF, matrícula…)")
-        f3.write("")
-        if f3.form_submit_button("➕ Cadastrar", type="primary", **ui.LARGURA):
-            ui.acao(inv.salvar_conferente, op, nome, login, usuario.get("nome", ""),
-                    sucesso="Conferente cadastrado — no primeiro acesso ele cria a senha.")
+        f1, f2 = st.columns([2, 1.3])
+        nome = f1.text_input("Nome")
+        cpf = f2.text_input("CPF", placeholder="000.000.000-00")
+        f3, f4, f5 = st.columns([1.3, 1.3, 1])
+        s1 = f3.text_input("Senha", type="password")
+        s2 = f4.text_input("Confirme a senha", type="password")
+        f5.write("")
+        if f5.form_submit_button("➕ Cadastrar", type="primary", **ui.LARGURA):
+            ui.acao(inv.salvar_conferente, op, nome, cpf, usuario.get("nome", ""), None, True, s1, s2,
+                    sucesso="Responsável cadastrado — já pode entrar no app com o CPF e a senha.")
     cf = inv.conferentes(op)
     if cf.empty:
-        st.caption("Nenhum conferente cadastrado ainda.")
+        st.caption("Nenhum responsável cadastrado ainda.")
         return
     ui.tabela(pd.DataFrame({
-        "Nome": cf["nome"], "Login": cf["login"], "Situação": ["🟢 Ativo" if a else "🔒 Bloqueado" for a in cf["ativo"]],
-        "Senha": ["✅ criada" if t else "⏳ cria no 1º acesso" for t in cf["tem_senha"]],
+        "Nome": cf["nome"], "CPF": cf["login"].map(formatar_cpf),
+        "Situação": ["🟢 Ativo" if a else "🔒 Bloqueado" for a in cf["ativo"]],
+        "Senha": ["✅ definida" if t else "⏳ sem senha" for t in cf["tem_senha"]],
         "Último acesso": cf["ultimo_acesso"].fillna("nunca").astype(str).str[:16]}), baixar=False)
     ids = cf["id"].astype(int).tolist()
-    nomes = dict(zip(ids, cf["nome"] + " · " + cf["login"]))
-    sel = st.selectbox("Conferente", ids, format_func=nomes.get, key="inv_conf_sel")
+    nomes = dict(zip(ids, cf["nome"] + " · " + cf["login"].map(formatar_cpf)))
+    sel = st.selectbox("Responsável", ids, format_func=nomes.get, key="inv_conf_sel")
     r = cf.set_index("id").loc[sel]
-    b1, b2, b3, _ = st.columns([1, 1, 1, 1.5])
+    with st.form(f"inv_conf_senha_{sel}", clear_on_submit=True):
+        g1, g2, g3 = st.columns([1.3, 1.3, 1])
+        n1 = g1.text_input("Nova senha", type="password")
+        n2 = g2.text_input("Confirme", type="password")
+        g3.write("")
+        if g3.form_submit_button("🔑 Trocar senha", **ui.LARGURA):
+            ui.acao(inv.definir_senha_conferente, sel, n1, n2, sucesso="Senha alterada.")
+    b1, b2, _ = st.columns([1, 1, 2])
     if b1.button("🔒 Bloquear" if r["ativo"] else "🔓 Liberar", key="inv_conf_bloq", **ui.LARGURA):
         ui.acao(inv.salvar_conferente, op, r["nome"], r["login"], "", sel, not bool(r["ativo"]),
-                sucesso="Conferente atualizado.")
-    if b2.button("🔑 Zerar senha", key="inv_conf_zera", **ui.LARGURA,
-                 help="No próximo acesso o conferente cria outra senha."):
-        ui.acao(inv.zerar_senha_conferente, sel, sucesso="Senha zerada.")
-    if e_master(usuario) and b3.button("🗑️ Excluir", key="inv_conf_del", **ui.LARGURA):
-        ui.acao(inv.excluir_conferente, sel, sucesso="Conferente excluído.")
+                sucesso="Responsável atualizado.")
+    if e_master(usuario) and b2.button("🗑️ Excluir", key="inv_conf_del", **ui.LARGURA):
+        ui.acao(inv.excluir_conferente, sel, sucesso="Responsável excluído.")
 
 
 # =====================================================================================================================

@@ -196,12 +196,12 @@ def app_link(token: str) -> None:
 def _login(op: int, revenda: str) -> None:
     tema.cabecalho("Recontagem do inventário", revenda, "📱")
     st.markdown("#### 🔐 Entrar")
-    login = st.text_input("Login (o que a gestão cadastrou: CPF, matrícula…)", key="rapp_login")
+    login = st.text_input("CPF", key="rapp_login", placeholder="000.000.000-00")
     if not login.strip():
         return
     sit = inv.situacao_conferente(op, login)
     if sit == "sem_cadastro":
-        st.error("Login não cadastrado nesta revenda. Peça à gestão do armazém.")
+        st.error("CPF não cadastrado nesta revenda. Peça à gestão do armazém.")
     elif sit == "bloqueado":
         st.error("Acesso bloqueado. Fale com a gestão do armazém.")
     elif sit == "criar_senha":
@@ -225,7 +225,7 @@ def _login(op: int, revenda: str) -> None:
                 st.error(str(e))
             else:
                 _logar(conf, manter)
-        st.caption("Esqueceu a senha? Peça à gestão para zerar — no próximo acesso você cria outra.")
+        st.caption("Esqueceu a senha? Peça à gestão do armazém para trocar.")
 
 
 def _logar(conf: dict, manter: bool = True) -> None:
