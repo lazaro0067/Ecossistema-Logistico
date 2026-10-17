@@ -241,7 +241,9 @@ def _enderecos(usuario: dict, op: int, inv_id: int) -> None:
     if conc.empty:
         st.info("Ainda não há contagens neste inventário — suba em 📥 Bases.")
         return
-    pe = inv.por_endereco(conc)
+    # esta tela mostra a 1ª × 2ª contagem como foram (a diferença continua visível); o andamento da recontagem e a
+    # conciliação ficam na aba 🔁 Recontagem
+    pe = inv.por_endereco(conc.assign(status=conc["orig"]))
     nomes = dict(zip(*[inv.painel_areas(conc, op)[c] for c in ("area", "nome")]))
     c1, c2 = st.columns([1.3, 2])
     areas_ = ["__todas__"] + sorted(pe["area"].unique(), key=lambda a: nomes.get(a, a))
@@ -254,7 +256,7 @@ def _enderecos(usuario: dict, op: int, inv_id: int) -> None:
     def itens_de(situacoes: list[str], status_item: list[str] | None = None) -> pd.DataFrame | None:
         x = ca.merge(pa.loc[pa["situacao"].isin(situacoes), ["area", "endereco"]], on=["area", "endereco"])
         if status_item:
-            x = x[x["status"].isin(status_item)]
+            x = x[x["orig"].isin(status_item)]
         if x.empty:
             return None
         t = _tab_div(x.sort_values(["area", "endereco", "produto"]))
@@ -268,13 +270,10 @@ def _enderecos(usuario: dict, op: int, inv_id: int) -> None:
             {"titulo": "Validados ✔️", "valor": _n(cont.get("validado", 0)), "icone": "✅", "status": "bom",
              "detalhe": _pct(cont.get("validado", 0) / len(pa) * 100) if len(pa) else "—",
              "dados": itens_de(["validado"])},
-            {"titulo": "Divergentes ❌", "valor": _n(cont.get("divergente", 0)), "icone": "⚠️",
+            {"titulo": "Com diferença ❌", "valor": _n(cont.get("divergente", 0)), "icone": "⚠️",
              "status": "critico" if cont.get("divergente", 0) else "bom",
-             "detalhe": f"{_n((ca['status'] == 'divergente').sum())} produto(s)",
+             "detalhe": f"{_n((ca['orig'] == 'divergente').sum())} produto(s) · 1ª ≠ 2ª",
              "dados": itens_de(["divergente"], ["divergente"])},
-            {"titulo": "Recontagem", "valor": _n(cont.get("recontagem", 0) + cont.get("conciliar", 0)), "icone": "📨",
-             "status": "atencao" if cont.get("conciliar", 0) else "info",
-             "dados": itens_de(["recontagem", "conciliar"], ["pendente", "recontado"])},
             {"titulo": "Só 1 contagem", "valor": _n(cont.get("aguardando", 0)), "icone": "⏳",
              "status": "atencao" if cont.get("aguardando", 0) else "bom", "dados": itens_de(["aguardando"])},
         ], key="kp_inv_end")
