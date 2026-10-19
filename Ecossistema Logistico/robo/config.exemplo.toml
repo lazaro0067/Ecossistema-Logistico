@@ -1,0 +1,49 @@
+# Copie para config.toml e preencha. Senhas NÃO ficam aqui: use  python robo.py --senha promax  (e --senha banco).
+
+pasta = 'C:\Sistema Revenda\ROBO'      # onde os arquivos baixados ficam guardados (uma pasta por dia)
+revenda = "Lima Rio Verde"              # revenda padrão (nome igual ao do sistema)
+espera_seg = 180                        # tempo máximo de espera de cada passo no site
+tentativas = 2                          # tenta de novo se o site falhar
+
+[promax]
+url = "https://ENDERECO-DO-PROMAX"
+usuario = "SEU_USUARIO"
+
+[wms]
+url = "https://ENDERECO-DO-WMS"
+usuario = "SEU_USUARIO"
+
+# Um bloco por relatório. nome = a receita (robo/receitas/<nome>.py); importar = como entra no sistema:
+#   vendas | compra | pcd | saldo_estoque | contagem_validade | estoque | pedidos_marcados | ressuprimento |
+#   linear | produtos | politica | so_baixar
+# dias: seg-sab, todos, seg,qua,sex …   revenda: opcional (outra revenda para este relatório)
+
+[[relatorios]]
+nome = "vendas"
+site = "promax"
+importar = "vendas"
+dias = "seg-sab"
+
+[[relatorios]]
+nome = "compra"
+site = "promax"
+importar = "compra"
+dias = "seg-sab"
+
+[[relatorios]]
+nome = "saldo_estoque"
+site = "promax"
+importar = "saldo_estoque"
+dias = "todos"
+
+[[relatorios]]
+nome = "posicao_estoque"
+site = "promax"
+importar = "estoque"
+dias = "seg-sab"
+
+[[relatorios]]
+nome = "contagem"
+site = "wms"
+importar = "contagem_validade"
+dias = "seg"

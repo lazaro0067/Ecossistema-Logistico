@@ -49,6 +49,7 @@ def render(usuario: dict, operacao_id: int) -> None:
     tema.cabecalho("Atualizar relatórios", "Todas as bases do sistema em um lugar só — envie o arquivo e o sistema "
                    "reconhece as colunas e grava sozinho.", "📥",
                    [f"🏢 {session.operacao_nome()}", "🟢 em dia · 🟡 atualizar · 🔴 desatualizada"])
+    _robo(operacao_id)
     algum = False
     for titulo, itens in GRUPOS:
         visiveis = [i for i in itens if any(pode_acessar_modulo(usuario, m) for m in i[3])]
@@ -64,3 +65,38 @@ def render(usuario: dict, operacao_id: int) -> None:
         st.info("Você não tem acesso a nenhuma pasta que use relatórios.")
     st.caption("O Ressuprimento diário traz todas as filiais num arquivo só. As demais bases são da revenda "
                "escolhida no menu ao lado.")
+
+
+def _robo(operacao_id: int) -> None:
+    """🤖 O que o robô de relatórios baixou e importou (ele roda no computador da empresa)."""
+    import pandas as pd
+
+    from core import ui
+    from services import robo_service as rs
+
+    sit = rs.situacao(operacao_id)
+    if sit.empty:
+        return
+    tema.secao("🤖 Robô de relatórios", "Baixa os relatórios dos sites e importa sozinho. Última execução de cada um:")
+    icone = {"ok": "🟢", "erro": "🔴", "rodando": "🔄"}
+
+    def quando(v):
+        try:
+            return pd.to_datetime(v).strftime("%d/%m %H:%M")
+        except Exception:  # noqa: BLE001
+            return "—"
+    cards = []
+    for r in sit.itertuples():
+        cards.append({"titulo": rs.NOMES.get(r.relatorio, r.relatorio), "valor": f"{icone.get(r.status, '⚪')} "
+                      f"{quando(r.fim or r.inicio)}", "icone": "🤖",
+                      "status": "bom" if r.status == "ok" else "critico" if r.status == "erro" else "info",
+                      "detalhe": str(r.mensagem or "")[:90]})
+    tema.kpis(cards, key="kp_robo")
+    with st.expander("Histórico do robô"):
+        h = rs.ultimas(operacao_id, 100)
+        ui.tabela(pd.DataFrame({"Início": h["inicio"].map(quando), "Fim": h["fim"].map(quando),
+                                "Relatório": h["relatorio"].map(lambda x: rs.NOMES.get(x, x)),
+                                "Situação": h["status"].map(lambda x: f"{icone.get(x, '⚪')} {x}"),
+                                "Resultado": h["mensagem"].fillna(""), "Arquivo": h["arquivo"].fillna(""),
+                                "Computador": h["maquina"].fillna("")}), baixar="robo_historico")
+

@@ -1109,6 +1109,18 @@ CREATE TABLE IF NOT EXISTS obz_sim_reuniao (
     criado_em     TEXT
 );
 
+CREATE TABLE IF NOT EXISTS robo_execucoes (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id INTEGER,
+    relatorio   TEXT,
+    inicio      TEXT,
+    fim         TEXT,
+    status      TEXT,
+    mensagem    TEXT,
+    arquivo     TEXT,
+    maquina     TEXT
+);
+
 CREATE TABLE IF NOT EXISTS seg_tentativas (
     id      INTEGER PRIMARY KEY AUTOINCREMENT,
     chave   TEXT NOT NULL,
@@ -1794,6 +1806,8 @@ MIGRACOES: list[tuple[str, str]] = [
     """),    ("053_seguranca", """
         CREATE INDEX IF NOT EXISTS ix_seg_tent ON seg_tentativas(chave, tipo, quando);
         CREATE INDEX IF NOT EXISTS ix_seg_acessos ON seg_acessos(quando);
+    """),    ("054_robo", """
+        CREATE INDEX IF NOT EXISTS ix_robo_exec ON robo_execucoes(relatorio, inicio);
     """),
 ]
 

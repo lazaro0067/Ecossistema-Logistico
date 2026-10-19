@@ -5,3 +5,7 @@ data/
 .streamlit/secrets.toml
 *.db
 *.db-journal
+robo/config.toml
+robo/.venv/
+robo/logs/
+robo/receitas/_gravado_*
