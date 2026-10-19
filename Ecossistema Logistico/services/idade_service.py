@@ -381,17 +381,59 @@ def _ultima_puxada(operacao_id: int) -> dict:
     return out
 
 
-def vencimentos(operacao_id: int, cid: int, ate_dias: int = 90) -> pd.DataFrame:
-    """Uma linha por produto × validade (todas as áreas somadas) que vence em até `ate_dias` (e os vencidos)."""
+def _ops_venda() -> list[str]:
+    from services import faturamento_service as fs
+
+    return fs.operacoes_do_setor("hl_venda")
+
+
+def vendas_desde(operacao_id: int, data: str) -> tuple[pd.DataFrame, str | None]:
+    """Vendas (03.02.37, cx) do dia seguinte à contagem até hoje, por produto × dia. Devolve (vendas, último dia)."""
+    ops = _ops_venda()
+    trecho, p = operacoes_repo.filtro("operacao_id", operacao_id)
+    ph = ", ".join("?" * len(ops)) if ops else "''"
+    v = query_df(f"SELECT produto, data, SUM(qtde) AS q FROM notas_prod_dia WHERE {trecho} AND origem = 'venda' AND "
+                 f"status = 'A' AND data > ? AND operacao_cod IN ({ph}) GROUP BY produto, data", (*p, str(data)[:10],
+                                                                                                  *ops))
+    if v.empty:
+        return pd.DataFrame(columns=["produto", "data", "q"]), None
+    v["produto"] = v["produto"].map(inv._cod)
+    v["q"] = pd.to_numeric(v["q"], errors="coerce").fillna(0.0)
+    v["data"] = v["data"].astype(str).str[:10]
+    return v.groupby(["produto", "data"], as_index=False)["q"].sum(), str(v["data"].max())
+
+
+def vencimentos(operacao_id: int, cid: int, ate_dias: int = 90, vivo: bool = True) -> pd.DataFrame:
+    """Uma linha por produto × validade (todas as áreas somadas) que vence em até `ate_dias` (e os vencidos).
+    vivo: baixa as vendas da 03.02.37 do dia seguinte à contagem até hoje, das validades mais antigas primeiro
+    (a contagem é semanal; o saldo vai se atualizando com a venda de cada dia)."""
     df = itens(cid)
     df = df[df["validade"].notna()]
-    cols = ["produto", "descricao", "validade", "qtd_cx", "dias", "faixa", "custo_cx", "valor", "linear",
-            "dias_limite", "dias_disp", "sai_cx", "vencer_cx", "vencer_valor", "ultima_puxada", "situacao", "enderecos"]
+    cols = ["produto", "descricao", "validade", "contado_cx", "vendido_cx", "qtd_cx", "dias", "faixa", "custo_cx",
+            "valor", "linear", "dias_limite", "dias_disp", "sai_cx", "vencer_cx", "vencer_valor", "meta_dia",
+            "ultima_puxada", "situacao", "enderecos"]
     if df.empty:
         return pd.DataFrame(columns=cols)
     g = df.groupby(["produto", "validade"]).agg(descricao=("descricao", "first"), qtd_cx=("qtd_cx", "sum"),
                                                 enderecos=("endereco", lambda s: ", ".join(sorted(set(s))))) \
         .reset_index().sort_values(["produto", "validade"])
+    g["contado_cx"] = g["qtd_cx"]
+    g["vendido_cx"] = 0.0
+    if vivo:
+        c = query_one("SELECT data FROM idade_contagens WHERE id = ?", (int(cid),))
+        vd, _ = vendas_desde(operacao_id, c["data"]) if c else (pd.DataFrame(), None)
+        if not vd.empty:
+            tot = vd.groupby("produto")["q"].sum().to_dict()
+            for prod, x in g.groupby("produto", sort=False):
+                resto = float(tot.get(prod, 0.0))
+                for i in x.index:  # FEFO: as mais antigas saem primeiro
+                    if resto <= 0:
+                        break
+                    q = float(g.at[i, "qtd_cx"]) if pd.notna(g.at[i, "qtd_cx"]) else 0.0
+                    baixa = min(q, resto)
+                    g.at[i, "vendido_cx"] = baixa
+                    g.at[i, "qtd_cx"] = q - baixa
+                    resto -= baixa
     h = pd.Timestamp(hoje())
     g["dias"] = (pd.to_datetime(g["validade"]) - h).dt.days
     lin = _linear(operacao_id, g["produto"].unique().tolist())
@@ -405,11 +447,14 @@ def vencimentos(operacao_id: int, cid: int, ate_dias: int = 90) -> pd.DataFrame:
     g["dias_limite"] = g["produto"].map(lambda p_: int(lim.get(p_, padrao)))
     g["dias_disp"] = (g["dias"] - g["dias_limite"]).clip(lower=0)
     # FEFO: as validades mais antigas consomem a venda primeiro
-    sai, vencer = [], []
+    sai, vencer, meta = [], [], []
     for prod, x in g.groupby("produto", sort=False):
         ln = float(lin.get(prod) or 0.0)
-        usado = 0.0
+        usado, acum = 0.0, 0.0
         for r in x.itertuples():
+            acum += float(r.qtd_cx) if pd.notna(r.qtd_cx) else 0.0
+            # quanto precisa vender por dia para esta validade (e as mais antigas) sair até o limite
+            meta.append((r.Index, acum / float(r.dias_disp) if r.dias_disp > 0 else (float("inf") if acum else 0.0)))
             q = float(r.qtd_cx) if pd.notna(r.qtd_cx) else 0.0
             if ln <= 0 and r.dias >= 0:  # sem linear: não dá para prever
                 sai.append((r.Index, float("nan")))
@@ -424,13 +469,14 @@ def vencimentos(operacao_id: int, cid: int, ate_dias: int = 90) -> pd.DataFrame:
     g["vencer_cx"] = pd.to_numeric(pd.Series(dict(vencer)), errors="coerce").clip(lower=0)
     g.loc[g["vencer_cx"] < 0.5, "vencer_cx"] = 0.0
     g["vencer_valor"] = g["vencer_cx"] * g["custo_cx"]
+    g["meta_dia"] = pd.Series(dict(meta))
     g["ultima_puxada"] = g["produto"].map(ult)
     g["faixa"] = pd.cut(g["dias"], [-10 ** 6, -1, 30, 60, 90, 10 ** 6], labels=["vencido", "30", "60", "90", "mais"]) \
         .astype(str)
     g["situacao"] = ["⛔ Vencido" if d < 0 else "❔ Sem linear" if not lin.get(p_) else
                      f"🔴 Vai vencer {v:,.0f} cx".replace(",", ".") if v > 0 else "🟢 Sai a tempo"
                      for d, p_, v in zip(g["dias"], g["produto"], g["vencer_cx"])]
-    g = g[g["dias"] <= ate_dias]
+    g = g[(g["dias"] <= ate_dias) & ((g["qtd_cx"] > 0.01) | g["qtd_cx"].isna())]
     return g[cols].reset_index(drop=True)
 
 
@@ -440,20 +486,42 @@ def ultima_contagem(operacao_id: int) -> int | None:
 
 
 def risco_shelf(operacao_id: int) -> pd.DataFrame:
-    """Para o Ressuprimento: produtos da última contagem com previsão de vencer (não comprar)."""
+    """Produtos da última contagem (saldo atualizado com as vendas) com previsão de vencer ou já vencidos.
+    Para o Ressuprimento (não comprar) e para Vendas (foco de venda)."""
     cid = ultima_contagem(operacao_id)
     if not cid:
         return pd.DataFrame()
     v = vencimentos(operacao_id, cid, ate_dias=10 ** 5)
-    v = v[(v["vencer_cx"] > 0) | (v["dias"] < 0)]
-    if v.empty:
-        return v
-    return (v.groupby("produto", as_index=False)
-            .agg(descricao=("descricao", "first"), validade=("validade", "min"), dias=("dias", "min"),
-                 vencer_cx=("vencer_cx", "sum"), vencer_valor=("vencer_valor", lambda s_: s_.sum(min_count=1)),
-                 linear=("linear", "first"),
-                 ultima_puxada=("ultima_puxada", "first"))
-            .sort_values("dias").reset_index(drop=True))
+    alvo = v[(v["vencer_cx"] > 0) | (v["dias"] < 0)]
+    if alvo.empty:
+        return alvo
+    prods = alvo["produto"].unique()
+    x = v[v["produto"].isin(prods)]
+    vend = x.groupby("produto")["vendido_cx"].sum()
+    out = (alvo.groupby("produto", as_index=False)
+           .agg(descricao=("descricao", "first"), validade=("validade", "min"), dias=("dias", "min"),
+                dias_disp=("dias_disp", "min"), estoque_risco=("qtd_cx", "sum"), vencer_cx=("vencer_cx", "sum"),
+                vencer_valor=("vencer_valor", lambda s_: s_.sum(min_count=1)), linear=("linear", "first"),
+                meta_dia=("meta_dia", "max"), custo_cx=("custo_cx", "first"), ultima_puxada=("ultima_puxada", "first"),
+                enderecos=("enderecos", lambda s_: ", ".join(sorted({e for t in s_ for e in str(t).split(", ")})))))
+    out["estoque_total"] = out["produto"].map(x.groupby("produto")["qtd_cx"].sum())
+    out["vendido_cx"] = out["produto"].map(vend).fillna(0.0)
+    out["falta_dia"] = (out["meta_dia"] - out["linear"].fillna(0)).clip(lower=0)
+    out["pct_meta"] = (out["linear"].fillna(0) / out["meta_dia"].where(out["meta_dia"] > 0) * 100).clip(upper=100)
+    # urgência pelos dias que ainda dá para vender (até a data limite)
+    out["urgencia"] = ["⛔ Vencido" if d < 0 else "🔴 Crítico" if dd <= 30 else "🟠 Atenção" if dd <= 60
+                       else "🟡 Monitorar" for d, dd in zip(out["dias"], out["dias_disp"])]
+    return out.sort_values(["dias", "vencer_valor"], ascending=[True, False]).reset_index(drop=True)
+
+
+def situacao_viva(operacao_id: int) -> dict:
+    """Data da contagem e até que dia as vendas já foram baixadas."""
+    c = contagens(operacao_id)
+    if c.empty:
+        return {}
+    data = str(c["data"].iloc[0])
+    _, ult = vendas_desde(operacao_id, data)
+    return {"contagem": data, "vendas_ate": ult}
 
 
 def pedir_correcao(operacao_id: int, cid: int, usuario: dict) -> int:

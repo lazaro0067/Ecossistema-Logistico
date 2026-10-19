@@ -183,6 +183,9 @@ def render(operacao_id: int, revenda: str, rn: dict | None = None) -> None:
         st.markdown('<div class="pa-vazio">Estoque ainda não atualizado. Volte mais tarde. 🙂</div>',
                     unsafe_allow_html=True)
         return
+    from modules.armazem import idade
+
+    idade.foco_portal(operacao_id)
     total = len(df)
     cont = {s: int((df["status_comercial"] == s).sum()) for s in COR}
     st.markdown('<div class="pa-resumo">' + "".join(

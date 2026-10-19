@@ -123,7 +123,8 @@ def render(usuario: dict, operacao_id: int) -> None:
 
     ui.abas_modulo(usuario, "vendas", {"acompanhamento": aba_acompanhamento, "calendario": calendario.render,
                                        "metas_cestas": aba_metas_cestas,
-                                       "comercial": aba_comercial, "metas": aba_metas, "abc": aba_abc},
+                                       "comercial": aba_comercial, "metas": aba_metas, "abc": aba_abc,
+                                       "foco_shelf": aba_foco_shelf},
                    usuario, operacao_id)
 
 
@@ -168,3 +169,10 @@ def aba_metas_cestas(usuario: dict, operacao_id: int) -> None:
 
     with ressuprimento_repo.fonte("vendas"):
         metas.render(usuario, operacao_id)
+
+
+def aba_foco_shelf(usuario: dict, operacao_id: int) -> None:
+    from modules.armazem import idade
+
+    idade.render_foco_vendas(usuario, operacao_id)
+

@@ -72,6 +72,7 @@ MODULOS = {
         "comercial": "🛍️ Estoque do Dia (Portal RN)",
         "metas": "🎯 Metas de Vendas",
         "abc": "🔤 Curva ABC",
+        "foco_shelf": "🎯 Foco Shelf (vencimento)",
     }},
     "armazem": {"rotulo": "Armazém & Estoque", "icone": "📦", "abas": {
         "saude": "🏥 Saúde & Ocupação",
@@ -172,7 +173,7 @@ GRUPOS_ABAS = {
     },
     "vendas": {
         "📈 Acompanhamento": ["acompanhamento", "calendario", "metas_cestas"],
-        "🛍️ Comercial": ["comercial"],
+        "🛍️ Comercial": ["comercial", "foco_shelf"],
         "🎯 Metas & ABC": ["metas", "abc"],
     },
     "frota": {

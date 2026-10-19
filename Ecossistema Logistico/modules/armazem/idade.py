@@ -7,7 +7,7 @@ from repositories import operacoes_repo
 from services import idade_service as ids
 from services.erros import RegraNegocioError
 
-_TELAS = {"painel": "📊 Painel", "picking": "🔁 FEFO Picking", "estoque": "🧱 FEFO Estoque & Contagens",
+_TELAS = {"painel": "📊 Painel", "shelf": "🧊 Shelf ao vivo", "picking": "🔁 FEFO Picking", "estoque": "🧱 FEFO Estoque & Contagens",
           "vencimentos": "⏳ Vencimentos", "bases": "📥 Contagens & Cadastros"}
 
 
@@ -41,7 +41,7 @@ def render(usuario: dict, operacao_id: int) -> None:
     c1, _ = st.columns([1.4, 2])
     cid = int(c1.selectbox("Contagem", idsc, key="idd_sel", format_func=rot.get))
     tela = ui._escolha("idd_tela", list(_TELAS), "painel", pills=True, formatar=_TELAS.get)
-    {"painel": _painel, "picking": _picking, "estoque": _estoque, "vencimentos": _vencimentos,
+    {"painel": _painel, "shelf": lambda u, o, c: render_shelf(u, o, "armazem"), "picking": _picking, "estoque": _estoque, "vencimentos": _vencimentos,
      "bases": _bases}[tela](usuario, op, cid)
 
 
@@ -64,13 +64,17 @@ def _tab_cc(q: pd.DataFrame) -> pd.DataFrame:
 def _tab_venc(v: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame({
         "Cód": v["produto"].values, "Produto": v["descricao"].values,
-        "Quantidade (cx)": v["qtd_cx"].map(lambda x: _n(x, 1)).values, "Validade": v["validade"].map(_d).values,
+        "Contado (cx)": v["contado_cx"].map(lambda x: _n(x, 1)).values,
+        "Vendido desde a contagem": v["vendido_cx"].map(lambda x: _n(x, 1) if x else "—").values,
+        "Quantidade atual (cx)": v["qtd_cx"].map(lambda x: _n(x, 1)).values, "Validade": v["validade"].map(_d).values,
         "Dias p/ vencer": v["dias"].values, "Valor": v["valor"].map(_m).values,
         "Linear (cx/dia)": v["linear"].map(lambda x: _n(x, 1)).values,
         "Dias limite": v["dias_limite"].values, "Dias disponíveis": v["dias_disp"].values,
         "Sai pela linear (cx)": v["sai_cx"].map(lambda x: _n(x, 1)).values,
         "Previsão de vencer (cx)": v["vencer_cx"].map(lambda x: _n(x, 1) if pd.notna(x) and x else "—").values,
         "Previsão de vencer (R$)": v["vencer_valor"].map(lambda x: _m(x) if pd.notna(x) and x else "—").values,
+        "Precisa vender (cx/dia)": v["meta_dia"].map(lambda x: "passou do limite" if x == float("inf")
+                                                     else _n(x, 1)).values,
         "Última puxada": v["ultima_puxada"].map(_d).values, "Situação": v["situacao"].values,
         "Endereços": v["enderecos"].values})
 
@@ -200,26 +204,140 @@ def _vencimentos(usuario: dict, op: int, cid: int) -> None:
     ui.tabela(_tab_venc(x.sort_values(["dias", "produto"])), baixar=f"vencimentos_{f}_{cid}")
 
 
-# --- 🧊 para o Ressuprimento ---------------------------------------------------------------------------------------
-def render_risco_shelf(usuario: dict, operacao_id: int) -> None:
-    r = ids.risco_shelf(operacao_id)
-    tema.secao("🧊 Produtos com risco de shelf — não comprar",
-               "Da última contagem com validade (📦 Armazém › 📅 Gestão de Idade): o que a linear de venda não "
-               "consegue vender antes da data limite. Evite novas puxadas destes produtos.")
-    if r.empty:
-        st.success("Nenhum produto com risco de vencer na última contagem. 👏")
+# --- 🧊 Shelf ao vivo (Armazém, Ressuprimento e Vendas) -------------------------------------------------------------
+_CSS_SHELF = """
+<style>
+.shf-top {border-radius: 14px; padding: .9rem 1.1rem; margin: .2rem 0 .8rem 0; color: #fff;
+          background: linear-gradient(120deg, #0B1F3A 0%, #1d4f91 60%, #2a78d6 100%);}
+.shf-top b {font-size: 1.15rem;} .shf-top span {opacity: .85; font-size: .88rem; display: block; margin-top: .15rem;}
+.shf-card {border: 1px solid rgba(120,130,150,.25); border-left: 6px solid var(--c); border-radius: 12px;
+           padding: .7rem .9rem; margin-bottom: .7rem; background: rgba(127,127,127,.04);}
+.shf-card .t {font-weight: 700; font-size: 1rem;} .shf-card .s {font-size: .8rem; opacity: .75;}
+.shf-tag {display: inline-block; font-size: .72rem; font-weight: 700; padding: .1rem .5rem; border-radius: 99px;
+          background: var(--c); color: #fff; margin-left: .3rem; vertical-align: middle;}
+.shf-row {display: flex; gap: .6rem; margin: .55rem 0 .35rem 0; flex-wrap: wrap;}
+.shf-row div {flex: 1 1 90px; min-width: 90px;}
+.shf-row small {display: block; font-size: .7rem; opacity: .7; text-transform: uppercase; letter-spacing: .02em;}
+.shf-row b {font-size: 1.12rem;}
+.shf-bar {height: 9px; border-radius: 99px; background: rgba(127,127,127,.18); overflow: hidden;}
+.shf-bar i {display: block; height: 100%; background: var(--c);}
+.shf-foot {font-size: .78rem; opacity: .8; margin-top: .3rem;}
+</style>
+"""
+_COR_URG = {"⛔ Vencido": "#6b1d1d", "🔴 Crítico": "#e34948", "🟠 Atenção": "#f08c2e", "🟡 Monitorar": "#d4a72c"}
+_PUBLICO = {
+    "armazem": ("🧊 Shelf ao vivo", "Saldo da última contagem atualizado com as vendas de cada dia (03.02.37)."),
+    "ressup": ("🧊 Risco de Shelf — não comprar", "Estes produtos não vão sair a tempo com a venda atual. Segure novas "
+               "puxadas até o risco zerar."),
+    "vendas": ("🎯 Foco de venda — produtos com risco de vencer", "Ajuste a venda: a meta por dia é o que precisa sair "
+               "para a validade não vencer no armazém."),
+}
+
+
+def _card_shelf(r, publico: str, valor: bool = True) -> str:
+    e = tema._e
+    cor = _COR_URG.get(r.urgencia, "#888")
+    meta = r.meta_dia
+    meta_txt = "passou do limite" if meta == float("inf") else f"{_n(meta, 1)} cx/dia"
+    pct = 0 if pd.isna(r.pct_meta) else float(r.pct_meta)
+    lin = "sem linear" if pd.isna(r.linear) else f"{_n(r.linear, 1)} cx/dia"
+    extra = {"armazem": f"📍 {e(str(r.enderecos)[:60])}",
+             "ressup": f"🛒 Última puxada: {_d(r.ultima_puxada)} · ⛔ não comprar",
+             "vendas": f"💪 Vender mais {_n(r.falta_dia, 1)} cx/dia" if r.falta_dia and r.falta_dia != float("inf")
+             else "💪 Manter o ritmo de venda"}[publico]
+    dias = "vencido" if r.dias < 0 else f"{int(r.dias)} dias"
+    return (f'<div class="shf-card" style="--c:{cor}"><div class="t">{e(r.produto)} · {e(str(r.descricao)[:48])}'
+            f'<span class="shf-tag">{e(r.urgencia)}</span></div>'
+            f'<div class="s">Validade {_d(r.validade)} · {dias} · vendido desde a contagem {_n(r.vendido_cx)} cx</div>'
+            f'<div class="shf-row"><div><small>Estoque em risco</small><b>{_n(r.estoque_risco)} cx</b></div>'
+            f'<div><small>Precisa vender</small><b>{meta_txt}</b></div>'
+            f'<div><small>Vende hoje</small><b>{lin}</b></div>'
+            f'<div><small>Vai vencer</small><b>{_n(r.vencer_cx)} cx' + (f' · {_m(r.vencer_valor)}' if valor else '')
+            + '</b></div></div>'
+            f'<div class="shf-bar"><i style="width:{pct:.0f}%"></i></div>'
+            f'<div class="shf-foot">Ritmo atual = {pct:.0f}% do necessário · {extra}</div></div>')
+
+
+def foco_portal(operacao_id: int) -> None:
+    """Portal Comercial (RN no celular): produtos com risco de vencer para priorizar na venda."""
+    try:
+        r = ids.risco_shelf(operacao_id)
+    except Exception:  # noqa: BLE001 — o portal nunca quebra por causa disso
         return
+    r = r[r["dias"] >= 0] if not r.empty else r
+    if r.empty:
+        return
+    st.markdown(_CSS_SHELF, unsafe_allow_html=True)
+    with st.expander(f"🎯 Venda prioritária — {len(r)} produto(s) com risco de vencer", expanded=False):
+        st.caption("Estes produtos precisam vender mais para não vencer no armazém. Ofereça primeiro!")
+        for row in r.head(15).itertuples():
+            st.markdown(_card_shelf(row, "vendas", valor=False), unsafe_allow_html=True)
+
+
+def render_shelf(usuario: dict, operacao_id: int, publico: str = "armazem") -> None:
+    st.markdown(_CSS_SHELF, unsafe_allow_html=True)
+    tit, sub = _PUBLICO[publico]
+    sv = ids.situacao_viva(operacao_id)
+    if not sv:
+        st.info("Ainda não há contagem com validade — suba em 📦 Armazém › 📅 Gestão de Idade.")
+        return
+    ate = sv.get("vendas_ate")
+    st.markdown(f'<div class="shf-top"><b>{tit}</b><span>{sub}</span><span>📅 Contagem de {_d(sv["contagem"])} · '
+                + (f"🔄 vendas baixadas até {_d(ate)}" if ate else "🔄 ainda sem vendas depois da contagem")
+                + ' · atualiza a cada 03.02.37 de vendas subida</span></div>', unsafe_allow_html=True)
+    r = ids.risco_shelf(operacao_id)
+    if r.empty:
+        st.success("Nenhum produto com risco de vencer. 👏")
+        return
+    urg = {u: r[r["urgencia"] == u] for u in _COR_URG}
     tema.kpis([
-        {"titulo": "Produtos em risco", "valor": _n(len(r)), "icone": "🧊", "status": "critico"},
-        {"titulo": "Previsão de vencer", "valor": _m(r["vencer_valor"].sum()), "icone": "💸", "status": "critico",
-         "detalhe": f"{_n(r['vencer_cx'].sum())} cx"},
-    ], key="kp_risco_shelf")
-    ui.tabela(pd.DataFrame({
-        "Cód": r["produto"], "Produto": r["descricao"], "Validade mais próxima": r["validade"].map(_d),
-        "Dias p/ vencer": r["dias"], "Linear (cx/dia)": r["linear"].map(lambda x: _n(x, 1)),
-        "Previsão de vencer (cx)": r["vencer_cx"].map(lambda x: _n(x, 1)),
-        "Previsão de vencer (R$)": r["vencer_valor"].map(_m), "Última puxada": r["ultima_puxada"].map(_d),
-        "Recomendação": "⛔ Não comprar"}), baixar="risco_shelf")
+        {"titulo": "Valor em risco", "valor": _m(r["vencer_valor"].sum()), "icone": "💸", "status": "critico",
+         "detalhe": f"{_n(r['vencer_cx'].sum())} cx vão vencer com a venda atual"},
+        {"titulo": "Produtos em risco", "valor": _n(len(r)), "icone": "🧊", "status": "critico",
+         "detalhe": f"{len(urg['🔴 Crítico'])} críticos (até 30 dias para vender)"},
+        {"titulo": "Vender a mais por dia", "valor": f"{_n(r.loc[r['falta_dia'] != float('inf'), 'falta_dia'].sum(), 1)} cx",
+         "icone": "💪", "status": "atencao", "detalhe": "soma do que falta no ritmo de venda"},
+        {"titulo": "Vendido desde a contagem", "valor": f"{_n(r['vendido_cx'].sum())} cx", "icone": "🔄",
+         "status": "info", "detalhe": "destes produtos"},
+        {"titulo": "Vencidos", "valor": _n(len(urg["⛔ Vencido"])), "icone": "⛔",
+         "status": "critico" if len(urg["⛔ Vencido"]) else "bom"},
+    ], key=f"kp_shelf_{publico}")
+    conta = {u: len(x) for u, x in urg.items()}
+    f = ui._escolha(f"shf_f_{publico}", ["todos", *[u for u in _COR_URG if conta[u]]], "todos", pills=True,
+                    formatar=lambda k: f"Todos ({len(r)})" if k == "todos" else f"{k} ({conta[k]})")
+    x = r if f == "todos" else urg[f]
+    top = x.sort_values("vencer_valor", ascending=False).head(10)
+    if top["vencer_valor"].notna().any():
+        from core import graficos
+
+        graficos.mostrar(graficos.barras_h([f"{p} · {str(d)[:24]}" for p, d in zip(top["produto"], top["descricao"])],
+                                           top["vencer_valor"].fillna(0).tolist(),
+                                           cores=[_COR_URG.get(u, "#888") for u in top["urgencia"]],
+                                           titulo="Maiores valores em risco (R$)"), key=f"g_shelf_{publico}_{f}")
+    n = st.session_state.get(f"shf_n_{publico}", 12)
+    cols = st.columns(2)
+    for k, row in enumerate(x.head(n).itertuples()):
+        cols[k % 2].markdown(_card_shelf(row, publico), unsafe_allow_html=True)
+    if len(x) > n and st.button(f"Mostrar mais ({len(x) - n})", key=f"shf_mais_{publico}"):
+        st.session_state[f"shf_n_{publico}"] = n + 24
+        st.rerun()
+    with st.expander("📋 Tabela completa"):
+        ui.tabela(pd.DataFrame({
+            "Urgência": x["urgencia"], "Cód": x["produto"], "Produto": x["descricao"],
+            "Validade": x["validade"].map(_d), "Dias p/ vencer": x["dias"],
+            "Estoque em risco (cx)": x["estoque_risco"].map(_n), "Vendido desde a contagem (cx)": x["vendido_cx"].map(_n),
+            "Precisa vender (cx/dia)": x["meta_dia"].map(lambda v: "passou do limite" if v == float("inf") else _n(v, 1)),
+            "Vende hoje (cx/dia)": x["linear"].map(lambda v: _n(v, 1)),
+            "Vai vencer (cx)": x["vencer_cx"].map(_n), "Vai vencer (R$)": x["vencer_valor"].map(_m),
+            "Última puxada": x["ultima_puxada"].map(_d), "Endereços": x["enderecos"]}), baixar=f"shelf_{publico}")
+
+
+def render_risco_shelf(usuario: dict, operacao_id: int) -> None:
+    render_shelf(usuario, operacao_id, "ressup")
+
+
+def render_foco_vendas(usuario: dict, operacao_id: int) -> None:
+    render_shelf(usuario, operacao_id, "vendas")
 
 
 # --- 📥 Bases & cadastros ------------------------------------------------------------------------------------------
