@@ -204,6 +204,7 @@ def _linhas_dre(r: dict) -> list[tuple[str, object, str]]:
         ("(−) ICMS ✏️", -abs(r["icms"]) if r["icms"] else 0.0, "m"),
         ("(−) PIS/COFINS ✏️", -abs(r["pis_cofins"]) if r["pis_cofins"] else 0.0, "m"),
         ("(=) RECEITA LÍQUIDA", rec, "m"),
+        ("(±) Conta corrente ✏️", r["conta_corrente"], "m"),
         ("(−) CMV — custo da mercadoria vendida", -r["cmv"] if r["cmv"] is not None else None, "m"),
         ("      Estoque inicial", r["ei"] if r["ok"] else None, "m"),
         ("      (+) Compras", r["compras"], "m"),
@@ -216,7 +217,6 @@ def _linhas_dre(r: dict) -> list[tuple[str, object, str]]:
     if r["despesas"] is not None and not r["obz"].empty:
         linhas += [(f"      {p}", -v, "m") for p, v in zip(r["obz"]["pacote"], r["obz"]["realizado"])]
     linhas += [
-        ("(±) Conta corrente ✏️", r["conta_corrente"], "m"),
         ("(=) RESULTADO OPERACIONAL", r["resultado"], "m"),
         ("Margem operacional %", _div(r["resultado"], bruta) * 100 if r["resultado"] is not None and bruta else None,
          "p"),
@@ -363,7 +363,7 @@ def montar_tabela(lista: list[str], res: list[dict], tot: dict, rotulo: str) -> 
     for r in res:  # departamento que só existe num mês e não no total (não deve acontecer, mas não some)
         for l_ in _linhas_dre(r):
             if l_[0] not in rotulos:
-                rotulos.insert(rotulos.index("(±) Conta corrente ✏️"), l_[0])
+                rotulos.insert(rotulos.index("(=) RESULTADO OPERACIONAL"), l_[0])
     tabela = {"Conta": rotulos}
     if len(lista) > 1:
         for m, r in zip(lista, res):

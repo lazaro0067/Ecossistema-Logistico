@@ -236,7 +236,7 @@ def obz(operacao_id: int, mes: str) -> pd.DataFrame | None:
         return contab
     novo = obz_service.despesas_dre(operacao_id, mes)
     if novo is not None:
-        return novo
+        return _padronizar(novo)
     trecho, p = operacoes_repo.filtro("operacao_id", operacao_id)
     df = query_df(f"SELECT pacote, SUM(orcado) AS orcado, SUM(realizado) AS realizado FROM financeiro_obz "
                   f"WHERE {trecho} AND mes_ano = ? GROUP BY pacote ORDER BY pacote", (*p, mes))
@@ -244,7 +244,18 @@ def obz(operacao_id: int, mes: str) -> pd.DataFrame | None:
         return None
     for c in ("orcado", "realizado"):
         df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
-    return df
+    return _padronizar(df)
+
+
+def _padronizar(df: pd.DataFrame) -> pd.DataFrame:
+    """Tira Jataí e junta departamentos com o mesmo nome (maiúsculas/acentos) — cada um aparece uma vez no DRE."""
+    from services import contabilidade_service as cs
+
+    df = df[~df["pacote"].map(cs.fora_dre)].copy()
+    nomes = cs.nomes_obz()
+    df["pacote"] = df["pacote"].map(lambda p_: cs.nome_depto(p_, nomes))
+    return (df.groupby("pacote", as_index=False, sort=False)[["orcado", "realizado"]].sum()
+            .sort_values("realizado", ascending=False).reset_index(drop=True))
 
 
 CAMPOS_MANUAIS = {"icms": "ICMS", "pis_cofins": "PIS/COFINS", "conta_corrente": "Conta corrente"}
@@ -391,6 +402,17 @@ def _aplicar(r: dict, v: dict) -> dict:
     return r
 
 
+def _chave_dep(k: str) -> str | None:
+    """Edição antiga de departamento: mesmo nome padronizado; Jataí não entra (None)."""
+    if not str(k).startswith("dep:"):
+        return k
+    from services import contabilidade_service as cs
+
+    if cs.fora_dre(k[4:]):
+        return None
+    return "dep:" + cs.nome_depto(k[4:])
+
+
 def dre_editado_mes(operacao_id: int, mes: str) -> tuple[dict, dict, pd.DataFrame]:
     """(DRE gerado, DRE editado, edições). Na visão consolidada soma o efeito das edições de cada revenda."""
     gerado = dre_mes(operacao_id, mes)
@@ -403,12 +425,18 @@ def dre_editado_mes(operacao_id: int, mes: str) -> tuple[dict, dict, pd.DataFram
                 continue
             g_op = valores_dre(dre_mes(oid, mes))
             for k, x in zip(e["chave"], e["valor"]):
+                k = _chave_dep(k)
+                if k is None:
+                    continue
                 base[k] = (base.get(k) or 0.0) + float(x or 0) - float(g_op.get(k) or 0.0)
             todas.append(e)
         ed = pd.concat(todas, ignore_index=True) if todas else edicoes(operacao_id, mes)
     else:
         ed = edicoes(operacao_id, mes)
         for k, x in zip(ed["chave"], ed["valor"]):
+            k = _chave_dep(k)
+            if k is None:
+                continue
             base[k] = float(x) if x is not None else None
     return gerado, _aplicar(gerado, base), ed
 

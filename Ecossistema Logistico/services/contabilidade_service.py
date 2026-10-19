@@ -172,6 +172,31 @@ def departamentos(operacao_id: int) -> list[str]:
     return sorted(x for x in d["departamento"].dropna().astype(str) if x)
 
 
+def fora_dre(nome) -> bool:
+    """Despesas que não entram no DRE (Jataí)."""
+    return "JATAI" in _norm(nome)
+
+
+def nomes_obz() -> dict:
+    try:
+        from services import obz_service
+
+        return {_norm(n): str(n) for n in obz_service.areas()["nome"].dropna()}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def nome_depto(nome, nomes: dict | None = None) -> str:
+    """Mesmo nome para o mesmo departamento (ENTREGA = Entrega, ARMAZEM = Armazém): usa o nome da área do OBZ;
+    sem ela, só a 1ª letra maiúscula."""
+    n = _norm(nome)
+    nomes = nomes_obz() if nomes is None else nomes
+    if n in nomes:
+        return nomes[n]
+    t = str(nome or "").strip()
+    return "/".join(p.strip().capitalize() for p in t.split("/")) if t.isupper() else t
+
+
 def despesas_dre(operacao_id: int, mes: str) -> pd.DataFrame | None:
     """Mesmo formato do OBZ no DRE (pacote = departamento, realizado, orcado). None = relatório não subido.
     O plan vem do OBZ quando o nome do departamento é o mesmo."""
@@ -180,6 +205,9 @@ def despesas_dre(operacao_id: int, mes: str) -> pd.DataFrame | None:
     c = contas(operacao_id, mes)
     if c.empty:
         return None
+    c = c[~c["departamento"].map(fora_dre) & ~c["subpacote"].fillna("").map(fora_dre)]
+    nomes = nomes_obz()
+    c = c.assign(departamento=c["departamento"].map(lambda d: nome_depto(d, nomes)))
     g = c.groupby("departamento", sort=False)["despesa"].sum()
     orc = {}
     try:
