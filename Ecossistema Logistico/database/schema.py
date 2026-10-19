@@ -1109,6 +1109,20 @@ CREATE TABLE IF NOT EXISTS obz_sim_reuniao (
     criado_em     TEXT
 );
 
+CREATE TABLE IF NOT EXISTS frota_tipos (
+    id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    nome   TEXT NOT NULL,
+    ativo  INTEGER DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS frota_modelos (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    modelo      TEXT NOT NULL,
+    tipo        TEXT,
+    observacao  TEXT,
+    ativo       INTEGER DEFAULT 1
+);
+
 CREATE TABLE IF NOT EXISTS idade_contagens (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     operacao_id INTEGER NOT NULL,

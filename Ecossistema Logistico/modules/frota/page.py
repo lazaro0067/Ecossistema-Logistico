@@ -8,7 +8,7 @@
 import pandas as pd
 import streamlit as st
 
-from config.settings import CATEGORIAS_CNH, STATUS_PLACA, TIPOS_VEICULO
+from config.settings import CATEGORIAS_CNH, STATUS_PLACA
 from core import graficos, tema, ui
 from core.auth import operacoes_permitidas
 from modules.componentes.cadastro import Campo as CampoCad
@@ -151,8 +151,8 @@ def _placas(usuario: dict) -> None:
                    "área onde a placa trabalha · motorista do cadastro.",
          campos=[CampoCad("placa", "Placa", obrigatorio=True),
                  CampoCad("operacao_id", "Revenda", "opcoes", True, revs),
-                 CampoCad("tipo", "Tipo de veículo", "opcoes", True, TIPOS_VEICULO),
-                 CampoCad("marca_modelo", "Marca / modelo"),
+                 CampoCad("tipo", "Tipo de veículo", "opcoes", True, svc.tipos()),
+                 CampoCad("marca_modelo", "Marca / modelo", "opcoes", False, _opcoes_modelo(df)),
                  CampoCad("ano", "Ano", "inteiro", na_tabela=False),
                  CampoCad("proprietario_id", "Proprietário (transportadora)", "opcoes", False, transp),
                  CampoCad("aluguel", "Aluguel?", "opcoes", True, {0: "Não", 1: "Sim"}, padrao=0, na_tabela=False),
@@ -165,6 +165,32 @@ def _placas(usuario: dict) -> None:
          rotulo_registro=lambda r: f"{r['placa']} · {revs.get(int(r['operacao_id']), '') if r.get('operacao_id') == r.get('operacao_id') and r.get('operacao_id') else ''}",
          salvar=lambda pid, d: svc.salvar_placa(pid, d, usuario.get("nome") or ""),
          excluir=repo.excluir_placa, aviso_vazio="Nenhuma placa cadastrada.")
+
+
+def _opcoes_modelo(df: pd.DataFrame) -> list[str]:
+    """Modelos do cadastro + os que já estão nas placas (nada some da placa já cadastrada)."""
+    ja = df["marca_modelo"].dropna().astype(str).tolist() if not df.empty and "marca_modelo" in df else []
+    return list(dict.fromkeys([*svc.modelos(so_ativos=True), *sorted(set(ja))]))
+
+
+def _modelos_tipos(usuario: dict) -> None:
+    st.caption("Os tipos e modelos cadastrados aqui aparecem como opção no 🚚 Cadastro de Placas. Renomear leva junto "
+               "as placas que já usam.")
+    tp = svc.tipos_df()
+    tela(chave="fr_tipos", titulo="Tipos de veículo", icone="🚛", df=tp, por_linha=2,
+         descricao="Ex.: Truck, Toco, 3/4, VUC, Carreta…",
+         campos=[CampoCad("nome", "Tipo", obrigatorio=True),
+                 CampoCad("ativo", "Ativo?", "opcoes", True, {1: "Sim", 0: "Não"}, padrao=1)],
+         colunas_extras=[("modelos", "Modelos"), ("placas", "Placas")], rotulo_registro=lambda r: r["nome"],
+         salvar=svc.salvar_tipo, excluir=svc.excluir_tipo, aviso_vazio="Nenhum tipo cadastrado.")
+    tela(chave="fr_modelos", titulo="Modelos (marca / modelo)", icone="🏷️", df=svc.modelos_df(), por_linha=2,
+         descricao="Ex.: VW Delivery 11.180, Mercedes Atego 2426… com o tipo de veículo de cada modelo.",
+         campos=[CampoCad("modelo", "Marca / modelo", obrigatorio=True),
+                 CampoCad("tipo", "Tipo de veículo", "opcoes", False, svc.tipos(so_ativos=True)),
+                 CampoCad("ativo", "Ativo?", "opcoes", True, {1: "Sim", 0: "Não"}, padrao=1),
+                 CampoCad("observacao", "Observação", na_tabela=False)],
+         colunas_extras=[("placas", "Placas")], rotulo_registro=lambda r: r["modelo"],
+         salvar=svc.salvar_modelo, excluir=svc.excluir_modelo, aviso_vazio="Nenhum modelo cadastrado.")
 
 
 def _motoristas(usuario: dict) -> None:
@@ -202,5 +228,6 @@ def render(usuario: dict, operacao_id: int) -> None:
                    campos=CAMPOS, indicadores=INDICADORES, graficos_=GRAFICOS,
                    extras={"gestao": lambda *_: _gestao(usuario), "placas": lambda *_: _placas(usuario),
                            "motoristas": lambda *_: _motoristas(usuario),
+                           "modelos": lambda *_: _modelos_tipos(usuario),
                            "transportadoras": lambda *_: _empresas("transportadora"),
                            "locadoras": lambda *_: _empresas("locadora")})

@@ -95,6 +95,7 @@ MODULOS = {
     "frota": {"rotulo": "Frota & Manutenção", "icone": "🔧", "abas": {
         "gestao": "📊 Gestão da Frota",
         "placas": "🚚 Cadastro de Placas",
+        "modelos": "🏷️ Modelos & Tipos",
         "motoristas": "👤 Motoristas",
         "transportadoras": "🏢 Transportadoras",
         "locadoras": "🔑 Locadoras",
@@ -178,7 +179,7 @@ GRUPOS_ABAS = {
     },
     "frota": {
         "📊 Gestão": ["gestao"],
-        "⚙️ Cadastros": ["placas", "motoristas", "transportadoras", "locadoras"],
+        "⚙️ Cadastros": ["placas", "modelos", "motoristas", "transportadoras", "locadoras"],
         "🔧 Manutenção": ["painel", "lancamentos"],
     },
     "armazem": {
