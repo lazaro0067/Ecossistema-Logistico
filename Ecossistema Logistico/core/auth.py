@@ -36,12 +36,21 @@ def autenticar(email: str, senha: str) -> dict | None:
     if not usuario and "@" not in chave:  # motoristas entram com CPF/celular (só os números)
         digitos = "".join(c for c in chave if c.isdigit())
         usuario = usuarios_repo.buscar_por_login(digitos) if digitos else None
-    if not usuario or not usuario["ativo"]:
-        return None
-    if not verificar_senha(senha, usuario["senha_hash"]):
+    from services import seguranca_service as seg
+
+    if not usuario or not usuario["ativo"] or not verificar_senha(senha, usuario["senha_hash"]):
+        seg.registrar_tentativa(chave, "sistema", False)
         return None
     usuarios_repo.registrar_acesso(usuario["id"])
-    return usuarios_repo.carregar_sessao(usuario["id"])
+    sessao = usuarios_repo.carregar_sessao(usuario["id"])
+    seg.registrar_tentativa(chave, "sistema", True, sessao)
+    return sessao
+
+
+def minutos_bloqueado(email: str) -> int:
+    from services import seguranca_service as seg
+
+    return seg.minutos_bloqueado(email, "sistema")
 
 
 # --- Regras de permissão --------------------------------------------------

@@ -83,6 +83,13 @@ def tela_login() -> None:
                                      help="Ao recarregar a página ou quando o sistema for atualizado, você continua "
                                           "dentro. Use “Sair” em computadores compartilhados.")
                 if st.form_submit_button("Entrar", type="primary", **ui.LARGURA):
+                    from core.auth import minutos_bloqueado
+
+                    falta = minutos_bloqueado(email)
+                    if falta:
+                        st.error(f"🔒 Muitas tentativas com senha errada. Tente de novo em {falta} minuto(s) ou use "
+                                 "“Esqueci minha senha”.")
+                        st.stop()
                     usuario = autenticar(email, senha)
                     from modules.puxada.app_motorista import bloqueio
 
@@ -184,6 +191,10 @@ def tela_troca_obrigatoria(usuario: dict) -> None:
 
 def _nav(rotulo: str, pagina: str, atual: str) -> None:
     if ui.botao(rotulo, key=f"nav_{pagina}", type="primary" if pagina == atual else "secondary"):
+        if pagina != atual:
+            from services import seguranca_service as seg
+
+            seg.registrar(st.session_state.get("usuario"), "abriu", pagina)
         session.ir_para(pagina)
         st.rerun()
 

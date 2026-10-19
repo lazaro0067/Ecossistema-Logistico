@@ -1109,6 +1109,24 @@ CREATE TABLE IF NOT EXISTS obz_sim_reuniao (
     criado_em     TEXT
 );
 
+CREATE TABLE IF NOT EXISTS seg_tentativas (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    chave   TEXT NOT NULL,
+    tipo    TEXT,
+    sucesso INTEGER,
+    quando  TEXT
+);
+
+CREATE TABLE IF NOT EXISTS seg_acessos (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    usuario_id INTEGER,
+    nome       TEXT,
+    login      TEXT,
+    evento     TEXT,
+    detalhe    TEXT,
+    quando     TEXT
+);
+
 CREATE TABLE IF NOT EXISTS frota_tipos (
     id     INTEGER PRIMARY KEY AUTOINCREMENT,
     nome   TEXT NOT NULL,
@@ -1773,6 +1791,9 @@ MIGRACOES: list[tuple[str, str]] = [
     """),    ("052_idade", """
         CREATE INDEX IF NOT EXISTS ix_idade_itens ON idade_itens(contagem_id);
         CREATE INDEX IF NOT EXISTS ix_idade_cont ON idade_contagens(operacao_id, data);
+    """),    ("053_seguranca", """
+        CREATE INDEX IF NOT EXISTS ix_seg_tent ON seg_tentativas(chave, tipo, quando);
+        CREATE INDEX IF NOT EXISTS ix_seg_acessos ON seg_acessos(quando);
     """),
 ]
 
@@ -1876,25 +1897,37 @@ def init_db(db_path=None) -> None:
 
         # Usuário master no primeiro acesso (e-mail vem do segredo ADMIN_EMAIL)
         admin_email = (segredo("ADMIN_EMAIL") or ADMIN_EMAIL_PADRAO).strip().lower()
+        lima = _instancia_grupo_lima()
         if not conn.execute("SELECT 1 FROM usuarios WHERE perfil = ?", (PERFIL_MASTER,)).fetchone():
+            import secrets as _s
+
+            # empresa nova: senha aleatória (o nova_empresa.sh entrega a provisória em MASTER_NOVA_SENHA)
+            inicial = ADMIN_SENHA_INICIAL if lima else _s.token_urlsafe(18)
             conn.execute(
                 """INSERT INTO usuarios (login, nome, senha_hash, email, cargo, perfil, e_aprovador, alcada, trocar_senha)
                    VALUES (?, 'Administrador', ?, ?, 'Administrador Master', ?, 1, 9999999, 1)""",
-                (admin_email, hash_senha(ADMIN_SENHA_INICIAL), admin_email, PERFIL_MASTER),
+                (admin_email, hash_senha(inicial), admin_email, PERFIL_MASTER),
             )
         # O admin antigo (login "admin", sem e-mail) passa a entrar com o e-mail
         conn.execute("UPDATE usuarios SET email = ? WHERE login = ? AND (email IS NULL OR email = '')",
                      (admin_email, ADMIN_LOGIN))
-        _master_inicial(conn, admin_email)
+        if lima:  # a senha inicial do dono vale só para a instância do Grupo Lima
+            _master_inicial(conn, admin_email)
         _recuperar_master(conn, admin_email, hash_senha)
 
-        # Operações padrão do Grupo Lima (só no primeiro acesso)
-        if not conn.execute("SELECT 1 FROM operacoes").fetchone():
+        # Operações padrão do Grupo Lima (só no primeiro acesso e só na instância dele; outra empresa cadastra as suas)
+        if lima and not conn.execute("SELECT 1 FROM operacoes").fetchone():
             for nome, cnpj, cidade, uf in OPERACOES_PADRAO:
                 conn.execute("INSERT INTO operacoes (nome, cnpj, cidade, uf) VALUES (?, ?, ?, ?)",
                              (nome, cnpj, cidade, uf))
         _garantir_consolidadas(conn)
         _slots_padrao(conn)
+
+
+def _instancia_grupo_lima() -> bool:
+    from config.plano import empresa
+
+    return empresa().strip().lower().startswith("grupo lima")
 
 
 def _slots_padrao(conn) -> None:

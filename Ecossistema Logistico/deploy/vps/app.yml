@@ -1,0 +1,17 @@
+# Uma empresa = um container do sistema (mesma imagem para todas), com os Secrets dela no .env.
+services:
+  app:
+    image: eco-app:latest
+    container_name: eco_${SLUG}
+    restart: unless-stopped
+    env_file: ./empresas/${SLUG}/.env
+    volumes:
+      - ./empresas/${SLUG}/dados:/data
+    networks: [eco]
+    deploy:
+      resources:
+        limits:
+          memory: ${MEMORIA:-2g}
+networks:
+  eco:
+    external: true

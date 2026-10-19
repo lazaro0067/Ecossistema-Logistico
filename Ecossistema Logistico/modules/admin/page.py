@@ -553,6 +553,33 @@ def _aba_backup() -> None:
                        "seu usuário mudou.")
 
 
+def _aba_acessos() -> None:
+    import pandas as pd
+
+    from services import seguranca_service as seg
+
+    c1, c2 = st.columns([1, 2])
+    dias = c1.selectbox("Período", [1, 7, 30, 90, 180], index=1, key="seg_dias",
+                        format_func=lambda d: "Hoje e ontem" if d == 1 else f"Últimos {d} dias")
+    r = seg.resumo(dias)
+    tema.kpis([
+        {"titulo": "Entradas", "valor": ui.numero(r["logins"]), "icone": "✅", "status": "info",
+         "detalhe": f"{r['usuarios']} login(s) diferentes"},
+        {"titulo": "Senhas erradas", "valor": ui.numero(r["erros"]), "icone": "⚠️",
+         "status": "atencao" if r["erros"] else "bom"},
+        {"titulo": "Bloqueios", "valor": ui.numero(r["bloqueios"]), "icone": "🔒",
+         "status": "critico" if r["bloqueios"] else "bom",
+         "detalhe": f"{seg.MAX_ERROS} erros seguidos = {seg.JANELA_MIN} min bloqueado"},
+    ], key="kp_seg")
+    d = seg.acessos(dias)
+    ev = c2.multiselect("Eventos", sorted(d["evento"].unique()) if not d.empty else [], key="seg_ev")
+    if ev:
+        d = d[d["evento"].isin(ev)]
+    ui.tabela(pd.DataFrame({"Quando": d["quando"].astype(str).str[:16], "Nome": d["nome"].fillna(""),
+                            "Login": d["login"].fillna(""), "Evento": d["evento"], "Detalhe": d["detalhe"].fillna("")}),
+              baixar="registro_acessos", vazio="Nenhum acesso no período.")
+
+
 def _plano_info() -> None:
     """Empresa, plano e uso dos limites desta instância (configurados nos Secrets)."""
     from config import plano
@@ -571,8 +598,10 @@ def _plano_info() -> None:
 def render(usuario: dict, operacao_id: int | None) -> None:
     ui.cabecalho("Gestão de Acessos", "Usuários, senhas, permissões por pasta e operações", "🔑")
     _plano_info()
-    a1, a2, a4, a5, a3 = st.tabs(["👤 Usuários & Permissões", "🏢 Operações", "🔗 Links do Portal Comercial",
-                                  "💾 Backup", "📦 Importar sistema antigo"])
+    a1, a2, a4, a6, a5, a3 = st.tabs(["👤 Usuários & Permissões", "🏢 Operações", "🔗 Links do Portal Comercial",
+                                      "🕵️ Registro de acessos", "💾 Backup", "📦 Importar sistema antigo"])
+    with a6:
+        _aba_acessos()
     with a1:
         _aba_usuarios(usuario)
     with a2:

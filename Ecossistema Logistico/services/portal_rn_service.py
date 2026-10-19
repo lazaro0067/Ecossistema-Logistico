@@ -105,9 +105,17 @@ def criar_senha(cpf: str, senha: str, confirmacao: str) -> dict:
 
 
 def entrar(cpf: str, senha: str) -> dict:
+    from services import seguranca_service as seg
+
+    chave = limpar_cpf(cpf)
+    falta = seg.minutos_bloqueado(chave, "portal_rn")
+    if falta:
+        raise RegraNegocioError(f"Muitas tentativas com senha errada. Tente de novo em {falta} minuto(s).")
     r = _buscar(cpf)
     if not r or not r["senha_hash"] or not int(r["ativo"] or 0) or not verificar_senha(senha or "", r["senha_hash"]):
+        seg.registrar_tentativa(chave, "portal_rn", False)
         raise RegraNegocioError("CPF ou senha inválidos.")
+    seg.registrar_tentativa(chave, "portal_rn", True, {"id": None, "nome": f"RN {r['nome']}", "cpf": chave})
     execute("UPDATE portal_rn SET ultimo_acesso = ? WHERE id = ?",
             (tempo.agora().strftime("%Y-%m-%d %H:%M"), int(r["id"])))
     return {"id": int(r["id"]), "nome": r["nome"], "cpf": r["cpf"],

@@ -17,7 +17,12 @@ Configurados nos Secrets da instância (`config/plano.py`):
 Relatórios & Bases fazem parte de todo plano. `MODULOS_EXTRAS`, `MAX_USUARIOS` e `MAX_REVENDAS` ajustam um cliente
 sem mudar o plano. Módulo fora do plano não aparece para ninguém, nem para o Master.
 
-## Servidor (Fly.io, São Paulo)
+## Servidor próprio (VPS) — recomendado
+
+Mais barato: uma VPS roda várias empresas. Passo a passo em **`deploy/vps/LEIA-ME.md`**
+(instalação com firewall, HTTPS, banco por empresa e backup criptografado).
+
+## Alternativa: Fly.io (São Paulo)
 
 O banco (Supabase) está em São Paulo; o servidor também fica em São Paulo (`gru`) — cada consulta ao banco fica
 bem mais rápida do que no Streamlit Cloud (que roda nos EUA).

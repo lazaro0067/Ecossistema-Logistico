@@ -1166,10 +1166,18 @@ def criar_senha_conferente(operacao_id: int, login: str, senha: str, confirmacao
 def entrar_conferente(operacao_id: int, login: str, senha: str) -> dict:
     from core.auth import verificar_senha
 
+    from services import seguranca_service as seg
+
+    chave = f"{int(operacao_id)}:{_login(login)}"
+    falta = seg.minutos_bloqueado(chave, "recontagem")
+    if falta:
+        raise RegraNegocioError(f"Muitas tentativas com senha errada. Tente de novo em {falta} minuto(s).")
     r = _conf(operacao_id, login)
     if not r or not r["senha_hash"] or not int(r["ativo"] or 0) or not verificar_senha(senha or "", r["senha_hash"]):
+        seg.registrar_tentativa(chave, "recontagem", False)
         raise RegraNegocioError("CPF ou senha inválidos.")
     execute("UPDATE inv_conferentes SET ultimo_acesso = ? WHERE id = ?", (agora(), int(r["id"])))
+    seg.registrar_tentativa(chave, "recontagem", True, {"id": None, "nome": f"Conferente {r['nome']}"})
     return _sessao_conf(r)
 
 

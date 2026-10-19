@@ -1,0 +1,37 @@
+# Base do servidor: HTTPS (Caddy) + banco das empresas (PostgreSQL). Cada empresa sobe com app.yml (nova_empresa.sh).
+# O banco NÃO abre porta para a internet: só os containers da rede "eco" falam com ele.
+name: eco-base
+services:
+  caddy:
+    image: caddy:2.8
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [eco]
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg_senha
+      TZ: America/Sao_Paulo
+    secrets: [pg_senha]
+    volumes:
+      - pg_dados:/var/lib/postgresql/data
+    networks: [eco]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      retries: 5
+secrets:
+  pg_senha:
+    file: ./segredos/pg_senha
+volumes:
+  caddy_data:
+  caddy_config:
+  pg_dados:
+networks:
+  eco:
+    name: eco
