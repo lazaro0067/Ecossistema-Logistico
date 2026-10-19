@@ -210,7 +210,7 @@ def _linhas_dre(r: dict) -> list[tuple[str, object, str]]:
         ("      (−) Estoque final", -r["ef"] if r["ok"] else None, "m"),
         ("(=) LUCRO BRUTO", lb, "m"),
         ("Margem bruta %", _div(lb, bruta) * 100 if lb is not None and bruta else None, "p"),
-        ("(−) Despesas operacionais (OBZ por departamento)", -r["despesas"] if r["despesas"] is not None else None,
+        ("(−) Despesas operacionais (por departamento)", -r["despesas"] if r["despesas"] is not None else None,
          "m"),
     ]
     if r["despesas"] is not None and not r["obz"].empty:
@@ -242,7 +242,8 @@ def _kpis_dre(r: dict, rotulo: str, key: str = "kp_dre") -> None:
         {"titulo": "Lucro bruto", "valor": _m(lb), "icone": "💰",
          "status": "neutro" if mb is None else "bom" if mb >= .2 else "atencao" if mb >= .1 else "critico",
          "detalhe": f"margem {_p(mb * 100 if mb is not None else None)}"},
-        {"titulo": "OBZ (despesas)", "valor": _m(r["despesas"]), "icone": "🎯",
+        {"titulo": "Despesas (contabilidade)" if r.get("fechado") else "OBZ (despesas)", "valor": _m(r["despesas"]),
+         "icone": "🧾" if r.get("fechado") else "🎯",
          "status": "neutro" if r["despesas"] is None or not r["orcado"] else
          "bom" if r["despesas"] <= r["orcado"] else "critico",
          "detalhe": (f"plan {_m(r['orcado'])} · {len(r['obz'])} departamento(s)" if r["despesas"] is not None
@@ -299,9 +300,14 @@ def render_dre(usuario: dict, operacao_id: int) -> None:
         st.info("Para o DRE, suba a 03.02.37 vendas, a 03.02.37 compra e o 02.05.02 (saldo inicial e final).")
         _ir_relatorios("dre")
         return
-    visao = ui._escolha("dre_visao", ["gerado", "editado", "email"], "gerado", pills=True,
+    visao = ui._escolha("dre_visao", ["gerado", "editado", "email", "contab"], "gerado", pills=True,
                         formatar={"gerado": "📑 DRE gerado", "editado": "✏️ DRE editado",
-                                  "email": "📧 Para e-mail"}.get)
+                                  "email": "📧 Para e-mail", "contab": "🧾 Financeiro contabilidade"}.get)
+    if visao == "contab":
+        from modules.corporativo import contabilidade
+
+        contabilidade.render(usuario, op, meses)
+        return
     c1, c2, _ = st.columns([1.2, 1, 2])
     with c1:
         modo = ui._escolha("dre_modo", ["mes", "ano"], "mes", pills=True, formatar={"mes": "🗓️ Mês", "ano": "📆 Ano"}.get)
@@ -325,10 +331,21 @@ def render_dre(usuario: dict, operacao_id: int) -> None:
     with st.spinner("Montando o DRE..."):
         res = [ev.dre_mes(op, m) for m in lista]
         tot = ev.dre_periodo(op, lista) if len(lista) > 1 else res[0]
+    _selo_fechado(tot, lista)
     _faltas(res)
     _kpis_dre(tot, rotulo)
     _manuais(usuario, op, lista)
     tabela_dre(lista, res, tot, rotulo, "DRE")
+
+
+def _selo_fechado(tot: dict, lista: list[str]) -> None:
+    if tot.get("fechado"):
+        st.success("🔒 DRE fechado — despesas pelo 🧾 Financeiro contabilidade.")
+    else:
+        fech = tot.get("meses_fechados") or []
+        falta = [_nome_mes(m) for m in lista if m not in fech]
+        st.info("⏳ Prévia — despesas pelo OBZ. O DRE só fecha quando subir o 🧾 Financeiro contabilidade de: "
+                + ", ".join(falta) + ".")
 
 
 def _faltas(res: list[dict]) -> None:
@@ -377,5 +394,6 @@ def tabela_dre(lista: list[str], res: list[dict], tot: dict, rotulo: str, prefix
     st.caption("Receita bruta = total das notas (coluna Z) só das operações de R$ de venda (⚙️ Cadastros) · "
                "CMV = estoque inicial + compras − estoque final (02.05.02, depósitos "
                "marcados em 🏬 Estoque) — o mesmo do 📊 Resumo & Lucro Bruto · Despesas = OBZ realizado por "
-               "departamento (sem bonificação) · ✏️ = valores manuais. No total do ano, o CMV usa o estoque inicial "
+               "departamento (sem bonificação) — no mês fechado, pelo 🧾 Financeiro contabilidade · ✏️ = valores "
+               "manuais. No total do ano, o CMV usa o estoque inicial "
                "do 1º mês e o final do último.")

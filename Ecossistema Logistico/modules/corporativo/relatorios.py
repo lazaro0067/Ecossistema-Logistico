@@ -5,6 +5,7 @@
 3. 03.02.37 compra ...................... 🛒 Compras de Mercadoria (Financeiro)
 4. Relatório de operações ............... nomes das operações (para os filtros e o ⚙️ Cadastro por setor)
 5. 02.05.02 (saldo inicial e final) ..... 🏬 Estoque, lucro bruto real e 📑 DRE
+6. Financeiro contabilidade ............. 📑 DRE fechado (despesas por departamento)
 """
 import datetime as dt
 
@@ -126,6 +127,26 @@ def render(usuario: dict, operacao_id: int) -> None:
               "Código; Tipo Movimento; Nome da Operação — dá nome às operações nos filtros e no ⚙️ Cadastro.",
               "operacoes", arquivos.FORMATOS, operacoes, usuario)
     _card_estoque(usuario, operacao_id)
+    _card_contab(usuario, operacao_id)
+
+
+def _card_contab(usuario: dict, operacao_id: int) -> None:
+    from modules.corporativo import contabilidade
+    from services import contabilidade_service as cs
+
+    with st.container(border=True):
+        ult = cs.meses(operacao_id)
+        st.markdown("**6. Financeiro contabilidade (financeiro fechado)**  \nMeses fechados: "
+                    + (", ".join(ui.nome_mes(m) for m in ult[:6]) if ult else "nenhum"))
+        st.caption("Despesas fechadas pela contabilidade, por departamento. Só com ele o 📑 DRE do mês fica 🔒 "
+                   "fechado. Outras contas: 📑 DRE › 🧾 Financeiro contabilidade › ✍️ Outras contas.")
+        meses = [ev.mes_atual()]
+        for _ in range(12):
+            meses.append(ev.mes_anterior(meses[-1]))
+        c1, c2 = st.columns([1, 3])
+        mes = c1.selectbox("Mês", meses, format_func=ui.nome_mes, key="rel_ctb_mes", index=1)
+        with c2:
+            contabilidade.card_upload(usuario, operacao_id, mes, chave="rel_ctb")
 
 
 def _card_estoque(usuario: dict, operacao_id: int) -> None:

@@ -1109,6 +1109,33 @@ CREATE TABLE IF NOT EXISTS obz_sim_reuniao (
     criado_em     TEXT
 );
 
+CREATE TABLE IF NOT EXISTS fin_contab (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id   INTEGER NOT NULL,
+    mes           TEXT NOT NULL,
+    codigo        TEXT,
+    classificacao TEXT,
+    nome          TEXT,
+    departamento  TEXT,
+    subpacote     TEXT,
+    valor         REAL,
+    arquivo       TEXT,
+    criado_por    TEXT,
+    criado_em     TEXT
+);
+
+CREATE TABLE IF NOT EXISTS fin_contab_outras (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id   INTEGER NOT NULL,
+    mes           TEXT NOT NULL,
+    departamento  TEXT,
+    conta         TEXT,
+    despesa       REAL,
+    obs           TEXT,
+    criado_por    TEXT,
+    criado_em     TEXT
+);
+
 CREATE TABLE IF NOT EXISTS dre_manual (
     operacao_id     INTEGER NOT NULL,
     mes             TEXT NOT NULL,
@@ -1686,6 +1713,9 @@ MIGRACOES: list[tuple[str, str]] = [
     """),    ("050_inv_transito", """
         ALTER TABLE inv_base ADD COLUMN transito_un REAL;
         ALTER TABLE inv_inventarios ADD COLUMN contab_transito INTEGER DEFAULT 0;
+    """),    ("051_fin_contab", """
+        CREATE INDEX IF NOT EXISTS ix_fin_contab ON fin_contab(operacao_id, mes);
+        CREATE INDEX IF NOT EXISTS ix_fin_contab_out ON fin_contab_outras(operacao_id, mes);
     """),
 ]
 

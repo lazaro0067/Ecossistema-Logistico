@@ -226,10 +226,14 @@ def cmv_real(operacao_id: int, mes: str) -> dict:
 
 # --- DRE ---------------------------------------------------------------------------------------------
 def obz(operacao_id: int, mes: str) -> pd.DataFrame | None:
-    """Despesas do mês por departamento do OBZ (16.03.01 / Base OBZ); sem ele, o OBZ manual antigo.
+    """Despesas do mês por departamento: 🧾 Financeiro contabilidade (fecha o DRE); sem ele, a prévia pelo OBZ
+    (16.03.01 / Base OBZ); sem ele, o OBZ manual antigo.
     None = nenhum dos dois tem o mês."""
-    from services import obz_service
+    from services import contabilidade_service, obz_service
 
+    contab = contabilidade_service.despesas_dre(operacao_id, mes)
+    if contab is not None:
+        return contab
     novo = obz_service.despesas_dre(operacao_id, mes)
     if novo is not None:
         return novo
@@ -289,6 +293,9 @@ def dre_periodo(operacao_id: int, meses_: list[str]) -> dict:
         pd.DataFrame(columns=["pacote", "orcado", "realizado"])
     desp = float(ob["realizado"].sum()) if tem else None
     man = manual(operacao_id, ms)
+    from services import contabilidade_service
+
+    fech = [m for m in ms if contabilidade_service.fechado(operacao_id, m)]
     receita_bruta = v["valor"]  # total das notas (coluna Z) das operações de venda filtradas
     receita = receita_bruta - abs(man["icms"]) - abs(man["pis_cofins"])  # impostos sempre abatem, com ou sem sinal
     lucro = receita - c["cmv"] if c["cmv"] is not None else None
@@ -296,7 +303,8 @@ def dre_periodo(operacao_id: int, meses_: list[str]) -> dict:
     return {"mes": ms[-1], "meses": ms, "ops_venda": ops_venda, "receita_bruta": receita_bruta,
             "descontos": v["desconto"], "receita": receita, "hl": v["hl"], "bonif": b["valor"], "bonif_hl": b["hl"],
             **c, **man, "lucro_bruto": lucro, "despesas": desp, "obz_meses": len(tem), "obz": ob,
-            "orcado": float(ob["orcado"].sum()) if tem else None, "resultado": resultado}
+            "orcado": float(ob["orcado"].sum()) if tem else None, "resultado": resultado,
+            "fechado": len(fech) == len(ms), "meses_fechados": fech}
 
 
 def dre_mes(operacao_id: int, mes: str) -> dict:
@@ -429,6 +437,7 @@ def dre_editado_periodo(operacao_id: int, meses_: list[str]) -> dict:
     tot["orcado"] = sum(r["orcado"] or 0 for r in rs) if tot["despesas"] is not None else None
     tot["hl"] = sum(r["hl"] for r in rs)
     tot["meses"] = sorted(meses_)
+    tot["fechado"] = all(r.get("fechado") for r in rs)
     return _aplicar(tot, v)
 
 
