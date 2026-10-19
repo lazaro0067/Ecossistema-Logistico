@@ -1109,6 +1109,46 @@ CREATE TABLE IF NOT EXISTS obz_sim_reuniao (
     criado_em     TEXT
 );
 
+CREATE TABLE IF NOT EXISTS idade_contagens (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id INTEGER NOT NULL,
+    data        TEXT NOT NULL,
+    nome        TEXT,
+    arquivo     TEXT,
+    linhas      INTEGER,
+    criado_por  TEXT,
+    criado_em   TEXT
+);
+
+CREATE TABLE IF NOT EXISTS idade_itens (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    contagem_id INTEGER NOT NULL,
+    area        TEXT,
+    endereco    TEXT,
+    produto     TEXT,
+    descricao   TEXT,
+    qtd         REAL,
+    unidade     TEXT,
+    qtd_un      REAL,
+    un_cx       REAL,
+    validade    TEXT,
+    usuario     TEXT
+);
+
+CREATE TABLE IF NOT EXISTS idade_areas (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id INTEGER NOT NULL,
+    area        TEXT NOT NULL,
+    tipo        TEXT
+);
+
+CREATE TABLE IF NOT EXISTS idade_limites (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    operacao_id INTEGER NOT NULL,
+    produto     TEXT NOT NULL,
+    dias        INTEGER
+);
+
 CREATE TABLE IF NOT EXISTS fin_contab (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     operacao_id   INTEGER NOT NULL,
@@ -1716,6 +1756,9 @@ MIGRACOES: list[tuple[str, str]] = [
     """),    ("051_fin_contab", """
         CREATE INDEX IF NOT EXISTS ix_fin_contab ON fin_contab(operacao_id, mes);
         CREATE INDEX IF NOT EXISTS ix_fin_contab_out ON fin_contab_outras(operacao_id, mes);
+    """),    ("052_idade", """
+        CREATE INDEX IF NOT EXISTS ix_idade_itens ON idade_itens(contagem_id);
+        CREATE INDEX IF NOT EXISTS ix_idade_cont ON idade_contagens(operacao_id, data);
     """),
 ]
 

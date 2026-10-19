@@ -63,6 +63,7 @@ MODULOS = {
         "metas": "🎯 Metas Mensais",
         "puxada_pedidos": "🚛 Placas & Pedidos da Puxada",
         "ruptura": "⚠️ Projeção de Falta",
+        "risco_shelf": "🧊 Risco de Shelf",
     }},
     "vendas": {"rotulo": "Vendas", "icone": "📈", "abas": {
         "acompanhamento": "📈 Acompanhamento Sell-out",
@@ -84,6 +85,7 @@ MODULOS = {
         "grade": "✅ Check de Grade",
         "acuracidade": "🎯 Acuracidade Estoque",
         "recontagem": "📱 App Recontagem",
+        "idade": "📅 Gestão de Idade (FEFO)",
     }},
     "distribuicao": {"rotulo": "Distribuição (Entrega)", "icone": "🚛", "abas": {
         "book": "📘 Book DPO Entrega",
@@ -164,7 +166,7 @@ GRUPOS_ABAS = {
         "⚙️ Cadastros": ["cadastros"],
     },
     "ressuprimento": {
-        "📦 Estoque": ["estoque", "ruptura", "politica"],
+        "📦 Estoque": ["estoque", "ruptura", "risco_shelf", "politica"],
         "🛒 Marcação": ["sugestao", "puxada_pedidos", "diario"],
         "📈 Acompanhamento": ["cestas", "sellin", "gestao_dia", "metas"],
     },
@@ -183,6 +185,7 @@ GRUPOS_ABAS = {
         "📘 Book DPO": ["fundamentos", "manter", "melhorar"],
         "🏗️ Pátio & Pedidos": ["patio", "pedidos", "estrutura"],
         "🎯 Acuracidade": ["acuracidade", "recontagem"],
+        "📅 Idade & Validade": ["idade"],
     },
     "financeiro": {
         "💳 Contas": ["diario", "contas", "vencimentos"],
