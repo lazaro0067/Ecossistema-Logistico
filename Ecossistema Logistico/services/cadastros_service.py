@@ -29,6 +29,14 @@ def _obrigatorio(valor: str, campo: str) -> str:
 
 # --- Operações ------------------------------------------------------------
 def criar_operacao(nome, cnpj, cidade, uf):
+    from config import plano
+
+    lim = plano.limite_revendas()
+    if lim is not None:
+        reais = [o for o in operacoes_repo.listar(apenas_ativas=True) if not operacoes_repo.e_consolidada(o["id"])]
+        if len(reais) >= lim:
+            raise RegraNegocioError(f"O plano {plano.rotulo()} permite {lim} revenda(s) — já são {len(reais)}. "
+                                    "Fale com o suporte para ampliar o plano.")
     with _sem_duplicidade("Já existe uma operação com esse nome."):
         operacoes_repo.inserir(_obrigatorio(nome, "o nome"), cnpj.strip(), cidade.strip(), uf.strip())
 

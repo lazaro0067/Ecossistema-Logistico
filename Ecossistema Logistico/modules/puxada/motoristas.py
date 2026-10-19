@@ -10,6 +10,7 @@ from core import tema, ui
 from repositories import motoristas_repo as repo
 from services import carreteiro_service, motoristas_service as svc
 from services.erros import RegraNegocioError
+from config.settings import APP_EMPRESA
 
 SEM_GESTOR = "— sem gestor (avisa o Master) —"
 PARTES = ["📋 Lista de motoristas", "➕ Novo motorista", "🔑 Acesso & senha"]
@@ -25,7 +26,7 @@ def _cartao_senha(df: pd.DataFrame) -> None:
     tel = next((r["telefone"] for r in df.to_dict("records") if r["nome"] == nova["nome"]), None)
     linha_senha = (f"🔑 Senha provisória: {nova['senha']}\n\nNo primeiro acesso você cria a sua senha."
                    if nova.get("senha") else "🔑 Senha: a que foi cadastrada com a Puxada.")
-    msg = (f"Olá, {nova['nome'].split()[0]}! Seu acesso ao App Carreteiro do Grupo Lima:\n\n"
+    msg = (f"Olá, {nova['nome'].split()[0]}! Seu acesso ao App Carreteiro do {APP_EMPRESA}:\n\n"
            f"🔗 {link_do_app()}\n👤 Login (CPF): {nova['login']}\n{linha_senha}\n\n"
            "Dica: no celular, use “Adicionar à tela inicial”.")
     with st.container(border=True):
@@ -122,7 +123,7 @@ def _acesso(df: pd.DataFrame) -> None:
                 st.rerun()
     with c2:
         tema.secao("Outras ações")
-        msg = (f"Olá, {(str(sel.get('nome') or '').split() or [''])[0]}! Link do App Carreteiro do Grupo Lima:\n{link_do_app()}"
+        msg = (f"Olá, {(str(sel.get('nome') or '').split() or [''])[0]}! Link do App Carreteiro do {APP_EMPRESA}:\n{link_do_app()}"
                + (f"\n\nLogin (CPF): {sel['acesso']}" if sel.get("acesso") else ""))
         st.link_button("📲 Mandar o link pelo WhatsApp", link_whatsapp(msg, sel.get("telefone")), **ui.LARGURA)
         if sel.get("usuario_id"):

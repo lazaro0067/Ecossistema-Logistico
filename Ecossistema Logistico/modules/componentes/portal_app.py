@@ -8,6 +8,8 @@ import html
 
 import streamlit as st
 
+from config.settings import APP_EMPRESA
+
 from core import ui
 from modules.componentes import estoque_dia
 from services import armazem_service
@@ -93,7 +95,7 @@ def _hero(revenda: str, atualizado, logado: bool = True) -> None:
 
     foto = _foto_carreta()
     fundo = f' style="background-image:url({foto})"' if foto else ""
-    st.markdown(_CSS + f'<div class="pa-hero"{fundo}><div class="in"><span class="tag">Portal Comercial · Grupo Lima</span>'
+    st.markdown(_CSS + f'<div class="pa-hero"{fundo}><div class="in"><span class="tag">Portal Comercial · {APP_EMPRESA}</span>'
                 f'<h1>{_e(revenda)}</h1><div class="sub">Estoque do dia com o que está chegando (trânsito)</div><div class="chips"><span>🕒 estoque de {_e(atualizado or "—")}</span>'
                 f'<span>🔒 {"somente leitura" if logado else "acesso por CPF e senha"}</span></div></div></div>',
                 unsafe_allow_html=True)

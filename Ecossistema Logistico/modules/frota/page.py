@@ -17,6 +17,7 @@ from modules.componentes.registro_generico import Campo, Grafico, Indicador, tel
 from repositories import frota_repo as repo
 from repositories import motoristas_repo, operacoes_repo
 from services import frota_service as svc
+from config.settings import APP_EMPRESA
 
 CAMPOS = [
     Campo("data", "Data", "data"),
@@ -65,7 +66,7 @@ def _gestao(usuario: dict) -> None:
                       "ao_clicar": (lambda rid=rid: _abrir(sel_k, rid))})
     if len(revs) > 1:
         r = svc.resumo(todas)
-        cards.append({"titulo": "🌐 Grupo Lima", "valor": f"{r['total']} placa(s)", "icone": "",
+        cards.append({"titulo": f"🌐 {APP_EMPRESA}", "valor": f"{r['total']} placa(s)", "icone": "",
                       "detalhe": f"{len(revs)} revendas · 🔑 {r['alugadas']} alugadas · {r['proprias']} sem aluguel",
                       "status": "info", "selo": "aberta" if st.session_state.get(sel_k) == "todas" else None,
                       "ver": "abrir gestão", "ao_clicar": lambda: _abrir(sel_k, "todas")})
@@ -77,7 +78,7 @@ def _gestao(usuario: dict) -> None:
             st.info("Cadastre as placas em **⚙️ Cadastros › 🚚 Cadastro de Placas**.")
         return
     df = todas if sel == "todas" else todas[todas["operacao_id"] == sel]
-    nome = "Grupo Lima" if sel == "todas" else revs.get(sel, "")
+    nome = APP_EMPRESA if sel == "todas" else revs.get(sel, "")
     _abertura(nome, df)
 
 

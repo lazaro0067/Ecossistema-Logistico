@@ -553,8 +553,24 @@ def _aba_backup() -> None:
                        "seu usuário mudou.")
 
 
+def _plano_info() -> None:
+    """Empresa, plano e uso dos limites desta instância (configurados nos Secrets)."""
+    from config import plano
+    from config.settings import MODULOS
+    from repositories import operacoes_repo, usuarios_repo
+
+    usu = len([u for u in usuarios_repo.listar(apenas_ativos=True) if u.get("perfil") != "Motorista"])
+    rev = len([o for o in operacoes_repo.listar(apenas_ativas=True) if not operacoes_repo.e_consolidada(o["id"])])
+    lu, lr = plano.limite_usuarios(), plano.limite_revendas()
+    lib = plano.modulos_liberados()
+    mods = "todos" if lib is None else ", ".join(MODULOS[m]["rotulo"] for m in MODULOS if m in lib)
+    st.caption(f"🏢 **{plano.empresa()}** · plano **{plano.rotulo()}** · usuários {usu}"
+               + (f"/{lu}" if lu else "") + f" · revendas {rev}" + (f"/{lr}" if lr else "") + f" · módulos: {mods}")
+
+
 def render(usuario: dict, operacao_id: int | None) -> None:
     ui.cabecalho("Gestão de Acessos", "Usuários, senhas, permissões por pasta e operações", "🔑")
+    _plano_info()
     a1, a2, a4, a5, a3 = st.tabs(["👤 Usuários & Permissões", "🏢 Operações", "🔗 Links do Portal Comercial",
                                   "💾 Backup", "📦 Importar sistema antigo"])
     with a1:

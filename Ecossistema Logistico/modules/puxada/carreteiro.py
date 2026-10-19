@@ -17,6 +17,7 @@ from modules.componentes.geolocalizacao import localizacao, ponto
 from repositories import carreteiro_repo as repo
 from services import carreteiro_service as svc
 from services.erros import RegraNegocioError
+from config.settings import APP_EMPRESA
 
 FASES = {  # etapa já feita -> (onde está, status de cor)
     "inicio": ("Indo para a cervejaria", "info"),
@@ -342,7 +343,7 @@ def _acessos(operacao_id: int) -> None:
     nova = st.session_state.pop("car_senha_nova", None)
     if nova:
         tel = next((r["telefone"] for r in df.to_dict("records") if r["nome"] == nova["nome"]), None)
-        msg = (f"Olá, {nova['nome'].split()[0]}! Seu acesso ao App Carreteiro do Grupo Lima:\n\n"
+        msg = (f"Olá, {nova['nome'].split()[0]}! Seu acesso ao App Carreteiro do {APP_EMPRESA}:\n\n"
                f"🔗 {link}\n👤 Login: {nova['login']}\n🔑 Senha provisória: {nova['senha']}\n\n"
                "No primeiro acesso você cria a sua senha. Dica: no celular, use “Adicionar à tela inicial”.")
         st.success(f"Acesso de **{nova['nome']}** pronto. A senha aparece só agora — envie ao motorista:")
@@ -399,7 +400,7 @@ def _acessos(operacao_id: int) -> None:
         ativo = sel["situacao"] == "Ativo"
         if b2.button("🔒 Bloquear" if ativo else "🔓 Desbloquear", key="car_ac_bloq"):
             ui.acao(svc.bloquear_acesso, mid2, not ativo, sucesso="Acesso bloqueado." if ativo else "Acesso liberado.")
-        msg = (f"Olá, {sel['nome'].split()[0]}! Link do App Carreteiro do Grupo Lima:\n{link}\n\n"
+        msg = (f"Olá, {sel['nome'].split()[0]}! Link do App Carreteiro do {APP_EMPRESA}:\n{link}\n\n"
                f"Login: {sel['acesso']} (use a senha que você criou).")
         st.link_button(f"📲 Mandar o link para {sel['nome'].split()[0]} pelo WhatsApp",
                        link_whatsapp(msg, sel.get("telefone")), **ui.LARGURA)
@@ -472,7 +473,7 @@ def _painel_link() -> None:
     with st.expander("📲 Link do App Carreteiro — copiar ou enviar pelo WhatsApp", expanded=False):
         st.caption("O mesmo link para os motoristas das três operações. Toque no ícone ⧉ à direita para copiar.")
         st.code(link, language=None)
-        msg = (f"🚛 App Carreteiro — Grupo Lima\nRegistre cada etapa da sua viagem por aqui:\n{link}\n\n"
+        msg = (f"🚛 App Carreteiro — {APP_EMPRESA}\nRegistre cada etapa da sua viagem por aqui:\n{link}\n\n"
                "Entre com o seu CPF/celular e a senha que a Puxada te passou.")
         c1, c2 = st.columns(2)
         c1.link_button("📲 Enviar pelo WhatsApp", link_whatsapp(msg), type="primary", **ui.LARGURA)

@@ -80,6 +80,10 @@ _ABAS_IRMAS = {"armazem.pedidos": "armazem.patio",
 
 def pode_acessar_aba(usuario: dict, modulo: str, aba: str) -> bool:
     """Acesso à pasta inteira ("puxada") ou à subpasta ("puxada.aprovacoes")."""
+    from config.plano import modulo_liberado
+
+    if not modulo_liberado(modulo):
+        return False
     p = _perms(usuario)
     chave = f"{modulo}.{aba}"
     return e_master(usuario) or modulo in p or chave in p or _ABAS_IRMAS.get(chave) in p
@@ -92,6 +96,10 @@ def abas_permitidas(usuario: dict, modulo: str) -> list[str]:
 
 
 def pode_acessar_modulo(usuario: dict, modulo: str) -> bool:
+    from config.plano import modulo_liberado
+
+    if not modulo_liberado(modulo):  # fora do plano da empresa: ninguém vê, nem o Master
+        return False
     p = _perms(usuario)
     return e_master(usuario) or modulo in p or any(x.startswith(modulo + ".") for x in p)
 

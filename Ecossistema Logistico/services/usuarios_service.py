@@ -43,6 +43,18 @@ def validar_email(email: str) -> str:
     return email
 
 
+def _checar_limite_usuarios() -> None:
+    from config import plano
+
+    lim = plano.limite_usuarios()
+    if lim is None:
+        return
+    ativos = [u for u in usuarios_repo.listar(apenas_ativos=True) if u.get("perfil") != "Motorista"]
+    if len(ativos) >= lim:
+        raise RegraNegocioError(f"O plano {plano.rotulo()} permite {lim} usuários ativos — já são {len(ativos)}. "
+                                "Desative um usuário ou fale com o suporte para ampliar o plano.")
+
+
 def salvar_usuario(*, id: int | None, nome: str, senha: str, email: str, cargo: str,
                    perfil: str, e_aprovador: bool, alcada: float, ativo: bool, trocar_senha: bool,
                    permissoes: list[str], operacoes: list[int], enviar_email: bool = False) -> dict:
@@ -66,6 +78,8 @@ def salvar_usuario(*, id: int | None, nome: str, senha: str, email: str, cargo: 
         trocar_senha = True
     if senha:
         _checar_senha(senha)
+    if not id and ativo:
+        _checar_limite_usuarios()
     if e_aprovador and alcada <= 0:
         raise RegraNegocioError("Informe a alçada (R$) do aprovador.")
     if perfil != "Master" and not permissoes:

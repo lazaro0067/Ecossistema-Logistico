@@ -14,6 +14,7 @@ from repositories import carreteiro_repo as repo
 from services import carreteiro_service as svc
 from services import usuarios_service
 from services.erros import RegraNegocioError
+from config.settings import APP_EMPRESA
 
 VERDE, AZUL, LARANJA = "#22a06b", "#2f6fe0", "#f4845f"
 # azul da marca Lima (cor da carreta): TEAL = destaque, TEAL_ESC = escuro, TINTA = fundo mais escuro
@@ -271,7 +272,7 @@ def tela_login() -> None:
     """Login do link exclusivo dos motoristas (CPF, celular ou e-mail)."""
     from core.auth import autenticar
 
-    _topo_login("App Carreteiro · Grupo Lima")
+    _topo_login(f"App Carreteiro · {APP_EMPRESA}")
     if not st.session_state.get("car_login_aberto"):
         st.markdown('<div class="car-login-corpo"><p>Registre cada etapa da sua viagem, agende a descarga e '
                     'acompanhe suas variáveis.</p></div>', unsafe_allow_html=True)
@@ -287,7 +288,7 @@ def tela_login() -> None:
             with st.popover("Primeiro acesso / senha", **ui.LARGURA):
                 st.markdown("O acesso é criado pela **equipe da Puxada** da sua unidade. Peça o seu login "
                             "(CPF ou celular) e a senha provisória — no primeiro acesso você cria a sua senha.")
-        st.markdown('<div class="car-login-rod">Grupo Lima</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="car-login-rod">{APP_EMPRESA}</div>', unsafe_allow_html=True)
         return
     st.markdown('<div class="car-login-corpo"><p>Entre com o seu CPF ou celular e a senha.</p></div>',
                 unsafe_allow_html=True)

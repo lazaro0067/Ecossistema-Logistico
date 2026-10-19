@@ -1,0 +1,26 @@
+# Fly.io — o mesmo arquivo serve para todas as empresas: fly deploy -a <app-da-empresa>.
+# Região gru = São Paulo, ao lado do Supabase (sa-east-1): menos espera em cada consulta ao banco.
+app = "eco-grupolima"
+primary_region = "gru"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 8501
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "40s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/_stcore/health"
+
+[[vm]]
+  memory = "2gb"
+  cpu_kind = "shared"
+  cpus = 2

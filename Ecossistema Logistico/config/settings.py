@@ -24,7 +24,9 @@ ANEXOS_DIR.mkdir(exist_ok=True)
 APP_TITULO = "Ecossistema Logístico"
 APP_SUBTITULO = "Revenda Ambev"
 APP_ICONE = "🌐"
-APP_EMPRESA = "Grupo Lima"
+from config.plano import empresa as _empresa  # noqa: E402 — nome da empresa desta instância (Secrets)
+
+APP_EMPRESA = _empresa()
 
 # --- Módulos (pastas) e abas (subpastas) ---------------------------------
 # A permissão de cada usuário é dada por pasta inteira ("puxada") ou por aba
