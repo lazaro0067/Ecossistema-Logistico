@@ -299,9 +299,10 @@ def _anual(operacao_id: int, filtro: dict, chave: str) -> None:
 
 
 def _modais(df: pd.DataFrame, chave: str) -> None:
-    base = df[df["veiculo"].isin(list(MODAIS))]
+    base = df[df["veiculo"].isin(svc.ordem_modais(df))]
     if base.empty:
-        st.info("Sem viagens com tipo de veículo (VUC, Toco, Truck, Carreta) no período.")
+        st.info("Sem viagens com tipo de veículo com capacidade conhecida no período. Informe a capacidade dos tipos "
+                "(Van, Fiorino…) em Frota › 🏷️ Modelos & Tipos.")
         return
     lim = st.slider("Ocupação máxima aceitável no modal ideal (%)", 80, 110, 100, 5, key=f"{chave}_lim",
                     help="A viagem vai para o menor veículo em que caixas E peso cabem até este limite.")
@@ -340,8 +341,13 @@ def _modais(df: pd.DataFrame, chave: str) -> None:
         "Diferença": [f"{int(s_ - a):+d}" for s_, a in zip(p["sugerido"], p["atual_max"])],
     })
     ui.tabela(sug, baixar="previsao_modais")
-    st.caption("Capacidade: mediana real da frota (caixas ÷ % ocupação do relatório) — ou padrão do sistema quando "
-               "não há viagens daquele tipo. Diferença = frota sugerida − pico de uso de hoje.")
+    st.caption("Capacidade: a do cadastro da Frota (🏷️ Modelos & Tipos) · sem ela, a mediana real da frota (caixas ÷ "
+               "% ocupação do relatório) · sem viagens, o padrão do sistema (VUC, Toco, Truck, Carreta). Tipo sem "
+               "capacidade (ex.: Van, Fiorino) entra quando a capacidade é informada no cadastro ou quando roda 5+ "
+               "viagens com ocupação. Diferença = frota sugerida − pico de uso de hoje.")
+    sem_cap = sorted(set(df["veiculo"].dropna()) - set(m["ordem"]) - {"Não informado"})
+    if sem_cap:
+        st.caption(f"⚠️ Fora da previsão (sem capacidade): {', '.join(sem_cap)} — informe em Frota › 🏷️ Modelos & Tipos.")
     for linha in _leitura(m, base):
         st.markdown(f"- {linha}")
 
@@ -370,14 +376,23 @@ def _leitura(m: dict, base: pd.DataFrame) -> list[str]:
     """Frases de leitura automática da previsão."""
     out = []
     mat, p = m["matriz"], m["previsao"].set_index("modal")
-    for de, para in (("Truck", "Toco"), ("Toco", "VUC"), ("Truck", "VUC")):
-        if de in mat.index and para in mat.columns and mat.at[de, para]:
-            out.append(f"**{mat.at[de, para]}** viagens de **{de}** caberiam em **{para}** "
-                       f"({_p(mat.at[de, para] / max(mat.loc[de].sum(), 1) * 100)} das viagens de {de}).")
-    for de, para in (("VUC", "Toco"), ("Toco", "Truck"), ("Truck", "Carreta")):
-        if de in mat.index and para in mat.columns and mat.at[de, para]:
-            out.append(f"⚠️ **{mat.at[de, para]}** viagens de **{de}** passaram da capacidade — o ideal seria "
-                       f"**{para}** (ou dividir a carga).")
+    pos = {t: i for i, t in enumerate(m["ordem"])}
+    menores, maiores = [], []
+    for de in mat.index:
+        if de not in pos:
+            continue
+        for para in mat.columns:
+            n = int(mat.at[de, para])
+            if n and para in pos and pos[para] < pos[de]:
+                menores.append((n, de, para))
+            elif n and para in pos and pos[para] > pos[de]:
+                maiores.append((n, de, para))
+    for n, de, para in sorted(menores, reverse=True)[:5]:
+        out.append(f"**{n}** viagens de **{de}** caberiam em **{para}** "
+                   f"({_p(n / max(mat.loc[de].sum(), 1) * 100)} das viagens de {de}).")
+    for n, de, para in sorted(maiores, reverse=True)[:3]:
+        out.append(f"⚠️ **{n}** viagens de **{de}** passaram da capacidade — o ideal seria **{para}** "
+                   "(ou dividir a carga).")
     for t, r in p.iterrows():
         dif = r["sugerido"] - r["atual_max"]
         if r["viagens_atual"] or r["viagens_ideal"]:
@@ -396,8 +411,11 @@ def _leitura(m: dict, base: pd.DataFrame) -> list[str]:
 
 
 def ir_relatorios(chave: str) -> None:
-    if st.button("📥 Abrir Relatórios", key=f"ir_rel_{chave}", type="primary"):
-        st.session_state["nav_corporativo_grupo"] = st.session_state["nav_corporativo_grupo__ultima"] = "📥 Relatórios"
+    """Leva para 📥 Atualizar relatórios (onde sobem o PCD e a 03.02.37)."""
+    if st.button("📥 Atualizar relatórios", key=f"ir_rel_{chave}", type="primary"):
+        from core import session
+
+        session.ir_para("bases")
         st.rerun()
 
 
@@ -410,7 +428,7 @@ def render(usuario: dict, operacao_id: int) -> None:
     operacao_id = ui.visao_acompanhamento(usuario, operacao_id, "prod_entrega")
     meses = svc.meses_disponiveis(operacao_id)
     if not meses:
-        st.info("Ainda não há dados de entrega para esta revenda. Suba o PCD e a 03.02.37 vendas em 📥 Relatórios.")
+        st.info("Ainda não há dados de entrega para esta revenda. Suba o PCD e a 03.02.37 vendas em 📥 Atualizar relatórios.")
         ir_relatorios("pe")
         return
     telas = list(_TELAS)

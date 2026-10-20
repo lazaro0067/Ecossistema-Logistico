@@ -84,7 +84,7 @@ def tipos_df() -> pd.DataFrame:
     from database.connection import query_df
 
     _garantir_cadastros()
-    return query_df("""SELECT t.id, t.nome, t.ativo,
+    return query_df("""SELECT t.id, t.nome, t.ativo, t.cap_cx, t.cap_kg,
                               (SELECT COUNT(*) FROM frota_placas p WHERE p.tipo = t.nome) AS placas,
                               (SELECT COUNT(*) FROM frota_modelos m WHERE m.tipo = t.nome) AS modelos
                        FROM frota_tipos t ORDER BY t.nome""")
@@ -107,14 +107,25 @@ def salvar_tipo(tid: int | None, d: dict) -> int:
     if outro and int(outro["id"]) != int(tid or 0):
         raise RegraNegocioError(f"O tipo {nome} já existe.")
     ativo = 0 if d.get("ativo") in (0, "0", False, "Não") else 1
+
+    def num(v):
+        try:
+            x = float(str(v).replace(",", ".")) if v not in (None, "") else None
+        except ValueError:
+            raise RegraNegocioError("Capacidade inválida.")
+        if x is not None and (x != x or x <= 0):
+            return None
+        return x
+    cx, kg = num(d.get("cap_cx")), num(d.get("cap_kg"))
     if tid:
         antes = query_one("SELECT nome FROM frota_tipos WHERE id = ?", (int(tid),))
-        execute("UPDATE frota_tipos SET nome = ?, ativo = ? WHERE id = ?", (nome, ativo, int(tid)))
+        execute("UPDATE frota_tipos SET nome = ?, ativo = ?, cap_cx = ?, cap_kg = ? WHERE id = ?",
+                (nome, ativo, cx, kg, int(tid)))
         if antes and antes["nome"] != nome:  # renomeou: leva junto placas e modelos
             execute("UPDATE frota_placas SET tipo = ? WHERE tipo = ?", (nome, antes["nome"]))
             execute("UPDATE frota_modelos SET tipo = ? WHERE tipo = ?", (nome, antes["nome"]))
         return int(tid)
-    return execute("INSERT INTO frota_tipos (nome, ativo) VALUES (?, ?)", (nome, ativo))
+    return execute("INSERT INTO frota_tipos (nome, ativo, cap_cx, cap_kg) VALUES (?, ?, ?, ?)", (nome, ativo, cx, kg))
 
 
 def excluir_tipo(tid: int) -> None:

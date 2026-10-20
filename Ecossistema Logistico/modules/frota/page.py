@@ -179,8 +179,11 @@ def _modelos_tipos(usuario: dict) -> None:
                "as placas que já usam.")
     tp = svc.tipos_df()
     tela(chave="fr_tipos", titulo="Tipos de veículo", icone="🚛", df=tp, por_linha=2,
-         descricao="Ex.: Truck, Toco, 3/4, VUC, Carreta…",
+         descricao="Ex.: Truck, Toco, 3/4, VUC, Van, Fiorino… A capacidade (caixas e kg) entra na Produtividade "
+                   "Entrega › previsão de modais (frota sugerida por tipo).",
          campos=[CampoCad("nome", "Tipo", obrigatorio=True),
+                 CampoCad("cap_cx", "Capacidade (caixas)", "inteiro"),
+                 CampoCad("cap_kg", "Capacidade (kg)", "inteiro"),
                  CampoCad("ativo", "Ativo?", "opcoes", True, {1: "Sim", 0: "Não"}, padrao=1)],
          colunas_extras=[("modelos", "Modelos"), ("placas", "Placas")], rotulo_registro=lambda r: r["nome"],
          salvar=svc.salvar_tipo, excluir=svc.excluir_tipo, aviso_vazio="Nenhum tipo cadastrado.")

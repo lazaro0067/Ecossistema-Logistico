@@ -6,6 +6,7 @@ os cliques para entrar no site e exportar o arquivo, gravados uma vez com `pytho
 Comandos (na pasta robo):
   python robo.py --senha promax          guarda a senha do site no cofre do Windows (nunca em arquivo)
   python robo.py --senha banco           guarda o DATABASE_URL do sistema no cofre do Windows
+  python robo.py --entrar powerbi        abre o site no navegador do robô para VOCÊ entrar (o login fica salvo)
   python robo.py --gravar vendas         abre o navegador gravando os cliques → vira a receita "vendas"
   python robo.py --testar vendas         roda só essa receita com o navegador aparecendo
   python robo.py                         roda todos os relatórios do config.toml (é o que o agendador chama)
@@ -32,6 +33,7 @@ APP = AQUI.parent
 sys.path.insert(0, str(APP))
 COFRE = "eco-robo"
 RECEITAS = AQUI / "receitas"
+PERFIL = AQUI / "perfil_navegador"  # o navegador do robô guarda aqui os logins (Microsoft/Power BI, Promax…)
 
 
 # --- configuração ------------------------------------------------------------------------------------------------
@@ -132,17 +134,17 @@ def baixar(rel: dict, cfg: dict, ver: bool = False) -> Path:
     pasta_dia.mkdir(parents=True, exist_ok=True)
     ctx = Ctx(cfg.get(site, {}), site, pasta_dia, rel["nome"])
     receita = carregar_receita(rel.get("receita", rel["nome"]))
+    mostrar = ver or bool(rel.get("mostrar", cfg.get("mostrar", False)))
     with sync_playwright() as p:
-        canal = navegador(cfg, site, rel)
-        browser = p.chromium.launch(headless=not ver, channel=canal)
-        context = browser.new_context(accept_downloads=True, locale="pt-BR")
+        context = p.chromium.launch_persistent_context(
+            str(PERFIL), channel=navegador(cfg, site, rel), headless=not mostrar, accept_downloads=True,
+            locale="pt-BR", viewport={"width": 1440, "height": 900})
         context.set_default_timeout(int(rel.get("espera_seg", cfg.get("espera_seg", 120))) * 1000)
         page = context.new_page()
         try:
             r = receita.baixar(page, ctx)
         finally:
             context.close()
-            browser.close()
     arq = Path(r) if r else ctx.arquivo
     if not arq or not arq.exists():
         raise RuntimeError("A receita terminou sem baixar arquivo.")
@@ -158,6 +160,31 @@ def baixar(page, ctx):
 '''
 
 
+def entrar(cfg: dict, site: str) -> None:
+    """Abre o navegador do robô no site para VOCÊ entrar (login, código no celular…). O login fica salvo no perfil
+    do robô e ele reaproveita nas próximas vezes. Feche o navegador quando terminar."""
+    from playwright.sync_api import sync_playwright
+
+    url = cfg.get(site, {}).get("url")
+    if not url:
+        sys.exit(f"Falta a url do site [{site}] no config.toml.")
+    print("Entre no site normalmente (marque 'manter conectado' se aparecer). Depois feche o navegador.")
+    with sync_playwright() as p:
+        context = p.chromium.launch_persistent_context(str(PERFIL), channel=navegador(cfg, site), headless=False,
+                                                       locale="pt-BR", viewport={"width": 1440, "height": 900})
+        page = context.pages[0] if context.pages else context.new_page()
+        page.goto(url)
+        try:
+            page.wait_for_event("close", timeout=0)
+        except Exception:  # noqa: BLE001 — navegador fechado
+            pass
+        try:
+            context.close()
+        except Exception:  # noqa: BLE001
+            pass
+    print("✅ Login guardado no perfil do robô.")
+
+
 def gravar(nome: str, cfg: dict, site: str) -> None:
     url = cfg.get(site, {}).get("url")
     if not url:
@@ -168,7 +195,8 @@ def gravar(nome: str, cfg: dict, site: str) -> None:
     print("Use as datas de HOJE / ontem / 1º do mês que o robô troca sozinho pelas datas do dia em que rodar.")
     print("Quando o arquivo terminar de baixar, feche o navegador.")
     canal = navegador(cfg, site)
-    cmd = [sys.executable, "-m", "playwright", "codegen", "--target", "python", "-o", str(bruto)]
+    cmd = [sys.executable, "-m", "playwright", "codegen", "--target", "python", "-o", str(bruto),
+           "--user-data-dir", str(PERFIL), "--viewport-size", "1440, 900"]
     if canal:
         cmd += ["--channel", canal]
     subprocess.run(cmd + [url], check=False)
@@ -183,9 +211,9 @@ def converter(nome: str, bruto: Path, cfg: dict, site: str) -> None:
     txt = bruto.read_text(encoding="utf-8")
     linhas = txt.splitlines()
     try:
-        ini = next(i for i, l in enumerate(linhas) if "new_page()" in l) + 1
+        ini = next(i for i, l in enumerate(linhas) if re.match(r"\s*page\s*=\s*context\.", l)) + 1
     except StopIteration:
-        sys.exit("Gravação sem 'new_page()' — grave de novo.")
+        sys.exit("Gravação sem página — grave de novo.")
     fim = next((i for i, l in enumerate(linhas) if l.strip().startswith("# ----") or "context.close()" in l), len(linhas))
     corpo = [l[4:] if l.startswith("    ") else l for l in linhas[ini:fim] if l.strip()]
     texto = "\n".join(corpo)
@@ -288,6 +316,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Robô de relatórios do Ecossistema Logístico")
     ap.add_argument("--senha", help="guarda no cofre do Windows: o nome do site (ex.: promax) ou 'banco'")
     ap.add_argument("--gravar", help="grava a receita de um relatório")
+    ap.add_argument("--entrar", help="abre o site no navegador do robô para você fazer o login (fica salvo)")
     ap.add_argument("--site", default="promax", help="site da gravação (seção do config.toml), padrão promax")
     ap.add_argument("--testar", help="roda uma receita com o navegador aparecendo")
     ap.add_argument("--so", help="roda só estes relatórios (separados por vírgula)")
@@ -297,6 +326,9 @@ def main() -> None:
         cofre_gravar(a.senha)
         return
     cfg = config()
+    if a.entrar:
+        entrar(cfg, a.entrar)
+        return
     if a.gravar:
         gravar(a.gravar, cfg, a.site)
         return

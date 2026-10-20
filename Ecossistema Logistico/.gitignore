@@ -9,3 +9,4 @@ robo/config.toml
 robo/.venv/
 robo/logs/
 robo/receitas/_gravado_*
+robo/perfil_navegador/

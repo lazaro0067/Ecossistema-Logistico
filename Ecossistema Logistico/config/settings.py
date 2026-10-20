@@ -53,6 +53,7 @@ MODULOS = {
         "disp_motoristas": "👤 Disponibilidade de Motoristas",
         "manutencao": "🔧 Agendamento de Manutenção",
         "farol": "🚦 Farol de Produtividade",
+        "produtividade": "🚚 Produtividade & Frota por Modal",
     }},
     "ressuprimento": {"rotulo": "Ressuprimento", "icone": "🔄", "abas": {
         "estoque": "📊 Gestão de Estoque",
@@ -92,6 +93,7 @@ MODULOS = {
     }},
     "distribuicao": {"rotulo": "Distribuição (Entrega)", "icone": "🚛", "abas": {
         "book": "📘 Book DPO Entrega",
+        "produtividade": "🚚 Produtividade & Frota por Modal",
         **_ABAS_REGISTRO,
     }},
     "frota": {"rotulo": "Frota & Manutenção", "icone": "🔧", "abas": {
@@ -164,7 +166,7 @@ GRUPOS_ABAS = {
     },
     "puxada": {
         "🚛 Frota própria": ["carreteiro", "disponibilidade", "disp_motoristas", "pedidos_dia", "manutencao", "farol",
-                            "remuneracao", "tmv_tma"],
+                            "remuneracao", "tmv_tma", "produtividade"],
         "🚚 Frete spot": ["cotacao", "aprovacoes", "encerramento", "painel", "obz"],
         "🏭 Operação": ["descarga", "vinculos", "pedidos", "viagens"],
         "⚙️ Cadastros": ["cadastros"],

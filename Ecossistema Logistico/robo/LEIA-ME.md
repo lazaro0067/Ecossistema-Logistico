@@ -16,6 +16,14 @@ fez aparece no sistema em **📥 Atualizar relatórios › 🤖 Robô de relató
    robo.bat --senha banco      (o DATABASE_URL do sistema — o mesmo dos Secrets)
    ```
 
+## Sites com login da Microsoft (Power BI) ou com código no celular
+O robô tem um navegador próprio (Edge) que **guarda o login**. Entre uma vez você mesmo:
+```
+robo.bat --entrar powerbi
+```
+Faça o login (marque "Manter conectado"), espere abrir o relatório e feche o navegador. A partir daí o robô entra
+sozinho enquanto a Microsoft mantiver o login (normalmente semanas). Se um dia ele pedir login de novo, repita.
+
 ## Ensinar cada relatório (uma vez por relatório)
 ```
 robo.bat --gravar vendas

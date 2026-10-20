@@ -23,7 +23,14 @@ ABAS = {
     "disp_motoristas": disp_motoristas.render,
     "manutencao": manutencao.render,
     "farol": farol.render,
+    "produtividade": lambda usuario, operacao_id: _produtividade(usuario, operacao_id),
 }
+
+
+def _produtividade(usuario: dict, operacao_id: int) -> None:
+    from modules.corporativo import prod_entrega
+
+    prod_entrega.render(usuario, operacao_id)
 
 
 def render(usuario: dict, operacao_id: int) -> None:

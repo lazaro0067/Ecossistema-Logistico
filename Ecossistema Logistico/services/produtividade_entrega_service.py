@@ -353,50 +353,90 @@ def mensal(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # --- Previsão de modais ------------------------------------------------------------------------------
+def _cap_cadastro() -> dict:
+    """Capacidade informada no cadastro da Frota (🏷️ Modelos & Tipos) — tipo → (caixas, kg)."""
+    try:
+        from services import frota_service
+
+        t = frota_service.tipos_df()
+    except Exception:  # noqa: BLE001
+        return {}
+    out = {}
+    for n, cx, kg in zip(t["nome"], t.get("cap_cx", pd.Series(dtype=float)), t.get("cap_kg", pd.Series(dtype=float))):
+        cx, kg = pd.to_numeric(cx, errors="coerce"), pd.to_numeric(kg, errors="coerce")
+        if (pd.notna(cx) and cx > 0) or (pd.notna(kg) and kg > 0):
+            out[str(n)] = (float(cx) if pd.notna(cx) and cx > 0 else None, float(kg) if pd.notna(kg) and kg > 0 else None)
+    return out
+
+
 def capacidades(df: pd.DataFrame) -> pd.DataFrame:
-    """Capacidade de cada modal: mediana real da frota (caixas ÷ % ocupação), ou o padrão do sistema."""
+    """Capacidade de cada modal, do menor para o maior. Entram: os modais padrão (VUC, Toco, Truck, Carreta), os
+    tipos com capacidade no cadastro da Frota (Van, Fiorino…) e os tipos que rodaram ≥ 5 viagens com ocupação.
+    Ordem de origem: cadastro da Frota → mediana real da frota (caixas ÷ % ocupação) → padrão do sistema."""
+    cad = _cap_cadastro()
+    tipos = list(MODAIS) + [t for t in cad if t not in MODAIS]
+    if not df.empty:
+        ok = df[(df["ocup_cx"] > 0) & df["caixas"].notna()]
+        for t, n in ok["veiculo"].value_counts().items():
+            if n >= 5 and t not in tipos and t not in ("Não informado", ""):
+                tipos.append(t)
     linhas = []
-    for t, (cx_p, kg_p) in MODAIS.items():
+    for t in tipos:
         s = df[df["veiculo"] == t] if not df.empty else df
         cx = (s["caixas"] / s["ocup_cx"] * 100).replace([float("inf")], pd.NA).dropna() if not s.empty else []
         kg = (s["peso"] / s["ocup_peso"] * 100).replace([float("inf")], pd.NA).dropna() if not s.empty else []
-        linhas.append({"modal": t, "cap_cx": float(pd.Series(cx).median()) if len(cx) >= 5 else float(cx_p),
-                       "cap_kg": float(pd.Series(kg).median()) if len(kg) >= 5 else float(kg_p),
-                       "origem": "frota real" if len(cx) >= 5 else "padrão"})
-    return pd.DataFrame(linhas)
+        real_cx = float(pd.Series(cx).median()) if len(cx) >= 5 else None
+        real_kg = float(pd.Series(kg).median()) if len(kg) >= 5 else None
+        pad_cx, pad_kg = MODAIS.get(t, (None, None))
+        c_cx, c_kg = cad.get(t, (None, None))
+        cap_cx = c_cx or real_cx or pad_cx
+        cap_kg = c_kg or real_kg or pad_kg
+        if not cap_cx and not cap_kg:
+            continue
+        origem = "cadastro" if (c_cx or c_kg) else "frota real" if (real_cx or real_kg) else "padrão"
+        linhas.append({"modal": t, "cap_cx": float(cap_cx or 10 ** 9), "cap_kg": float(cap_kg or 10 ** 9),
+                       "origem": origem})
+    out = pd.DataFrame(linhas, columns=["modal", "cap_cx", "cap_kg", "origem"])
+    return out.sort_values(["cap_kg", "cap_cx"]).reset_index(drop=True)
+
+
+def ordem_modais(df: pd.DataFrame) -> list[str]:
+    return capacidades(df)["modal"].tolist()
 
 
 def modais(df: pd.DataFrame, limite: float = 100.0) -> dict:
     """Para cada viagem, o menor modal em que a carga (caixas e peso) cabe até `limite`% da capacidade."""
     if df.empty:
         return {}
-    cap = capacidades(df).set_index("modal")
+    capdf = capacidades(df)
+    ORDEM = capdf["modal"].tolist()
+    cap = capdf.set_index("modal")
     lim = limite / 100
 
     def ideal(r) -> str:
-        for t in ORDEM_MODAIS:
+        for t in ORDEM:
             if (pd.isna(r["caixas"]) or r["caixas"] <= cap.at[t, "cap_cx"] * lim) and \
                (pd.isna(r["peso"]) or r["peso"] <= cap.at[t, "cap_kg"] * lim):
                 return t
-        return ORDEM_MODAIS[-1]
+        return ORDEM[-1]
 
     d = df.copy()
     d["ideal"] = d.apply(ideal, axis=1)
-    pos = {t: i for i, t in enumerate(ORDEM_MODAIS)}
+    pos = {t: i for i, t in enumerate(ORDEM)}
     # o veículo que rodou tem a própria capacidade (há Toco maior que o padrão): se a carga coube nele
     # (ocupação ≤ limite), ele não "precisava de maior"
-    coube = d["ocup_efetiva"].le(limite) & d["veiculo"].isin(ORDEM_MODAIS)
+    coube = d["ocup_efetiva"].le(limite) & d["veiculo"].isin(ORDEM)
     maior = d.apply(lambda r: r["veiculo"] in pos and pos[r["ideal"]] > pos[r["veiculo"]], axis=1)
     d.loc[coube & maior, "ideal"] = d.loc[coube & maior, "veiculo"]
     d["ajuste"] = [("—" if a not in pos else "✅ Modal certo" if pos[a] == pos[i] else
                     "⬇️ Cabe em menor" if pos[i] < pos[a] else "⬆️ Precisa maior")
                    for a, i in zip(d["veiculo"], d["ideal"])]
-    matriz = pd.crosstab(d["veiculo"], d["ideal"]).reindex(columns=ORDEM_MODAIS, fill_value=0)
+    matriz = pd.crosstab(d["veiculo"], d["ideal"]).reindex(columns=ORDEM, fill_value=0)
     por_dia_ideal = d.groupby([d["data"].dt.date, "ideal"]).size().unstack(fill_value=0) \
-        .reindex(columns=ORDEM_MODAIS, fill_value=0)
+        .reindex(columns=ORDEM, fill_value=0)
     por_dia_atual = d.groupby([d["data"].dt.date, "veiculo"]).size().unstack(fill_value=0)
     prev = []
-    for t in ORDEM_MODAIS:
+    for t in ORDEM:
         s_i = por_dia_ideal[t] if t in por_dia_ideal else pd.Series([0])
         s_a = por_dia_atual[t] if t in por_dia_atual else pd.Series([0] * max(len(por_dia_ideal), 1))
         prev.append({"modal": t, "cap_cx": cap.at[t, "cap_cx"], "cap_kg": cap.at[t, "cap_kg"],
@@ -408,12 +448,12 @@ def modais(df: pd.DataFrame, limite: float = 100.0) -> dict:
     prev = pd.DataFrame(prev)
     prev["sugerido"] = prev["ideal_p80"].apply(lambda v: int(-(-v // 1)))  # arredonda para cima
     semana = d.assign(dow=d["data"].dt.dayofweek).groupby(["dow", "ideal"]).size().unstack(fill_value=0) \
-        .reindex(columns=ORDEM_MODAIS, fill_value=0)
+        .reindex(columns=ORDEM, fill_value=0)
     n_dias = d.assign(dow=d["data"].dt.dayofweek).groupby("dow")["data"].nunique()
     semana = semana.div(n_dias, axis=0).round(1)
-    classif = pd.crosstab(d["classificacao"], d["ideal"]).reindex(columns=ORDEM_MODAIS, fill_value=0)
+    classif = pd.crosstab(d["classificacao"], d["ideal"]).reindex(columns=ORDEM, fill_value=0)
     return {"viagens": d, "matriz": matriz, "previsao": prev, "semana": semana, "classificacao": classif,
-            "capacidades": cap.reset_index(),
+            "capacidades": cap.reset_index(), "ordem": ORDEM,
             "certo": int((d["ajuste"] == "✅ Modal certo").sum()), "menor": int((d["ajuste"] == "⬇️ Cabe em menor").sum()),
             "maior": int((d["ajuste"] == "⬆️ Precisa maior").sum()), "total": len(d)}
 

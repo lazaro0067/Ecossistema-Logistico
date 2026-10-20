@@ -79,17 +79,40 @@ def _card(titulo: str, ultima: str, texto: str, chave: str, tipos: list[str], ac
                 st.rerun()
 
 
+def seletor_revenda(usuario: dict, operacao_id: int | None, key: str) -> int | None:
+    """Revenda que vai receber os arquivos — escolhida aqui, sem trocar a revenda do menu."""
+    from core.auth import operacoes_permitidas
+
+    ops = [o for o in operacoes_permitidas(usuario) if not operacoes_repo.e_consolidada(o["id"])]
+    if not ops:
+        st.info("Nenhuma revenda disponível para subir relatórios.")
+        return None
+    ids = [o["id"] for o in ops]
+    nomes = {o["id"]: o["nome"] for o in ops}
+    if st.session_state.get(key) not in ids:
+        st.session_state[key] = operacao_id if operacao_id in ids else ids[0]
+    c1, _ = st.columns([1.3, 2])
+    return c1.selectbox("🏢 Revenda que recebe os arquivos", ids, key=key, format_func=nomes.get,
+                        help="Escolha aqui para quem é o relatório — não precisa trocar a revenda no menu.")
+
+
 def render(usuario: dict, operacao_id: int) -> None:
-    tema.secao("📥 Relatórios da Gestão Corporativa",
-               "Os dados vão se acumulando mês a mês: subir de novo um mês substitui o mês inteiro (o que já existia "
-               "naquele mês sai e entra o arquivo novo). Aceita " + arquivos.FORMATOS_TXT + ".")
-    if operacoes_repo.e_consolidada(operacao_id):
-        st.info("Escolha uma revenda no menu (não a visão consolidada) para subir os relatórios.")
-        return
+    """Gestão Corporativa › 📥 Relatórios — só as bases que fecham o DRE (as demais ficam em 📥 Atualizar relatórios)."""
+    tema.secao("📥 Bases do DRE",
+               "Vendas e compras (03.02.37), saldo de estoque (02.05.02) e o financeiro da contabilidade. Subir de novo "
+               "um mês substitui o mês inteiro. O PCD e as bases da operação ficam em 📥 Atualizar relatórios.")
+    op = seletor_revenda(usuario, operacao_id, "rel_corp_op")
+    if op:
+        cartoes(usuario, op, "dre")
+
+
+def cartoes(usuario: dict, operacao_id: int, grupo: str = "todos") -> None:
+    """grupo "dre" = 03.02.37 vendas e compra, operações, 02.05.02 e contabilidade · "todos" = + PCD."""
     nome_rev = (operacoes_repo.buscar(operacao_id) or {}).get("nome", "")
-    st.caption(f"🏢 Os relatórios serão gravados em **{nome_rev}** (o PCD reconhece a revenda pela coluna “Nome UNB”).")
+    st.caption(f"🏢 Os arquivos serão gravados em **{nome_rev}** (o PCD reconhece a revenda pela coluna “Nome UNB”).")
     ult = fs.ultimas(operacao_id)
     quem = usuario.get("nome", "")
+    sufixo = "" if grupo == "dre" else "_c"
 
     def pcd(arq, _prog=None):
         r = pe.importar_pcd(arq.getvalue(), arq.name, operacao_id, quem)
@@ -97,14 +120,14 @@ def render(usuario: dict, operacao_id: int) -> None:
 
     def vendas(arq, prog=None):
         r = pe.importar_notas(arq, arq.name, operacao_id, quem, prog)
-        msg = (f"03.02.37 vendas gravada: {ui.numero(r['itens'])} itens · {r['meses']} mês(es) · {r['mapas']} mapas · "
-               f"{ui.numero(r['hl'])} HL · {ui.moeda(r['valor'])} ({_d(r['de'])} a {_d(r['ate'])}).")
+        msg = (f"03.02.37 vendas gravada em {nome_rev}: {ui.numero(r['itens'])} itens · {r['meses']} mês(es) · "
+               f"{r['mapas']} mapas · {ui.numero(r['hl'])} HL · {ui.moeda(r['valor'])} ({_d(r['de'])} a {_d(r['ate'])}).")
         return msg + (f" {r['sem_fator']} produto(s) sem fator HL na 01.11." if r["sem_fator"] else "") + _ign(r)
 
     def compra(arq, prog=None):
         r = fs.importar_compra(arq, arq.name, operacao_id, quem, prog)
-        msg = (f"03.02.37 compra gravada: {ui.numero(r['itens'])} itens · {r['meses']} mês(es) · {ui.numero(r['hl'])} HL · "
-               f"{ui.moeda(r['valor'])} ({_d(r['de'])} a {_d(r['ate'])}).")
+        msg = (f"03.02.37 compra gravada em {nome_rev}: {ui.numero(r['itens'])} itens · {r['meses']} mês(es) · "
+               f"{ui.numero(r['hl'])} HL · {ui.moeda(r['valor'])} ({_d(r['de'])} a {_d(r['ate'])}).")
         return msg + (f" {r['sem_fator']} produto(s) sem fator HL na 01.11." if r["sem_fator"] else "") + _ign(r)
 
     def operacoes(arq, _prog=None):
@@ -112,31 +135,33 @@ def render(usuario: dict, operacao_id: int) -> None:
 
     c1, c2 = st.columns(2)
     with c1:
-        _card("1. Relatório de mapas (PCD)", _quando(ult["entregas_pcd"]),
-              "Uma linha por mapa: placa, veículo, entregas, caixas, % ocupação, peso, KM previsto. "
-              "→ 🚚 Produtividade Entrega.", "pcd", arquivos.FORMATOS, pcd, usuario)
-        _card("3. 03.02.37 compra", _quando(ult["notas_compra"]),
-              "Notas de entrada (o que foi investido em mercadoria). Coluna Z = total; HL = coluna T × fator HL "
-              "da 01.11. → 💰 Financeiro › 🛒 Compras de Mercadoria.", "compra", arquivos.FORMATOS, compra, usuario, varios=True)
-    with c2:
-        _card("2. 03.02.37 vendas", _quando(ult["entregas_notas"]),
-              "Notas de saída. Coluna Z = total faturado; C = operação (1 venda, 2 bonificação…); "
-              "HL = coluna T × fator HL da 01.11; AA = mapa. → 💵 Faturamento e 🚚 Produtividade Entrega.",
-              "vendas", arquivos.FORMATOS, vendas, usuario, varios=True)
-        _card("4. Relatório de operações", f"{ult['operacoes']} operações cadastradas",
+        _card("03.02.37 vendas", _quando(ult["entregas_notas"]),
+              "Notas de saída. Coluna Z = total faturado; C = operação (1 venda, 2 bonificação…); HL = coluna T × fator "
+              "HL da 01.11; AA = mapa. → 💵 Faturamento, 📑 DRE e 🚚 Produtividade Entrega.",
+              "vendas" + sufixo, arquivos.FORMATOS, vendas, usuario, varios=True)
+        _card("Relatório de operações", f"{ult['operacoes']} operações cadastradas",
               "Código; Tipo Movimento; Nome da Operação — dá nome às operações nos filtros e no ⚙️ Cadastro.",
-              "operacoes", arquivos.FORMATOS, operacoes, usuario)
-    _card_estoque(usuario, operacao_id)
-    _card_contab(usuario, operacao_id)
+              "operacoes" + sufixo, arquivos.FORMATOS, operacoes, usuario)
+    with c2:
+        _card("03.02.37 compra", _quando(ult["notas_compra"]),
+              "Notas de entrada (o que foi investido em mercadoria). Coluna Z = total; HL = coluna T × fator HL da "
+              "01.11. → 🛒 Compras, 📑 DRE e Remuneração Ambev.", "compra" + sufixo, arquivos.FORMATOS, compra,
+              usuario, varios=True)
+        if grupo != "dre":
+            _card("Relatório de mapas (PCD)", _quando(ult["entregas_pcd"]),
+                  "Uma linha por mapa: placa, veículo, entregas, caixas, % ocupação, peso, KM previsto. "
+                  "→ 🚚 Produtividade Entrega e Frota por modal.", "pcd" + sufixo, arquivos.FORMATOS, pcd, usuario)
+    _card_estoque(usuario, operacao_id, sufixo)
+    _card_contab(usuario, operacao_id, sufixo)
 
 
-def _card_contab(usuario: dict, operacao_id: int) -> None:
+def _card_contab(usuario: dict, operacao_id: int, sufixo: str = "") -> None:
     from modules.corporativo import contabilidade
     from services import contabilidade_service as cs
 
     with st.container(border=True):
         ult = cs.meses(operacao_id)
-        st.markdown("**6. Financeiro contabilidade (financeiro fechado)**  \nMeses fechados: "
+        st.markdown("**Financeiro contabilidade (financeiro fechado)**  \nMeses fechados: "
                     + (", ".join(ui.nome_mes(m) for m in ult[:6]) if ult else "nenhum"))
         st.caption("Despesas fechadas pela contabilidade, por departamento. Só com ele o 📑 DRE do mês fica 🔒 "
                    "fechado. Outras contas: 📑 DRE › 🧾 Financeiro contabilidade › ✍️ Outras contas.")
@@ -144,15 +169,15 @@ def _card_contab(usuario: dict, operacao_id: int) -> None:
         for _ in range(12):
             meses.append(ev.mes_anterior(meses[-1]))
         c1, c2 = st.columns([1, 3])
-        mes = c1.selectbox("Mês", meses, format_func=ui.nome_mes, key="rel_ctb_mes", index=1)
+        mes = c1.selectbox("Mês", meses, format_func=ui.nome_mes, key="rel_ctb_mes" + sufixo, index=1)
         with c2:
-            contabilidade.card_upload(usuario, operacao_id, mes, chave="rel_ctb")
+            contabilidade.card_upload(usuario, operacao_id, mes, chave="rel_ctb" + sufixo)
 
 
-def _card_estoque(usuario: dict, operacao_id: int) -> None:
+def _card_estoque(usuario: dict, operacao_id: int, sufixo: str = "") -> None:
     ult = ev.ultimo_saldo(operacao_id)
     with st.container(border=True):
-        st.markdown(f"**5. 02.05.02 — saldo de estoque (inicial e final do mês)**  \nÚltimo saldo inicial: "
+        st.markdown(f"**02.05.02 — saldo de estoque (inicial e final do mês)**  \nÚltimo saldo inicial: "
                     f"{_quando(ult['inicial'])} · último saldo final: {_quando(ult['final'])}")
         st.caption("Coluna AD = valor do estoque (custo médio) · AB = quantidade em unidades ÷ fator (X) = unidade de "
                    "venda → HL pela 01.11 · B = depósito. → 🏬 Estoque, 📊 Lucro bruto real e 📑 DRE.")
@@ -160,11 +185,11 @@ def _card_estoque(usuario: dict, operacao_id: int) -> None:
         meses = [ev.mes_atual()]
         for _ in range(12):
             meses.append(ev.mes_anterior(meses[-1]))
-        mes = c1.selectbox("Mês", meses, format_func=ui.nome_mes, key="rel_ev_mes")
-        tipo = c2.radio("Saldo", list(ev.TIPOS_SALDO), format_func=ev.TIPOS_SALDO.get, key="rel_ev_tipo",
+        mes = c1.selectbox("Mês", meses, format_func=ui.nome_mes, key="rel_ev_mes" + sufixo)
+        tipo = c2.radio("Saldo", list(ev.TIPOS_SALDO), format_func=ev.TIPOS_SALDO.get, key="rel_ev_tipo" + sufixo,
                         horizontal=True)
-        arq = c3.file_uploader("02.05.02", type=arquivos.FORMATOS, key="rel_up_estoque", label_visibility="collapsed")
-        if arq is not None and st.button("Gravar saldo", key="rel_gravar_estoque", type="primary"):
+        arq = c3.file_uploader("02.05.02", type=arquivos.FORMATOS, key="rel_up_estoque" + sufixo, label_visibility="collapsed")
+        if arq is not None and st.button("Gravar saldo", key="rel_gravar_estoque" + sufixo, type="primary"):
             try:
                 with st.spinner("Lendo o estoque..."):
                     a2 = arquivos.preparar(arq)

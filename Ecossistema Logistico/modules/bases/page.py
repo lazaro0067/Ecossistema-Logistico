@@ -30,8 +30,11 @@ GRUPOS = [
 MODULOS_COM_BASE = {m for _, itens in GRUPOS for *_, ms in itens for m in ms}
 
 
+MODULOS_NOTAS = ("corporativo", "distribuicao", "puxada", "financeiro")  # PCD, 03.02.37, 02.05.02, contabilidade
+
+
 def pode_ver(usuario: dict) -> bool:
-    return any(pode_acessar_modulo(usuario, m) for m in MODULOS_COM_BASE)
+    return any(pode_acessar_modulo(usuario, m) for m in (*MODULOS_COM_BASE, *MODULOS_NOTAS))
 
 
 def ir() -> None:
@@ -50,6 +53,11 @@ def render(usuario: dict, operacao_id: int) -> None:
                    "reconhece as colunas e grava sozinho.", "📥",
                    [f"🏢 {session.operacao_nome()}", "🟢 em dia · 🟡 atualizar · 🔴 desatualizada"])
     _robo(operacao_id)
+    from modules.corporativo import relatorios
+
+    escolhida = relatorios.seletor_revenda(usuario, operacao_id, "central_op")
+    if escolhida:
+        operacao_id = escolhida
     algum = False
     for titulo, itens in GRUPOS:
         visiveis = [i for i in itens if any(pode_acessar_modulo(usuario, m) for m in i[3])]
@@ -61,6 +69,12 @@ def render(usuario: dict, operacao_id: int) -> None:
             for col, (lay, tit, freq, _) in zip(st.columns(4), visiveis[ini:ini + 4]):
                 with col:
                     card_base(lay, operacao_id, usuario, tit, freq, prefixo="central_")
+    if escolhida and any(pode_acessar_modulo(usuario, m) for m in MODULOS_NOTAS):
+        algum = True
+        tema.secao("🚚 Entrega, Faturamento & DRE",
+                   "PCD, 03.02.37 vendas e compra, 02.05.02 e financeiro da contabilidade. Subir de novo um mês "
+                   "substitui o mês inteiro.")
+        relatorios.cartoes(usuario, operacao_id, "todos")
     if not algum:
         st.info("Você não tem acesso a nenhuma pasta que use relatórios.")
     st.caption("O Ressuprimento diário traz todas as filiais num arquivo só. As demais bases são da revenda "

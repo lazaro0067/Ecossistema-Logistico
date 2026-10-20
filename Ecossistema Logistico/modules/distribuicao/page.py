@@ -46,4 +46,11 @@ def render(usuario: dict, operacao_id: int) -> None:
     ui.cabecalho_modulo("distribuicao")
     tela_registros(modulo="distribuicao", usuario=usuario, tabela="distribuicao_rotas", operacao_id=operacao_id,
                    campos=CAMPOS, indicadores=INDICADORES, graficos_=GRAFICOS,
-                   extras={"book": lambda: _book(usuario, operacao_id)})
+                   extras={"book": lambda *_: _book(usuario, operacao_id),
+                           "produtividade": lambda *_: _produtividade(usuario, operacao_id)})
+
+
+def _produtividade(usuario: dict, operacao_id: int) -> None:
+    from modules.corporativo import prod_entrega
+
+    prod_entrega.render(usuario, operacao_id)

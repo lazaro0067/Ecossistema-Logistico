@@ -1808,6 +1808,9 @@ MIGRACOES: list[tuple[str, str]] = [
         CREATE INDEX IF NOT EXISTS ix_seg_acessos ON seg_acessos(quando);
     """),    ("054_robo", """
         CREATE INDEX IF NOT EXISTS ix_robo_exec ON robo_execucoes(relatorio, inicio);
+    """),    ("055_frota_capacidade", """
+        ALTER TABLE frota_tipos ADD COLUMN cap_cx REAL;
+        ALTER TABLE frota_tipos ADD COLUMN cap_kg REAL;
     """),
 ]
 
