@@ -107,6 +107,12 @@ class Ctx:
         return destino
 
 
+def navegador(cfg: dict, site: str, rel: dict | None = None) -> str | None:
+    """Qual navegador usar: "msedge" (Edge instalado no Windows), "chrome" ou "chromium" (o do robô)."""
+    n = (rel or {}).get("navegador") or cfg.get(site, {}).get("navegador") or cfg.get("navegador") or "chromium"
+    return None if str(n).lower() == "chromium" else str(n).lower()
+
+
 # --- receitas ----------------------------------------------------------------------------------------------------
 def carregar_receita(nome: str):
     arq = RECEITAS / f"{nome}.py"
@@ -127,7 +133,8 @@ def baixar(rel: dict, cfg: dict, ver: bool = False) -> Path:
     ctx = Ctx(cfg.get(site, {}), site, pasta_dia, rel["nome"])
     receita = carregar_receita(rel.get("receita", rel["nome"]))
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=not ver)
+        canal = navegador(cfg, site, rel)
+        browser = p.chromium.launch(headless=not ver, channel=canal)
         context = browser.new_context(accept_downloads=True, locale="pt-BR")
         context.set_default_timeout(int(rel.get("espera_seg", cfg.get("espera_seg", 120))) * 1000)
         page = context.new_page()
@@ -160,8 +167,11 @@ def gravar(nome: str, cfg: dict, site: str) -> None:
     print("Vai abrir o navegador gravando. Faça o caminho completo: entrar, abrir o relatório, filtrar e EXPORTAR.")
     print("Use as datas de HOJE / ontem / 1º do mês que o robô troca sozinho pelas datas do dia em que rodar.")
     print("Quando o arquivo terminar de baixar, feche o navegador.")
-    subprocess.run([sys.executable, "-m", "playwright", "codegen", "--target", "python", "-o", str(bruto), url],
-                   check=False)
+    canal = navegador(cfg, site)
+    cmd = [sys.executable, "-m", "playwright", "codegen", "--target", "python", "-o", str(bruto)]
+    if canal:
+        cmd += ["--channel", canal]
+    subprocess.run(cmd + [url], check=False)
     if not bruto.exists():
         sys.exit("Nada gravado.")
     converter(nome, bruto, cfg, site)
