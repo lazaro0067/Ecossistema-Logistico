@@ -210,14 +210,30 @@ def converter(nome: str, bruto: Path, cfg: dict, site: str) -> None:
 
 
 # --- execução ------------------------------------------------------------------------------------------------------
-def preparar_sistema(cfg: dict) -> None:
+def preparar_sistema(cfg: dict) -> bool:
+    """True = conectado ao banco do sistema (baixa e importa). False = sem banco: só baixa e salva na pasta."""
     url = cofre_ler("banco")
     if not url:
-        sys.exit("Falta o endereço do banco do sistema: python robo.py --senha banco")
+        log("⚠️ Sem o banco do sistema (robo.bat --senha banco): modo TESTE — só baixa e salva na pasta.")
+        return False
     os.environ["DATABASE_URL"] = url
     os.environ.setdefault("ECO_DATA_DIR", str(Path(tempfile.gettempdir()) / "eco_robo"))
     for k, v in (cfg.get("sistema") or {}).items():
         os.environ.setdefault(str(k).upper(), str(v))
+    return True
+
+
+def so_baixar(rel: dict, cfg: dict, ver: bool) -> bool:
+    try:
+        log(f"[{rel['nome']}] baixando…")
+        arq = baixar(rel, cfg, ver)
+        log(f"[{rel['nome']}] ✅ baixado e salvo: {arq} ({arq.stat().st_size / 1024 ** 2:.1f} MB)")
+        return True
+    except Exception as e:  # noqa: BLE001
+        log(f"[{rel['nome']}] ❌ {type(e).__name__}: {e}")
+        (AQUI / "logs" / f"{dt.date.today():%Y-%m-%d}_{rel['nome']}_erro.txt").write_text(
+            traceback.format_exc(), encoding="utf-8")
+        return False
 
 
 def operacao(nome: str) -> int:
@@ -287,11 +303,13 @@ def main() -> None:
     if not rels:
         log("Nenhum relatório para rodar agora.")
         return
-    preparar_sistema(cfg)
-    from database.schema import init_db
+    if preparar_sistema(cfg):
+        from database.schema import init_db
 
-    init_db()
-    ok = sum(rodar(r, cfg, a.ver) for r in rels)
+        init_db()
+        ok = sum(rodar(r, cfg, a.ver) for r in rels)
+    else:
+        ok = sum(so_baixar(r, cfg, a.ver) for r in rels)
     log(f"Fim: {ok} de {len(rels)} relatório(s) ok.")
     sys.exit(0 if ok == len(rels) else 1)
 
