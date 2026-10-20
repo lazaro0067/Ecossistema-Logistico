@@ -210,12 +210,16 @@ def converter(nome: str, bruto: Path, cfg: dict, site: str) -> None:
     datas digitadas pelas datas do dia e salva o download na pasta."""
     txt = bruto.read_text(encoding="utf-8")
     linhas = txt.splitlines()
-    try:
-        ini = next(i for i, l in enumerate(linhas) if re.match(r"\s*page\s*=\s*context\.", l)) + 1
-    except StopIteration:
-        sys.exit("Gravação sem página — grave de novo.")
+    # o corpo começa depois da abertura do navegador (browser/context/page = …), que muda conforme o modo da gravação
+    abre = [i for i, l in enumerate(linhas) if re.match(r"\s*(browser|context|page)\s*=", l)]
+    if not abre:
+        sys.exit("Gravação vazia — grave de novo.")
+    ini = abre[0]
+    while ini < len(linhas) and re.match(r"\s*(browser|context|page)\s*=", linhas[ini]):
+        ini += 1
     fim = next((i for i, l in enumerate(linhas) if l.strip().startswith("# ----") or "context.close()" in l), len(linhas))
-    corpo = [l[4:] if l.startswith("    ") else l for l in linhas[ini:fim] if l.strip()]
+    corpo = [l[4:] if l.startswith("    ") else l for l in linhas[ini:fim] if l.strip()
+             and "edge://" not in l and "chrome://" not in l]
     texto = "\n".join(corpo)
     senha = cofre_ler(site) or ""
     usuario = cfg.get(site, {}).get("usuario", "")
