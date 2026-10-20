@@ -281,7 +281,10 @@ def base(operacao_id: int, de: str, ate: str, filtro: dict[str, list[str]] | Non
     m["mes"] = m["data"].dt.strftime("%Y-%m")
     m["placa_k"] = m["placa"].fillna("").str.upper()
     m = m.merge(_placas(), on="placa_k", how="left")
-    m["veiculo"] = m["veiculo"].replace("", None).fillna(m["tipo_cad"]).fillna("Não informado")
+    # Veículo = tipo do cadastro da Frota (Van, Fiorino, Truck…); placa sem cadastro → o que veio no PCD
+    m["veiculo_pcd"] = m["veiculo"].replace("", None)
+    m["veiculo"] = m["tipo_cad"].replace("", None).fillna(m["veiculo_pcd"]).fillna("Não informado")
+    m["veiculo_origem"] = ["cadastro" if pd.notna(t) and t != "" else "PCD" for t in m["tipo_cad"]]
     return m
 
 

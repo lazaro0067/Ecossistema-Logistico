@@ -5,6 +5,8 @@ revenda = "Lima Rio Verde"              # revenda padrão (nome igual ao do sist
 espera_seg = 180                        # tempo máximo de espera de cada passo no site
 tentativas = 2                          # tenta de novo se o site falhar
 
+navegador = "msedge"                    # msedge = Edge do Windows · chrome · chromium (o do robô)
+
 [promax]
 url = "https://ENDERECO-DO-PROMAX"
 usuario = "SEU_USUARIO"

@@ -179,7 +179,12 @@ def _visao_geral(df: pd.DataFrame, chave: str) -> None:
                                          {"Ocupação caixas": d["ocup_cx"].round(1),
                                           "Ocupação peso": d["ocup_peso"].round(1)},
                                          titulo="Ocupação média por dia", sufixo="%"), key=f"g_{chave}_oc")
-    tema.secao("🚛 Por tipo de veículo")
+    tema.secao("🚛 Por tipo de veículo", "Tipo do cadastro da Frota (⚙️ Cadastro de Placas · 🏷️ Modelos & Tipos); "
+                                          "placa sem cadastro usa o veículo que veio no PCD.")
+    if "veiculo_origem" in df and (df["veiculo_origem"] == "PCD").any():
+        sem = sorted(df.loc[df["veiculo_origem"] == "PCD", "placa"].dropna().unique())
+        st.caption(f"⚠️ {len(sem)} placa(s) sem cadastro na Frota (tipo veio do PCD): {', '.join(sem[:12])}"
+                   + (" …" if len(sem) > 12 else ""))
     pv = svc.por_veiculo(df)
     vis = _tabela_kpi(pv, {"veiculo": "Veículo"}).assign(Placas=pv["placas"].map(_n).values)
     ui.tabela(_com_total(vis, df, {"veiculo": "Veículo"}, {"Placas": _n(df["placa"].nunique())}),
