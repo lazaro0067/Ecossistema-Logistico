@@ -100,6 +100,51 @@ class Ctx:
             setattr(self, f"{nome}_br", d.strftime("%d/%m/%Y"))
         self.arquivo: Path | None = None
 
+    def login_microsoft(self, page, espera_seg: int = 300) -> None:
+        """Se o site (Power BI) mandar para o login da Microsoft: preenche e-mail e senha (do cofre), pede o código
+        que chega no celular numa janelinha e confirma "continuar conectado". Já logado = não faz nada."""
+        import time as _t
+
+        page.wait_for_timeout(4000)
+        fim = _t.time() + espera_seg
+        avisou = False
+
+        def ve(sel: str) -> bool:
+            try:
+                return page.locator(sel).first.is_visible()
+            except Exception:  # noqa: BLE001
+                return False
+        while _t.time() < fim:
+            if not re.search(r"login\.(microsoftonline|live)\.com|login\.microsoft", page.url):
+                return
+            if ve('input[name="loginfmt"]'):
+                if not self.usuario:
+                    raise RuntimeError("A Microsoft pediu o e-mail: coloque usuario = \"seu@email\" em [powerbi] no "
+                                       "config.toml (ou entre com robo.bat --entrar powerbi).")
+                page.fill('input[name="loginfmt"]', self.usuario)
+                page.click('input[type="submit"]')
+            elif ve('input[name="passwd"]'):
+                if not self.senha:
+                    raise RuntimeError("A Microsoft pediu a senha: guarde com robo.bat --senha powerbi.")
+                page.fill('input[name="passwd"]', self.senha)
+                page.click('input[type="submit"]')
+            elif ve('input[name="otc"]'):
+                codigo = pedir_codigo("O Power BI mandou um código para o seu celular.\nDigite o código:")
+                if not codigo:
+                    raise RuntimeError("Código do celular não informado.")
+                page.fill('input[name="otc"]', codigo.strip())
+                page.click('input[type="submit"]')
+            elif ve("#idSIButton9") and ve("#KmsiCheckboxField, #idBtn_Back"):  # "Continuar conectado?"
+                if ve("#KmsiCheckboxField"):
+                    page.check("#KmsiCheckboxField")
+                page.click("#idSIButton9")
+            elif not avisou and ve("#idRichContext_DisplaySign, .displaySign"):
+                numero = page.locator("#idRichContext_DisplaySign, .displaySign").first.inner_text()
+                avisar(f"Aprove o login no app Microsoft Authenticator do celular digitando o número {numero}.")
+                avisou = True
+            page.wait_for_timeout(2500)
+        raise RuntimeError("O login da Microsoft não terminou a tempo.")
+
     def salvar(self, download) -> Path:
         """Guarda o arquivo baixado na pasta do dia (nome original, com o relatório na frente)."""
         nome = f"{self.relatorio}__{download.suggested_filename}"
@@ -113,6 +158,41 @@ def navegador(cfg: dict, site: str, rel: dict | None = None) -> str | None:
     """Qual navegador usar: "msedge" (Edge instalado no Windows), "chrome" ou "chromium" (o do robô)."""
     n = (rel or {}).get("navegador") or cfg.get(site, {}).get("navegador") or cfg.get("navegador") or "chromium"
     return None if str(n).lower() == "chromium" else str(n).lower()
+
+
+def pedir_codigo(texto: str) -> str | None:
+    """Janelinha para digitar o código que chegou no celular (sem janela: pede no Prompt)."""
+    log("🔐 " + texto.replace("\n", " "))
+    try:
+        import tkinter as tk
+        from tkinter import simpledialog
+
+        raiz = tk.Tk()
+        raiz.withdraw()
+        raiz.attributes("-topmost", True)
+        v = simpledialog.askstring("Robô de relatórios — código de acesso", texto, parent=raiz)
+        raiz.destroy()
+        return v
+    except Exception:  # noqa: BLE001 — sem janela (servidor sem tela): pede no Prompt
+        try:
+            return input(texto + " ")
+        except Exception:  # noqa: BLE001
+            return None
+
+
+def avisar(texto: str) -> None:
+    log("📱 " + texto)
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+
+        raiz = tk.Tk()
+        raiz.withdraw()
+        raiz.attributes("-topmost", True)
+        messagebox.showinfo("Robô de relatórios", texto, parent=raiz)
+        raiz.destroy()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 # --- receitas ----------------------------------------------------------------------------------------------------
@@ -254,9 +334,10 @@ def converter(nome: str, bruto: Path, cfg: dict, site: str) -> None:
 # --- execução ------------------------------------------------------------------------------------------------------
 def preparar_sistema(cfg: dict) -> bool:
     """True = conectado ao banco do sistema (baixa e importa). False = sem banco: só baixa e salva na pasta."""
-    url = cofre_ler("banco")
-    if not url:
-        log("⚠️ Sem o banco do sistema (robo.bat --senha banco): modo TESTE — só baixa e salva na pasta.")
+    url = (cofre_ler("banco") or "").strip().strip('"')
+    if not url.startswith(("postgresql://", "postgres://")):
+        log("⚠️ Sem o banco do sistema (robo.bat --senha banco com o endereço postgresql://…): modo TESTE — só "
+            "baixa e salva na pasta.")
         return False
     os.environ["DATABASE_URL"] = url
     os.environ.setdefault("ECO_DATA_DIR", str(Path(tempfile.gettempdir()) / "eco_robo"))
@@ -345,7 +426,7 @@ def main() -> None:
         quer = {x.strip() for x in a.so.split(",")}
         rels = [r for r in rels if r["nome"] in quer]
     hoje = dt.date.today().weekday()  # 0 = segunda
-    rels = [r for r in rels if a.testar or a.so or hoje in _dias(r.get("dias", "seg-sab"))]
+    rels = [r for r in rels if a.testar or a.so or (r.get("ativo", True) and hoje in _dias(r.get("dias", "seg-sab")))]
     if not rels:
         log("Nenhum relatório para rodar agora.")
         return

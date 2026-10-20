@@ -3,6 +3,9 @@
 
 def baixar(page, ctx):
     page.goto(ctx.url)
+    ctx.login_microsoft(page)  # se pedir login: e-mail, senha e o código do celular (abre uma janelinha)
+    if "powerbi.com" in page.url and "reports" not in page.url:
+        page.goto(ctx.url)
     # espera o relatório carregar e abre o "⋯ Mais opções" do visual (o botão só aparece com o mouse em cima)
     botao = page.get_by_test_id("visual-more-options-btn").first
     botao.wait_for(state="attached")
