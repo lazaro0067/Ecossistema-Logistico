@@ -39,10 +39,13 @@ mande a receita e o erro de `logs\` para ajustar.
 
 ## Agendar
 ```
-agendar_robo.bat 06:30
+agendar_robo.bat 07:00
+agendar_robo.bat 09:00
 ```
-Roda todo dia nesse horário (com o seu usuário do Windows logado). Para mais horários, rode de novo com outro nome
-de tarefa no Agendador de Tarefas.
+Uma tarefa por horário (EcoRobo_07h00, EcoRobo_09h00). Roda com o seu usuário do Windows logado, também na bateria;
+se o PC estiver suspenso ele acorda, e se estiver desligado no horário roda assim que ligar.
+Conferir: `ver_agendamento.bat` (última vez que rodou, resultado e próxima vez — salvo em `logs\agendamento.txt`).
+Tudo o que o robô agendado escreve fica em `logs\agendador.log`; o resumo do dia em `logs\AAAA-MM-DD.log`.
 
 ## Como cada relatório entra no sistema (`importar` no config.toml)
 | importar | O que faz |

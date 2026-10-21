@@ -88,10 +88,24 @@ def _robo(operacao_id: int) -> None:
     from core import ui
     from services import robo_service as rs
 
+    from services import robo_nuvem as rn
+
     sit = rs.situacao(operacao_id)
-    if sit.empty:
+    if sit.empty and not rn.configurado():
         return
     tema.secao("🤖 Robô de relatórios", "Baixa os relatórios dos sites e importa sozinho. Última execução de cada um:")
+    c1, c2 = st.columns([1, 2.4])
+    if c1.button("☁️ Buscar agora o que o robô enviou", key="robo_buscar"):
+        with st.spinner("Importando os arquivos do robô…"):
+            res = rn.processar()
+        for linha in res or ["Nada novo: o robô não enviou arquivo desde a última busca."]:
+            (st.error if linha.startswith("❌") else st.success if linha.startswith("✅") else st.info)(linha)
+        sit = rs.situacao(operacao_id)
+    ult = rn.ultimo_resultado()
+    c2.caption("O sistema também busca sozinho a cada 10 minutos enquanto estiver aberto."
+               + (f" Última busca: {ult[0]}." if ult else ""))
+    if sit.empty:
+        return
     icone = {"ok": "🟢", "erro": "🔴", "rodando": "🔄"}
 
     def quando(v):

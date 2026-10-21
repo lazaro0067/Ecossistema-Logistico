@@ -69,9 +69,12 @@ class Log:
 
     def __call__(self, msg: str) -> None:
         linha = f"{dt.datetime.now():%H:%M:%S} {msg}"
-        print(linha)
-        with open(self.arq, "a", encoding="utf-8") as f:
+        with open(self.arq, "a", encoding="utf-8") as f:  # grava antes: o arquivo é o registro que vale
             f.write(linha + "\n")
+        try:
+            print(linha, flush=True)
+        except Exception:  # noqa: BLE001 — tela sem emoji (rodando pelo agendador) não pode derrubar o robô
+            print(linha.encode("ascii", "replace").decode(), flush=True)
 
 
 log = Log()
@@ -214,7 +217,10 @@ def baixar(rel: dict, cfg: dict, ver: bool = False) -> Path:
     pasta_dia.mkdir(parents=True, exist_ok=True)
     ctx = Ctx(cfg.get(site, {}), site, pasta_dia, rel["nome"])
     receita = carregar_receita(rel.get("receita", rel["nome"]))
-    mostrar = ver or bool(rel.get("mostrar", cfg.get("mostrar", False)))
+    # Power BI/Microsoft não carrega direito com o navegador escondido (login e desenho do relatório): por padrão
+    # ele abre visível e fecha sozinho no fim. Para esconder: mostrar = false no relatório ou na seção do site.
+    padrao = site == "powerbi"
+    mostrar = ver or bool(rel.get("mostrar", cfg.get(site, {}).get("mostrar", cfg.get("mostrar", padrao))))
     with sync_playwright() as p:
         context = p.chromium.launch_persistent_context(
             str(PERFIL), channel=navegador(cfg, site, rel), headless=not mostrar, accept_downloads=True,
@@ -223,6 +229,12 @@ def baixar(rel: dict, cfg: dict, ver: bool = False) -> Path:
         page = context.new_page()
         try:
             r = receita.baixar(page, ctx)
+        except Exception:
+            try:  # print da tela no momento do erro, para ver onde parou
+                page.screenshot(path=str(AQUI / "logs" / f"{dt.date.today():%Y-%m-%d}_{rel['nome']}_erro.png"))
+            except Exception:  # noqa: BLE001
+                pass
+            raise
         finally:
             context.close()
     arq = Path(r) if r else ctx.arquivo
@@ -336,8 +348,11 @@ def preparar_sistema(cfg: dict) -> bool:
     """True = conectado ao banco do sistema (baixa e importa). False = sem banco: só baixa e salva na pasta."""
     url = (cofre_ler("banco") or "").strip().strip('"')
     if not url.startswith(("postgresql://", "postgres://")):
-        log("⚠️ Sem o banco do sistema (robo.bat --senha banco com o endereço postgresql://…): modo TESTE — só "
-            "baixa e salva na pasta.")
+        if nuvem(cfg):
+            log("☁️ Modo nuvem: baixa, salva na pasta e envia para o sistema importar.")
+        else:
+            log("⚠️ Sem o banco do sistema e sem o envio para a nuvem (robo.bat --senha github): modo TESTE — só "
+                "baixa e salva na pasta.")
         return False
     os.environ["DATABASE_URL"] = url
     os.environ.setdefault("ECO_DATA_DIR", str(Path(tempfile.gettempdir()) / "eco_robo"))
@@ -346,11 +361,62 @@ def preparar_sistema(cfg: dict) -> bool:
     return True
 
 
+# --- envio para o sistema na nuvem (pelo repositório PRIVADO do backup no GitHub) ----------------------------------
+def slug(txt: str) -> str:
+    """Mesmo código do sistema (services/robo_nuvem.py): 'Lima Rio Verde' → 'lima-rio-verde'."""
+    import unicodedata
+
+    t = unicodedata.normalize("NFKD", str(txt)).encode("ascii", "ignore").decode().lower()
+    return re.sub(r"[^a-z0-9]+", "-", t).strip("-")
+
+
+def nuvem(cfg: dict) -> tuple[str, str] | None:
+    """(token, repositório) se o envio para a nuvem estiver ligado: robo.bat --senha github + repo_nuvem no config."""
+    repo = str(cfg.get("repo_nuvem") or "").strip().strip("/")
+    if not repo or "/" not in repo:
+        return None
+    try:
+        token = (cofre_ler("github") or "").strip()
+    except Exception:  # noqa: BLE001
+        token = ""
+    return (token, repo) if token else None
+
+
+def enviar_nuvem(rel: dict, cfg: dict, arq: Path) -> str:
+    """Manda o arquivo para entrada/ no repositório privado; o sistema importa sozinho (em até ~10 min, ou na hora
+    pelo botão em 📥 Atualizar relatórios › 🤖 Robô)."""
+    import base64
+    import json
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    token, repo = nuvem(cfg)
+    tipo = rel.get("importar", "so_baixar")
+    revenda = rel.get("revenda") or cfg["revenda"]
+    nome = f"{tipo}__{slug(revenda)}__{dt.datetime.now():%Y%m%d-%H%M%S}__{slug(arq.stem)}{arq.suffix.lower()}"
+    url = f"https://api.github.com/repos/{repo}/contents/entrada/{urllib.parse.quote(nome)}"
+    corpo = json.dumps({"message": f"robô: {rel['nome']} ({revenda})",
+                        "content": base64.b64encode(arq.read_bytes()).decode()}).encode()
+    r = urllib.request.Request(url, data=corpo, method="PUT", headers={
+        "Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json", "User-Agent": "eco-robo",
+        "X-GitHub-Api-Version": "2022-11-28", "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(r, timeout=120):
+            pass
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"GitHub respondeu {e.code}: {e.read().decode(errors='ignore')[:200]}") from e
+    return nome
+
+
 def so_baixar(rel: dict, cfg: dict, ver: bool) -> bool:
     try:
         log(f"[{rel['nome']}] baixando…")
         arq = baixar(rel, cfg, ver)
         log(f"[{rel['nome']}] ✅ baixado e salvo: {arq} ({arq.stat().st_size / 1024 ** 2:.1f} MB)")
+        if nuvem(cfg) and rel.get("importar", "so_baixar") != "so_baixar":
+            nome = enviar_nuvem(rel, cfg, arq)
+            log(f"[{rel['nome']}] ☁️ enviado para o sistema ({nome}) — ele importa em instantes.")
         return True
     except Exception as e:  # noqa: BLE001
         log(f"[{rel['nome']}] ❌ {type(e).__name__}: {e}")
@@ -399,7 +465,7 @@ def rodar(rel: dict, cfg: dict, ver: bool = False) -> bool:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Robô de relatórios do Ecossistema Logístico")
-    ap.add_argument("--senha", help="guarda no cofre do Windows: o nome do site (ex.: promax) ou 'banco'")
+    ap.add_argument("--senha", help="guarda no cofre do Windows: o nome do site (ex.: powerbi), 'banco' ou 'github'")
     ap.add_argument("--gravar", help="grava a receita de um relatório")
     ap.add_argument("--entrar", help="abre o site no navegador do robô para você fazer o login (fica salvo)")
     ap.add_argument("--site", default="promax", help="site da gravação (seção do config.toml), padrão promax")
@@ -418,6 +484,7 @@ def main() -> None:
         gravar(a.gravar, cfg, a.site)
         return
     rels = cfg.get("relatorios", [])
+    log(f"▶️ Início ({'teste' if a.testar else 'só ' + a.so if a.so else 'agendado/rodada completa'})")
     if a.testar:
         rels = [r for r in rels if r["nome"] == a.testar] or [{"nome": a.testar, "importar": "so_baixar",
                                                                "site": a.site}]

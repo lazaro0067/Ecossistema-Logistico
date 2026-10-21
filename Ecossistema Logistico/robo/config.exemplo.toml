@@ -7,6 +7,11 @@ tentativas = 2                          # tenta de novo se o site falhar
 
 navegador = "msedge"                    # msedge = Edge do Windows · chrome · chromium (o do robô)
 
+# Sem acesso direto ao banco (sistema na nuvem com SQLite): o robô manda o arquivo para o repositório PRIVADO do
+# backup e o sistema importa sozinho. Guarde o token (o mesmo BACKUP_GITHUB_TOKEN dos Secrets) com:
+#   robo.bat --senha github
+repo_nuvem = "lazaro0067/eco-backup"
+
 [promax]
 url = "https://ENDERECO-DO-PROMAX"
 usuario = "SEU_USUARIO"
