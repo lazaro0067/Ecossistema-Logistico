@@ -55,7 +55,21 @@ def cofre_ler(nome: str) -> str | None:
 def cofre_gravar(nome: str) -> None:
     import keyring
 
-    v = getpass.getpass(f"Digite o valor de '{nome}' (não aparece na tela): ")
+    v = None
+    try:  # janelinha: no Prompt o campo escondido não aceita colar (Ctrl+V)
+        import tkinter as tk
+        from tkinter import simpledialog
+
+        raiz = tk.Tk()
+        raiz.withdraw()
+        raiz.attributes("-topmost", True)
+        v = simpledialog.askstring("Robô de relatórios — cofre do Windows",
+                                   f"Cole (Ctrl+V) ou digite o valor de '{nome}' e clique em OK:", show="•",
+                                   parent=raiz)
+        raiz.destroy()
+    except Exception:  # noqa: BLE001 — sem janela: pede no Prompt
+        v = getpass.getpass(f"Digite o valor de '{nome}' (não aparece na tela): ")
+    v = (v or "").strip().strip('"').strip()
     if not v:
         sys.exit("Nada digitado.")
     keyring.set_password(COFRE, nome, v)
