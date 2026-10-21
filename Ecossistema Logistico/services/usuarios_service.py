@@ -110,6 +110,72 @@ def salvar_usuario(*, id: int | None, nome: str, senha: str, email: str, cargo: 
     return {"id": uid, "senha_provisoria": None if enviado else gerada, "email_enviado": enviado}
 
 
+# --- 🤝 Distribuir acessos: quem o Master liberou vincula acessos e cria usuários nas revendas dele ----------
+def expandir(chaves) -> set[str]:
+    """Pasta inteira ('frota') vale também para cada tela ('frota.placas')."""
+    out = set()
+    for c in chaves or []:
+        mod, _, aba = c.partition(".")
+        if mod not in MODULOS:
+            continue
+        out.add(c)
+        if not aba:
+            out |= {f"{mod}.{a}" for a in MODULOS[mod]["abas"]}
+    return out
+
+
+def revendas_do(usuario_id: int) -> list[int] | None:
+    """Revendas (filiais) do usuário; None = todas."""
+    ops = usuarios_repo.carregar_sessao(usuario_id).get("operacoes") or []
+    return None if not ops else [int(o) for o in ops]
+
+
+def usuarios_do_delegado(delegado: dict) -> list[int]:
+    """Usuários que ele pode ver/alterar: não-Master, não-motorista, só das revendas dele (nunca ele mesmo)."""
+    minhas = revendas_do(delegado["id"])
+    out = []
+    for u in usuarios_repo.listar(apenas_ativos=False):
+        if u["perfil"] in ("Master", "Motorista") or u["id"] == delegado["id"]:
+            continue
+        ops = revendas_do(u["id"])
+        if minhas is None or (ops is not None and set(ops) <= set(minhas)):
+            out.append(int(u["id"]))
+    return out
+
+
+def salvar_por_delegado(delegado: dict, *, id: int | None, nome: str, email: str, cargo: str, ativo: bool,
+                        senha: str, permissoes: list[str], operacoes: list[int]) -> dict:
+    """Cria/altera usuário só com os acessos que o Master liberou para o delegado distribuir.
+    Os demais acessos do usuário (que o delegado não distribui) ficam como estão."""
+    pode = usuarios_repo.distribui(delegado["id"])
+    if not pode:
+        raise RegraNegocioError("Você não tem acessos liberados para distribuir.")
+    if id and int(id) == int(delegado["id"]):
+        raise RegraNegocioError("Você não pode alterar os seus próprios acessos — peça ao Master.")
+    minhas = revendas_do(delegado["id"])
+    if not operacoes:
+        raise RegraNegocioError("Escolha a(s) revenda(s) do usuário.")
+    if minhas is not None and not set(operacoes) <= set(minhas):
+        raise RegraNegocioError("Só é possível liberar as revendas que você acessa.")
+    liberadas = expandir(pode)
+    fora = [p for p in permissoes if p not in liberadas]
+    if fora:
+        raise RegraNegocioError("Há acessos que o Master não liberou para você distribuir.")
+    alvo = None
+    if id:
+        if int(id) not in usuarios_do_delegado(delegado):
+            raise RegraNegocioError("Este usuário não está nas suas revendas (ou é Master).")
+        alvo = usuarios_repo.carregar_sessao(int(id))
+        manter = [p for p in alvo.get("modulos", []) if p not in liberadas]
+        permissoes = manter + list(permissoes)
+    return salvar_usuario(
+        id=id, nome=nome, senha="" if id else senha, email=email, cargo=cargo,
+        perfil=(alvo or {}).get("perfil") or "Operacional",
+        e_aprovador=bool((alvo or {}).get("e_aprovador")), alcada=float((alvo or {}).get("alcada") or 0),
+        ativo=ativo, trocar_senha=bool((alvo or {}).get("trocar_senha", 1)) if alvo else True,
+        permissoes=permissoes, operacoes=list(operacoes), enviar_email=True)
+
+
 def _masters_ativos() -> int:
     return sum(1 for u in usuarios_repo.listar(apenas_ativos=True) if u["perfil"] == "Master")
 

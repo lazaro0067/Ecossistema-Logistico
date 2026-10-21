@@ -58,6 +58,17 @@ def e_master(usuario: dict) -> bool:
     return usuario.get("perfil") == PERFIL_MASTER
 
 
+def pode_distribuir(usuario: dict | None) -> bool:
+    """Master, ou quem recebeu do Master acessos para distribuir (🔑 Gestão de Acessos em modo restrito)."""
+    if not usuario:
+        return False
+    if e_master(usuario):
+        return True
+    from repositories import usuarios_repo
+
+    return bool(usuarios_repo.distribui(usuario["id"]))
+
+
 def e_motorista(usuario: dict) -> bool:
     from config.settings import PERFIL_MOTORISTA
 

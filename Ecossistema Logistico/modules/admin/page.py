@@ -12,18 +12,31 @@ from services.erros import RegraNegocioError
 
 
 # --- Árvore de permissões (pastas e subpastas) ---------------------------
-def _arvore_permissoes(chave: str, atuais: list[str]) -> list[str]:
-    """Um bloco por pasta: 'pasta inteira' ou abas escolhidas. Devolve a lista de chaves."""
+def _arvore_permissoes(chave: str, atuais: list[str], limite: list[str] | None = None) -> list[str]:
+    """Um bloco por pasta: 'pasta inteira' ou abas escolhidas. Devolve a lista de chaves.
+    `limite` = só as pastas/telas que podem ser dadas (quem distribui acessos liberados pelo Master)."""
     escolhidas: list[str] = []
+    lim = set(limite) if limite is not None else None
+    mods = [(m, i) for m, i in MODULOS.items()
+            if lim is None or m in lim or any(f"{m}.{a}" in lim for a in i["abas"])]
+    if not mods:
+        st.caption("Nenhuma pasta liberada.")
+        return []
     cols = st.columns(3)
-    for i, (mod, info) in enumerate(MODULOS.items()):
+    for i, (mod, info) in enumerate(mods):
+        pode_inteira = lim is None or mod in lim
+        abas = {a: r for a, r in info["abas"].items() if pode_inteira or f"{mod}.{a}" in lim}
         with cols[i % 3].container(border=True):
             tem_inteira = mod in atuais
-            abas_atuais = [a for a in info["abas"] if f"{mod}.{a}" in atuais]
-            inteira = st.checkbox(f"{info['icone']} **{info['rotulo']}** — pasta inteira",
-                                  value=tem_inteira, key=f"{chave}_p_{mod}",
-                                  help="Acesso a todas as abas, inclusive as que forem criadas no futuro.")
-            abas_marcadas = [aba for aba, rotulo in info["abas"].items()
+            abas_atuais = [a for a in abas if f"{mod}.{a}" in atuais]
+            if pode_inteira:
+                inteira = st.checkbox(f"{info['icone']} **{info['rotulo']}** — pasta inteira",
+                                      value=tem_inteira, key=f"{chave}_p_{mod}",
+                                      help="Acesso a todas as abas, inclusive as que forem criadas no futuro.")
+            else:
+                inteira = False
+                st.markdown(f"{info['icone']} **{info['rotulo']}**")
+            abas_marcadas = [aba for aba, rotulo in abas.items()
                              if st.checkbox(f"↳ {rotulo}", value=aba in abas_atuais or tem_inteira,
                                             key=f"{chave}_p_{mod}_{aba}")]
             if inteira:
@@ -77,6 +90,11 @@ def _form_usuario(existente: dict | None, operacoes: list[dict]) -> None:
                     "Nada é gravado até clicar em **Salvar**.")
         permissoes = _arvore_permissoes(chave, u.get("modulos", []))
         st.caption("Perfil Master acessa todas as pastas, independentemente das marcações.")
+        dist_atual = u.get("distribui") or []
+        with st.expander(f"🤝 Pode distribuir acessos ({len(dist_atual)} liberado(s))", expanded=False):
+            st.caption("Marque o que este usuário pode **vincular a outros usuários** e **criar usuários** nas "
+                       "revendas dele (ele não mexe em Masters nem nos próprios acessos). Vazio = não distribui.")
+            distribui = _arvore_permissoes(f"{chave}_d", dist_atual)
         salvar = st.form_submit_button("💾 Salvar usuário", type="primary")
     if salvar:
         if perfil == PERFIL_MASTER:
@@ -93,6 +111,8 @@ def _form_usuario(existente: dict | None, operacoes: list[dict]) -> None:
         except RegraNegocioError as e:
             st.error(str(e))
             return
+        usuarios_repo.salvar_distribui(res["id"], [] if perfil == PERFIL_MASTER else
+                                       usuarios_service.permissoes_validas(distribui))
         st.session_state["_adm_ver"] = st.session_state.get("_adm_ver", 0) + 1  # limpa o formulário
         if res["email_enviado"]:
             ui.avisar(f"Usuário '{nome}' criado! Os dados de acesso foram enviados para {email.strip().lower()}.")
@@ -207,6 +227,100 @@ def _cards_usuarios(df: pd.DataFrame) -> None:
                           **ui.LARGURA)
 
 
+def _lista_compacta(df: pd.DataFrame, total: int) -> None:
+    """Usuários numa lista pequena (rola). Para editar: pesquise e escolha em “O que deseja fazer?”."""
+    from modules.componentes.cadastro import tabela_html
+
+    if df.empty:
+        st.info("Nenhum usuário encontrado com esse filtro.")
+        return
+    st.caption(f"{len(df)} de {total} usuário(s) · pesquise acima e escolha abaixo em ✏️ Editar.")
+    vis = pd.DataFrame({
+        "nome": df["nome"], "email": df["email"].map(lambda v: "—" if _vazio(v) else v), "perfil": df["perfil"],
+        "sit": df["situacao"].map(lambda v: "🟢 Ativo" if v == "Ativo" else "⚪ Inativo"),
+        "ops": df["operacoes"],
+        "pastas": [("Todas" if p == PERFIL_MASTER else int(n or 0)) for p, n in zip(df["perfil"], df["pastas"])],
+        "dist": [("—" if p == PERFIL_MASTER or not int(d or 0) else f"🤝 {int(d)}")
+                 for p, d in zip(df["perfil"], df.get("distribui", pd.Series([0] * len(df))))],
+        "ult": df["ultimo_acesso"].map(_quando)})
+    tabela_html(vis, [("nome", "Nome"), ("email", "E-mail"), ("perfil", "Perfil"), ("sit", "Situação"),
+                      ("ops", "Revendas"), ("pastas", "Pastas"), ("dist", "Distribui"), ("ult", "Último acesso")],
+                altura_max=260)
+
+
+def _aba_delegado(usuario: dict) -> None:
+    """🤝 Quem o Master liberou: cria usuários e vincula SÓ os acessos liberados, nas revendas dele."""
+    from core.auth import operacoes_permitidas
+    from modules.componentes.cadastro import filtrar
+
+    pode = usuarios_repo.distribui(usuario["id"])
+    st.info("🤝 Você pode **criar usuários** e **vincular acessos** nas suas revendas — só as pastas/telas que o "
+            "Master liberou para você distribuir. Senhas, Masters e os seus próprios acessos ficam com o Master.")
+    if st.session_state.get("_dlg_senha"):
+        nome, email, senha = st.session_state["_dlg_senha"]
+        st.success(f"Envie ao usuário **{nome}** — login: **{email}** · senha provisória:")
+        st.code(senha, language=None)
+        if st.button("✓ Já anotei", key="dlg_senha_ok"):
+            st.session_state.pop("_dlg_senha")
+            st.rerun()
+    ids = usuarios_service.usuarios_do_delegado(usuario)
+    todos = usuarios_repo.listar_df()
+    df = todos[todos["id"].isin(ids)].reset_index(drop=True) if not todos.empty else todos
+    busca = st.text_input("🔎 Pesquisar", key="dlg_busca", label_visibility="collapsed",
+                          placeholder="🔎 Pesquisar usuário (nome, e-mail, cargo, revenda)…")
+    lista = filtrar(df, busca, colunas=["nome", "email", "cargo", "operacoes"]) if not df.empty else df
+    _lista_compacta(lista, len(df))
+    filiais = [o for o in operacoes_permitidas(usuario) if not operacoes_repo.e_consolidada(o["id"])]
+    modo = st.radio("O que deseja fazer?", ["➕ Novo usuário", "✏️ Vincular acessos"], horizontal=True,
+                    key="dlg_modo")
+    alvo = None
+    if modo.startswith("✏️"):
+        regs = [{"id": int(r["id"]), "nome": f"{r['nome']} ({r['email'] or '—'})"}
+                for r in lista.to_dict("records")] if not lista.empty else []
+        uid = ui.select_registro("Usuário", regs, key="dlg_edit")
+        if not uid:
+            return
+        alvo = usuarios_repo.carregar_sessao(int(uid))
+    u = alvo or {}
+    chave = f"dlg{u.get('id', 'novo')}_{st.session_state.get('_dlg_ver', 0)}"
+    with st.container(border=True), st.form(f"{chave}_form", border=False):
+        c1, c2, c3 = st.columns(3)
+        email = c1.text_input("E-mail (login) *", value=u.get("email") or "", key=f"{chave}_email")
+        nome = c2.text_input("Nome completo *", value=u.get("nome", ""), key=f"{chave}_nome")
+        cargo = c3.text_input("Cargo", value=u.get("cargo") or "", key=f"{chave}_cargo")
+        senha = "" if alvo else st.text_input("Senha inicial (vazio = gerar)", type="password",
+                                              key=f"{chave}_senha")
+        ativo = st.checkbox("Usuário ativo", value=bool(u.get("ativo", 1)), key=f"{chave}_ativo")
+        st.markdown("**🏢 Revendas** *")
+        atuais_ops = set(u.get("operacoes") or [])
+        cols = st.columns(max(len(filiais), 1))
+        ops = [o["id"] for col, o in zip(cols, filiais)
+               if col.checkbox(f"🏢 {o['nome']}", value=o["id"] in atuais_ops or len(filiais) == 1,
+                               key=f"{chave}_op_{o['id']}")]
+        st.markdown("**📁 Acessos que você pode vincular** — os demais acessos do usuário não mudam.")
+        perms = _arvore_permissoes(chave, u.get("modulos", []), limite=pode)
+        ok = st.form_submit_button("💾 Salvar", type="primary")
+    if ok:
+        try:
+            res = usuarios_service.salvar_por_delegado(usuario, id=u.get("id"), nome=nome, email=email, cargo=cargo,
+                                                       ativo=ativo, senha=senha, permissoes=perms, operacoes=ops)
+        except RegraNegocioError as e:
+            st.error(str(e))
+            return
+        try:
+            from services import seguranca_service as seg
+
+            seg.registrar(usuario, "distribuiu acessos", f"usuário {res['id']}")
+        except Exception:  # noqa: BLE001
+            pass
+        st.session_state["_dlg_ver"] = st.session_state.get("_dlg_ver", 0) + 1
+        if res.get("senha_provisoria"):
+            st.session_state["_dlg_senha"] = (nome, email.strip().lower(), res["senha_provisoria"])
+        ui.avisar(f"Usuário '{nome}' salvo!" + (" Dados de acesso enviados por e-mail." if res.get("email_enviado")
+                                                 else ""))
+        st.rerun()
+
+
 def _aba_usuarios(usuario_logado: dict) -> None:
     if st.session_state.get("_adm_senha"):
         nome, email, senha = st.session_state["_adm_senha"]
@@ -253,7 +367,7 @@ def _aba_usuarios(usuario_logado: dict) -> None:
         lista = lista[lista["perfil"] == f_perfil]
     if f_sit != "Todos":
         lista = lista[lista["situacao"] == ("Ativo" if f_sit == "Ativos" else "Inativo")]
-    _cards_usuarios(lista)
+    _lista_compacta(lista, len(df))
     ui.downloads(vis, "usuarios_sistema", key="dl_usuarios")
 
     operacoes = operacoes_repo.listar()
@@ -263,7 +377,9 @@ def _aba_usuarios(usuario_logado: dict) -> None:
         if modo.startswith("➕"):
             _form_usuario(None, operacoes)
         else:
-            todos = [r for r in usuarios_repo.listar(apenas_ativos=False) if r["perfil"] != PERFIL_MOTORISTA]
+            achados = set(lista["id"].astype(int)) if not lista.empty else set()
+            todos = [r for r in usuarios_repo.listar(apenas_ativos=False)
+                     if r["perfil"] != PERFIL_MOTORISTA and (not busca.strip() or int(r["id"]) in achados)]
             regs = [{"id": r["id"], "nome": f"{r['nome']} ({r['email'] or r['login']})"} for r in todos]
             uid = ui.select_registro("Usuário", regs, key="adm_edit")
             if not uid:
@@ -596,6 +712,12 @@ def _plano_info() -> None:
 
 
 def render(usuario: dict, operacao_id: int | None) -> None:
+    from core.auth import e_master
+
+    if not e_master(usuario):  # 🤝 quem distribui acessos liberados pelo Master
+        ui.cabecalho("Gestão de Acessos", "Criar usuários e vincular os acessos que o Master liberou para você", "🔑")
+        _aba_delegado(usuario)
+        return
     ui.cabecalho("Gestão de Acessos", "Usuários, senhas, permissões por pasta e operações", "🔑")
     _plano_info()
     a1, a2, a4, a6, a5, a3 = st.tabs(["👤 Usuários & Permissões", "🏢 Operações", "🔗 Links do Portal Comercial",

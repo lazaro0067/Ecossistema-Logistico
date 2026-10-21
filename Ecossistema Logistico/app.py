@@ -244,7 +244,9 @@ def menu_lateral(usuario: dict, atual: str) -> None:
         except Exception:
             n_avisos = 0
         _nav(f"🔔  Notificações ({n_avisos})" if n_avisos else "🔔  Notificações", "notificacoes", atual)
-        if e_master(usuario):
+        from core.auth import pode_distribuir
+
+        if pode_distribuir(usuario):
             _nav("🔑  Gestão de Acessos", MODULO_ADMIN, atual)
         _nav("⚙️  Minha conta", "conta", atual)
         if ui.botao("🚪  Sair", key="nav_sair"):
@@ -509,7 +511,9 @@ def main() -> None:
     pagina = session.pagina() or "inicio"
     if pagina not in PAGINAS:
         pagina = "inicio"
-    if pagina == MODULO_ADMIN and not e_master(usuario):
+    from core.auth import pode_distribuir
+
+    if pagina == MODULO_ADMIN and not pode_distribuir(usuario):
         pagina = "inicio"
     if pagina in MODULOS and not pode_acessar_modulo(usuario, pagina):
         pagina = "inicio"

@@ -16,12 +16,14 @@ def _dot(areas: pd.DataFrame, mapa: pd.DataFrame, resp: pd.DataFrame, aberta: st
     linhas = ['digraph G {', 'rankdir=LR; bgcolor="transparent"; nodesep=0.18; ranksep=0.5;',
               'node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=11, color="#c9d3e3", '
               'fillcolor="#ffffff"]; edge [color="#c9d3e3", arrowsize=0.6];',
-              'raiz [label="🎯 OBZ", fillcolor="#0B1F3A", fontcolor="white", fontsize=13];']
+              'raiz [label="🎯 OBZ' + (f'\\n👤 {e(_TT[0])}' if _TT[0] else '') + '", fillcolor="#0B1F3A", '
+              'fontcolor="white", fontsize=13];']
     for i, a in areas.iterrows():
         n = mapa[mapa["area"] == a["nome"]]
-        dono = a["dono"] if isinstance(a["dono"], str) and a["dono"] else "⚠️ sem dono"
+        dono = a["dono"] if isinstance(a["dono"], str) and a["dono"] else (f"↳ {_TT[0]} (OBZ)" if _TT[0] else
+                                                                           "⚠️ sem dono")
         cor = "#e6f0fb" if a["nome"] == aberta else "#ffffff"
-        linhas.append(f'a{i} [label="🏢 {e(a["nome"])}\\n👤 {e(dono)}\\n{n["conta"].nunique()} contas", '
+        linhas.append(f'a{i} [label="🏢 {e(a["nome"])}\\n{"" if dono.startswith(("↳", "⚠")) else "👤 "}{e(dono)}\\n{n["conta"].nunique()} contas", '
                       f'fillcolor="{cor}", color="{"#2a78d6" if a["nome"] == aberta else "#c9d3e3"}"];')
         linhas.append(f"raiz -> a{i};")
         if a["nome"] != aberta:
@@ -34,14 +36,18 @@ def _dot(areas: pd.DataFrame, mapa: pd.DataFrame, resp: pd.DataFrame, aberta: st
             for k, (_, c) in enumerate(g.drop_duplicates("conta").iterrows()):
                 sd = rs.get(c["conta"])
                 linhas.append(f'c{i}_{j}_{k} [label="{e(c["conta"])} · {e(str(c["nome"])[:30])}\\n'
-                              f'{"👤 " + e(sd) if sd else "— sem sub-dono"}", fontsize=10, '
+                              f'{"👤 " + e(sd) if sd else e(dono if dono.startswith(("↳", "⚠")) else "↳ " + dono)}", fontsize=10, '
                               f'fillcolor="{"#eefaf3" if sd else "#fff7e6"}"];')
                 linhas.append(f"v{i}_{j} -> c{i}_{j}_{k};")
     linhas.append("}")
     return "\n".join(linhas)
 
 
+_TT = [None]
+
+
 def render(usuario: dict, pode: bool) -> None:
+    _TT[0] = gs.nomes().get(obz.dono_tt())
     areas = obz.areas()
     if areas.empty:
         st.info("Suba a Base OBZ (📥 Realizado & Base) para montar os departamentos.")
@@ -123,3 +129,90 @@ def render_areas(usuario: dict, pode: bool) -> None:
                 obz.salvar_area(novo_nome, por_nome.get(r["dono"]), int(r["ordem"] or 0))
         ui.avisar("Departamentos salvos.")
         st.rerun()
+
+
+# --- 👤 Donos em cascata: OBZ total → departamento → conta --------------------------------------------------------
+def render_cascata(usuario: dict, pode: bool) -> None:
+    """Cadastro em cascata: escolhe o dono do OBZ total, depois o departamento (e o dono dele), depois as contas
+    daquele departamento. Quem fica vazio herda o dono de cima — e isso aparece na tela (↳ herdado)."""
+    from modules.componentes.cadastro import filtrar
+
+    areas = obz.areas()
+    if areas.empty:
+        st.info("Suba a Base OBZ (📥 Realizado & Base) para montar os departamentos.")
+        return
+    gest = gs.nomes()
+    if not gest:
+        st.warning("Nenhum gestor cadastrado. Cadastre em **👥 Gente & SSMA › 👔 Gestores** e volte aqui.")
+        return
+    ids = [None] + list(gest)
+    nome = lambda i: gest.get(int(i), str(i)) if i is not None and i == i else None  # noqa: E731
+    cas = obz.donos_cascata()
+
+    # ① OBZ total
+    tt = obz.dono_tt()
+    with st.container(border=True):
+        st.markdown("**① 🎯 Dono do OBZ total** — responde por tudo o que não tiver dono no departamento ou na conta.")
+        c1, c2 = st.columns([3, 1])
+        novo_tt = c1.selectbox("Dono do OBZ total", ids, index=ids.index(tt) if tt in ids else 0,
+                               format_func=lambda i: "— sem dono —" if i is None else gest.get(i, str(i)),
+                               key="obz_cas_tt", disabled=not pode, label_visibility="collapsed")
+        if pode and c2.button("Salvar", key="obz_cas_tt_s", type="primary", **ui.LARGURA):
+            ui.acao(obz.salvar_dono_tt, novo_tt, sucesso="Dono do OBZ total salvo.")
+
+    n_her_d = int(areas["dono_gestor_id"].isna().sum())
+    n_her_c = int((cas["nivel"] != "conta").sum()) if not cas.empty else 0
+    n_sem = int(cas["dono_vale"].isna().sum()) if not cas.empty else 0
+    st.caption(f"🏢 {len(areas)} departamentos · {n_her_d} herdam do OBZ total · 🧾 {len(cas)} contas · "
+               f"{n_her_c} herdam de cima · {'⚠️ ' if n_sem else ''}{n_sem} sem dono nenhum")
+
+    # ② departamento
+    def rot_area(a: str) -> str:
+        d = areas.set_index("nome").at[a, "dono_gestor_id"]
+        return f"🏢 {a} — 👤 {nome(d)}" if pd.notna(d) else f"🏢 {a} — ↳ {nome(tt) or 'sem dono'} (herda do OBZ)"
+    with st.container(border=True):
+        st.markdown("**② 🏢 Departamento e o dono dele**")
+        c1, c2, c3 = st.columns([2.2, 2, 0.9])
+        area = c1.selectbox("Departamento", areas["nome"].tolist(), key="obz_cas_area", format_func=rot_area)
+        atual = areas.set_index("nome").at[area, "dono_gestor_id"]
+        atual = int(atual) if pd.notna(atual) else None
+        herda_txt = f"↳ herdar do OBZ total ({nome(tt) or 'sem dono'})"
+        dono_d = c2.selectbox("Dono do departamento", ids, index=ids.index(atual) if atual in ids else 0,
+                              format_func=lambda i: herda_txt if i is None else gest.get(i, str(i)),
+                              key=f"obz_cas_dd_{area}", disabled=not pode)
+        c3.write("")
+        if pode and c3.button("Salvar", key=f"obz_cas_dd_s_{area}", type="primary", **ui.LARGURA):
+            ui.acao(obz.salvar_area, area, dono_d, sucesso="Dono do departamento salvo.")
+
+    # ③ contas do departamento
+    sub = cas[cas["area"] == area].sort_values(["vbz", "conta"]).reset_index(drop=True) if not cas.empty else cas
+    with st.container(border=True):
+        st.markdown(f"**③ 🧾 Contas de {area}** — vazio = herda o dono do departamento.")
+        if sub.empty:
+            st.caption("Nenhuma conta mapeada neste departamento.")
+            return
+        busca = st.text_input("🔎", key=f"obz_cas_busca_{area}", label_visibility="collapsed",
+                              placeholder="🔎 Pesquisar conta (código, nome ou VBZ)…")
+        sub = filtrar(sub, busca, colunas=["conta", "nome", "vbz"])
+        dono_do_depto = nome(atual) or nome(tt)
+        ed = pd.DataFrame({
+            "conta": sub["conta"], "VBZ": sub["vbz"], "Conta": sub["conta"] + " · " + sub["nome"].fillna(""),
+            "Dono da conta": [nome(x) for x in sub["dono_conta"]],
+            "Vale": [(f"👤 {nome(c)}" if c is not None and c == c else
+                      f"↳ {dono_do_depto} ({'depto' if atual else 'OBZ total'})" if dono_do_depto else "⚠️ sem dono")
+                     for c in sub["dono_conta"]]})
+        novo = st.data_editor(ed, hide_index=True, key=f"obz_cas_ed_{area}_{busca}", **ui.LARGURA, height=320,
+                              disabled=["conta", "VBZ", "Conta", "Vale"] if pode else True,
+                              column_order=["VBZ", "Conta", "Dono da conta", "Vale"],
+                              column_config={"Dono da conta": st.column_config.SelectboxColumn(
+                                  "👤 Dono da conta ✏️", options=list(gest.values())),
+                                  "Vale": st.column_config.TextColumn("Quem responde")})
+        if pode and st.button("💾 Salvar donos das contas", key=f"obz_cas_ct_s_{area}", type="primary"):
+            por_nome = {v: k for k, v in gest.items()}
+            n = 0
+            for (_, o), (_, r) in zip(ed.iterrows(), novo.iterrows()):
+                if (o["Dono da conta"] or None) != (r["Dono da conta"] or None):
+                    obz.salvar_resp(area, o["conta"], por_nome.get(r["Dono da conta"]))
+                    n += 1
+            ui.avisar(f"{n} conta(s) atualizada(s).")
+            st.rerun()

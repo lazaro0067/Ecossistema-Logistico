@@ -1816,6 +1816,12 @@ MIGRACOES: list[tuple[str, str]] = [
         ALTER TABLE frota_tipos ADD COLUMN cap_baias REAL;
         UPDATE frota_placas SET peso_kg = (SELECT t.cap_kg FROM frota_tipos t WHERE t.nome = frota_placas.tipo)
          WHERE peso_kg IS NULL;
+    """),    ("057_usuario_distribui", """
+        CREATE TABLE IF NOT EXISTS usuario_distribui (
+            usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+            modulo     TEXT NOT NULL,
+            PRIMARY KEY (usuario_id, modulo)
+        );
     """),
 ]
 

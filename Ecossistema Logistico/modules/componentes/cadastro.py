@@ -1,7 +1,7 @@
 """Tela padrão de cadastro — o mesmo jeito em todos os cadastros:
 
-  ① ➕ Novo (formulário)   ② tabela legível (cabeçalho em negrito, linhas marcadas)
-  ③ ✏️ Alterar ou excluir — no final: escolhe o registro, edita e salva (ou exclui).
+  ① 🔎 pesquisa + ➕ Novo (recolhido)   ② lista compacta (rola) com o que a pesquisa achou
+  ③ ✏️ escolhe um dos encontrados, edita e salva (ou exclui). Achou um só: já abre para editar.
 
 Uso:
     tela(chave="transp", titulo="Transportadoras", icone="🏢", df=df,
@@ -143,18 +143,56 @@ def _checar(campos: list[Campo], dados: dict) -> None:
             raise RegraNegocioError(f"Preencha: {c.rotulo}.")
 
 
+def _sem_acento(t: str) -> str:
+    import unicodedata
+
+    return unicodedata.normalize("NFKD", str(t)).encode("ascii", "ignore").decode().lower()
+
+
+def filtrar(df: pd.DataFrame, termo: str, campos: list[Campo] | None = None,
+            colunas: list[str] | None = None) -> pd.DataFrame:
+    """Pesquisa em todas as colunas (como aparecem na tela), sem acento e sem maiúscula. Várias palavras = todas."""
+    termo = _sem_acento(termo or "").strip()
+    if df.empty or not termo:
+        return df
+    fmts = {c.chave: c for c in (campos or [])}
+    cols = [c for c in (colunas or list(df.columns)) if c in df.columns]
+    texto = pd.Series([""] * len(df), index=df.index)
+    for c in cols:
+        vals = df[c].map(lambda v, c=c: _formatar(fmts[c], v) if c in fmts else ("" if v is None else str(v)))
+        texto = texto + " " + vals.map(_sem_acento)
+    ok = pd.Series(True, index=df.index)
+    for palavra in termo.split():
+        ok &= texto.str.contains(palavra, regex=False)
+    return df[ok]
+
+
+MAX_COLUNAS_LISTA = 6
+
+
 def tela(*, chave: str, titulo: str, df: pd.DataFrame, campos: list[Campo],
          salvar: Callable[[int | None, dict], Any], excluir: Callable[[int], Any] | None = None,
          icone: str = "", descricao: str = "", rotulo_registro: Callable[[dict], str] | None = None,
          colunas_extras: list[tuple[str, str]] | None = None, permitir_novo: bool = True,
          por_linha: int = 3, aviso_vazio: str = "Nenhum registro cadastrado ainda.") -> None:
-    regs = df.to_dict("records") if not df.empty else []
+    """Cadastro compacto: pesquisa + lista pequena (rola) → escolhe o resultado para editar · ➕ Novo recolhido."""
+    regs_todos = df.to_dict("records") if not df.empty else []
     tema.secao(f"{icone} {titulo}".strip(), descricao)
-    st.markdown(f'<span class="eco-pill">{len(regs)} cadastrado(s)</span>', unsafe_allow_html=True)
 
-    # ① Novo
+    # ① barra: pesquisa · contagem · novo
+    c1, c2 = st.columns([3, 1.2])
+    termo = c1.text_input("🔎 Pesquisar", key=f"{chave}_busca", label_visibility="collapsed",
+                          placeholder=f"🔎 Pesquisar em {titulo.lower()} (qualquer informação)…")
+    colunas = [(c.chave, c.rotulo) for c in campos if c.na_tabela]
+    for col_extra in (colunas_extras or []):
+        colunas.append(col_extra)
+    achados = filtrar(df, termo, campos, [c for c, _ in colunas]) if regs_todos else df
+    c2.markdown(f'<span class="eco-pill">{len(regs_todos)} cadastrado(s)'
+                + (f" · {len(achados)} encontrado(s)" if (termo or "").strip() else "") + "</span>",
+                unsafe_allow_html=True)
+
     if permitir_novo:
-        with st.expander(f"➕ Novo — {titulo.lower()}", expanded=not regs):
+        with st.expander(f"➕ Novo — {titulo.lower()}", expanded=not regs_todos):
             v = st.session_state.get(f"{chave}__novo_v", 0)
             with st.form(f"{chave}_novo_{v}"):
                 dados = _form(campos, {c.chave: c.padrao for c in campos}, f"{chave}_n{v}", por_linha)
@@ -169,38 +207,54 @@ def tela(*, chave: str, titulo: str, df: pd.DataFrame, campos: list[Campo],
                         ui.avisar(f"{titulo}: registro incluído.")
                         st.rerun()
 
-    # ② Tabela
-    if not regs:
+    if not regs_todos:
         st.info(aviso_vazio)
         return
-    colunas = [(c.chave, c.rotulo) for c in campos if c.na_tabela]
-    for col_extra in (colunas_extras or []):
-        colunas.append(col_extra)
-    fmts = {c.chave: (lambda v, c=c: _formatar(c, v)) for c in campos}
-    tabela_html(df, colunas, fmts)
+    if achados.empty:
+        st.info("Nada encontrado com essa pesquisa.")
+        return
 
-    # ③ Alterar ou excluir (no final)
+    # ② lista compacta (rola; as demais informações aparecem ao editar)
+    fmts = {c.chave: (lambda v, c=c: _formatar(c, v)) for c in campos}
+    tabela_html(achados, colunas[:MAX_COLUNAS_LISTA], fmts, altura_max=230)
+
+    # ③ editar ou excluir — escolhe entre os encontrados
+    regs = achados.to_dict("records")
     rotulo = rotulo_registro or (lambda r: str(r.get(campos[0].chave) or f"#{r.get('id')}"))
-    with st.container(key=f"cad_alt_{chave}"):
-        st.markdown('<div class="eco-alt-titulo">✏️ Alterar ou excluir</div>', unsafe_allow_html=True)
-        ids = [r["id"] for r in regs]
-        nomes = {r["id"]: rotulo(r) for r in regs}
-        rid = st.selectbox("Escolha o registro", [None] + ids, key=f"{chave}_alt_sel",
-                           format_func=lambda i: "Selecione para alterar ou excluir..." if i is None else nomes[i])
-        if rid is None:
-            return
-        atual = next(r for r in regs if r["id"] == rid)
+    ids = [r["id"] for r in regs]
+    nomes = {r["id"]: rotulo(r) for r in regs}
+    k_sel = f"{chave}_alt_sel"
+    if st.session_state.get(k_sel) not in [None, *ids]:
+        st.session_state.pop(k_sel, None)  # a pesquisa mudou e o escolhido saiu da lista
+    if (len(ids) == 1 and (termo or "").strip() and st.session_state.get(k_sel) is None
+            and st.session_state.get(f"{chave}_fechou") != termo):
+        st.session_state[k_sel] = ids[0]  # pesquisa achou um só: já abre para editar
+    rid = st.selectbox("✏️ Editar ou excluir", [None] + ids, key=k_sel,
+                       format_func=lambda i: (f"✏️ Escolha para editar ou excluir ({len(ids)} na lista)…"
+                                              if i is None else nomes[i]))
+    if rid is None:
+        return
+    atual = next(r for r in regs if r["id"] == rid)
+    with st.container(border=True, key=f"cad_alt_{chave}"):
+        st.markdown(f'<div class="eco-alt-titulo">✏️ {html.escape(nomes[rid])}</div>', unsafe_allow_html=True)
         with st.form(f"{chave}_alt_{rid}"):
             dados = _form(campos, atual, f"{chave}_a{rid}", por_linha)
-            if st.form_submit_button("💾 Salvar alterações", type="primary"):
-                try:
-                    _checar(campos, dados)
-                    _salvar_seguro(salvar, int(rid), dados)
-                except RegraNegocioError as e:
-                    st.error(str(e))
-                else:
-                    ui.avisar("Alteração salva.")
-                    st.rerun()
+            b1, b2 = st.columns([1, 1])
+            gravar = b1.form_submit_button("💾 Salvar alterações", type="primary")
+            fechar = b2.form_submit_button("✖️ Fechar")
+        if fechar:
+            st.session_state.pop(k_sel, None)
+            st.session_state[f"{chave}_fechou"] = termo
+            st.rerun()
+        if gravar:
+            try:
+                _checar(campos, dados)
+                _salvar_seguro(salvar, int(rid), dados)
+            except RegraNegocioError as e:
+                st.error(str(e))
+            else:
+                ui.avisar("Alteração salva.")
+                st.rerun()
         if excluir:
             with st.popover("🗑️ Excluir este registro"):
                 st.caption(f"Excluir **{nomes[rid]}**? Não dá para desfazer.")
@@ -215,6 +269,6 @@ def tela(*, chave: str, titulo: str, df: pd.DataFrame, campos: list[Campo],
                         st.error("Este registro está em uso e não pode ser excluído."
                                  if tipo_violacao(e) == "fk" else f"Não foi possível excluir: {e}")
                     else:
-                        st.session_state.pop(f"{chave}_alt_sel", None)
+                        st.session_state.pop(k_sel, None)
                         ui.avisar("Registro excluído.", "info")
                         st.rerun()

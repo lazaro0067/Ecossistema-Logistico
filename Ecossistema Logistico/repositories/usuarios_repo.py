@@ -56,7 +56,25 @@ def carregar_sessao(usuario_id: int) -> dict:
         "SELECT modulo FROM usuario_modulos WHERE usuario_id = ?", (usuario_id,))]
     u["operacoes"] = [r["operacao_id"] for r in query_all(
         "SELECT operacao_id FROM usuario_operacoes WHERE usuario_id = ?", (usuario_id,))]
+    u["distribui"] = distribui(usuario_id)
     return u
+
+
+def distribui(usuario_id: int) -> list[str]:
+    """Pastas/telas que o Master liberou para este usuário distribuir (vincular a outros usuários)."""
+    try:
+        return [r["modulo"] for r in query_all("SELECT modulo FROM usuario_distribui WHERE usuario_id = ?",
+                                               (int(usuario_id),))]
+    except Exception:  # noqa: BLE001 — banco ainda sem a tabela (antes da migração)
+        return []
+
+
+def salvar_distribui(usuario_id: int, chaves: list[str]) -> None:
+    with get_conn() as conn:
+        conn.execute("DELETE FROM usuario_distribui WHERE usuario_id = ?", (int(usuario_id),))
+        if chaves:
+            conn.executemany("INSERT INTO usuario_distribui (usuario_id, modulo) VALUES (?, ?)",
+                             [(int(usuario_id), c) for c in sorted(set(chaves))])
 
 
 def registrar_acesso(usuario_id: int) -> None:
@@ -70,6 +88,7 @@ def listar_df() -> pd.DataFrame:
                CASE u.e_aprovador WHEN 1 THEN 'Sim' ELSE 'Não' END AS aprovador,
                u.alcada, u.ultimo_acesso,
                (SELECT COUNT(*) FROM usuario_modulos m WHERE m.usuario_id = u.id) AS pastas,
+               (SELECT COUNT(*) FROM usuario_distribui d WHERE d.usuario_id = u.id) AS distribui,
                COALESCE((SELECT group_concat(o.nome, ', ') FROM usuario_operacoes uo
                          JOIN operacoes o ON o.id = uo.operacao_id WHERE uo.usuario_id = u.id), 'Todas') AS operacoes
         FROM usuarios u ORDER BY u.ativo DESC, u.nome

@@ -573,10 +573,16 @@ def render_cadastros(usuario: dict, operacao_id: int) -> None:
     pode = e_master(usuario) or obz.pode_aprovar(usuario)
     if not pode:
         st.info("Somente o Master e os aprovadores do financeiro alteram os cadastros do OBZ.")
-    aba = ui._escolha("obz_c_aba", ["arvore", "areas", "deptos", "contas", "papeis"], "arvore", pills=True,
-                      formatar={"arvore": "🌳 Árvore de donos", "areas": "🏢 Departamentos",
+    aba = ui._escolha("obz_c_aba", ["donos", "arvore", "areas", "deptos", "contas", "papeis"], "donos", pills=True,
+                      formatar={"donos": "👤 Donos (cascata)", "arvore": "🌳 Árvore de donos",
+                                "areas": "🏢 Departamentos",
                                 "deptos": "🔢 Códigos de depto", "contas": "🧾 Contas",
                                 "papeis": "🔑 Papéis (lança / aprova / plan)"}.get)
+    if aba == "donos":
+        from modules.financeiro import obz_arvore
+
+        obz_arvore.render_cascata(usuario, pode)
+        return
     if aba == "arvore":
         from modules.financeiro import obz_arvore
 

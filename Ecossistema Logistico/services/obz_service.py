@@ -227,7 +227,9 @@ def pode_lancar(usuario: dict, conta: str, depto: str) -> bool:
     if a and a["dono_gestor_id"] == gid:
         return True
     r = query_one("SELECT gestor_id FROM obz_resp WHERE area = ? AND conta = ?", (area, str(conta)))
-    return bool(r and r["gestor_id"] == gid)
+    if r and r["gestor_id"] == gid:
+        return True
+    return dono_tt() == gid  # o dono do OBZ total responde por tudo (cascata)
 
 
 def pode_plan(usuario: dict) -> bool:
@@ -290,6 +292,48 @@ def salvar_resp(area: str, conta: str, gestor_id: int | None) -> None:
         if gestor_id:
             conn.execute("INSERT INTO obz_resp (area, conta, gestor_id) VALUES (?, ?, ?)",
                          (area, str(conta), int(gestor_id)))
+
+
+# --- 👤 Donos em cascata: OBZ total → departamento → conta (quem não tem dono herda o de cima) ---------------
+def dono_tt() -> int | None:
+    r = query_one("SELECT codigo FROM setor_operacoes WHERE setor = 'obz_dono_tt'")
+    try:
+        return int(r["codigo"]) if r and r["codigo"] else None
+    except (TypeError, ValueError):
+        return None
+
+
+def salvar_dono_tt(gestor_id: int | None) -> None:
+    with get_conn() as conn:
+        conn.execute("DELETE FROM setor_operacoes WHERE setor = 'obz_dono_tt'")
+        if gestor_id:
+            conn.execute("INSERT INTO setor_operacoes (setor, codigo) VALUES ('obz_dono_tt', ?)", (str(int(gestor_id)),))
+
+
+def donos_cascata() -> pd.DataFrame:
+    """Uma linha por departamento × conta com o dono próprio e o dono que vale (herdado de cima quando vazio).
+    nivel = 'conta' | 'departamento' | 'OBZ total' | None (ninguém)."""
+    from services import gestores_service as gs
+
+    nomes = gs.nomes()
+    tt = dono_tt()
+    a = areas().set_index("nome")["dono_gestor_id"].to_dict() if not areas().empty else {}
+    mapa = query_df("""SELECT DISTINCT m.area, m.conta, m.vbz, c.nome FROM obz_mapa m
+                       LEFT JOIN obz_contas c ON c.codigo = m.conta WHERE m.area IS NOT NULL""")
+    r = resp_df()
+    rs = {(x, c): g for x, c, g in zip(r["area"], r["conta"], r["gestor_id"])} if not r.empty else {}
+    linhas = []
+    for ar, conta, vbz, nome in zip(mapa["area"], mapa["conta"], mapa["vbz"], mapa["nome"]):
+        dc = rs.get((ar, conta))
+        dd = a.get(ar)
+        dc = int(dc) if dc is not None and dc == dc else None
+        dd = int(dd) if dd is not None and dd == dd else None
+        vale, nivel = ((dc, "conta") if dc else (dd, "departamento") if dd else (tt, "OBZ total") if tt
+                       else (None, None))
+        linhas.append({"area": ar, "conta": conta, "vbz": vbz, "nome": nome, "dono_conta": dc, "dono_depto": dd,
+                       "dono_vale": vale, "nivel": nivel, "dono_vale_nome": nomes.get(vale) if vale else None})
+    return pd.DataFrame(linhas, columns=["area", "conta", "vbz", "nome", "dono_conta", "dono_depto", "dono_vale",
+                                         "nivel", "dono_vale_nome"])
 
 
 def resp_df() -> pd.DataFrame:
