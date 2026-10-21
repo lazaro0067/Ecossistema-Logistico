@@ -49,7 +49,12 @@ def salvar_placa(pid: int | None, d: dict, usuario: str) -> int:
         raise RegraNegocioError("Ano inválido.")
     if ano and not 1980 <= ano <= tempo.hoje().year + 1:
         raise RegraNegocioError("Ano fora do intervalo.")
-    dados = {"placa": placa, "operacao_id": int(d["operacao_id"]), "tipo": d.get("tipo"),
+    try:
+        peso = float(str(d.get("peso_kg")).replace(",", ".")) if d.get("peso_kg") not in (None, "") else None
+    except ValueError:
+        raise RegraNegocioError("Capacidade de peso inválida.")
+    peso = peso if peso is not None and peso == peso and peso > 0 else None
+    dados = {"placa": placa, "operacao_id": int(d["operacao_id"]), "tipo": d.get("tipo"), "peso_kg": peso,
              "marca_modelo": (d.get("marca_modelo") or "").strip() or None, "ano": ano,
              "proprietario_id": int(d["proprietario_id"]) if d.get("proprietario_id") else None,
              "aluguel": aluguel, "locadora_id": int(locadora) if locadora else None, "area": d.get("area") or None,
@@ -84,7 +89,9 @@ def tipos_df() -> pd.DataFrame:
     from database.connection import query_df
 
     _garantir_cadastros()
-    return query_df("""SELECT t.id, t.nome, t.ativo, t.cap_cx, t.cap_kg,
+    return query_df("""SELECT t.id, t.nome, t.ativo, t.cap_cx, t.cap_baias, t.cap_kg,
+                              (SELECT AVG(p.peso_kg) FROM frota_placas p WHERE p.tipo = t.nome AND p.peso_kg > 0)
+                                  AS peso_placas,
                               (SELECT COUNT(*) FROM frota_placas p WHERE p.tipo = t.nome) AS placas,
                               (SELECT COUNT(*) FROM frota_modelos m WHERE m.tipo = t.nome) AS modelos
                        FROM frota_tipos t ORDER BY t.nome""")
@@ -116,16 +123,17 @@ def salvar_tipo(tid: int | None, d: dict) -> int:
         if x is not None and (x != x or x <= 0):
             return None
         return x
-    cx, kg = num(d.get("cap_cx")), num(d.get("cap_kg"))
+    cx, baias = num(d.get("cap_cx")), num(d.get("cap_baias"))  # o peso é por placa (🚚 Cadastro de Placas)
     if tid:
         antes = query_one("SELECT nome FROM frota_tipos WHERE id = ?", (int(tid),))
-        execute("UPDATE frota_tipos SET nome = ?, ativo = ?, cap_cx = ?, cap_kg = ? WHERE id = ?",
-                (nome, ativo, cx, kg, int(tid)))
+        execute("UPDATE frota_tipos SET nome = ?, ativo = ?, cap_cx = ?, cap_baias = ? WHERE id = ?",
+                (nome, ativo, cx, baias, int(tid)))
         if antes and antes["nome"] != nome:  # renomeou: leva junto placas e modelos
             execute("UPDATE frota_placas SET tipo = ? WHERE tipo = ?", (nome, antes["nome"]))
             execute("UPDATE frota_modelos SET tipo = ? WHERE tipo = ?", (nome, antes["nome"]))
         return int(tid)
-    return execute("INSERT INTO frota_tipos (nome, ativo, cap_cx, cap_kg) VALUES (?, ?, ?, ?)", (nome, ativo, cx, kg))
+    return execute("INSERT INTO frota_tipos (nome, ativo, cap_cx, cap_baias) VALUES (?, ?, ?, ?)",
+                   (nome, ativo, cx, baias))
 
 
 def excluir_tipo(tid: int) -> None:

@@ -5,7 +5,7 @@ from core import tempo
 from database.connection import execute, query_df, query_one
 
 CAMPOS_PLACA = ["placa", "operacao_id", "tipo", "marca_modelo", "ano", "proprietario_id", "aluguel", "locadora_id",
-                "area", "motorista_id", "status", "observacao"]
+                "area", "motorista_id", "status", "observacao", "peso_kg"]
 
 
 # --- Placas ----------------------------------------------------------------------------------

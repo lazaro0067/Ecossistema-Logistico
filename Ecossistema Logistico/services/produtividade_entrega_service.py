@@ -354,7 +354,8 @@ def mensal(df: pd.DataFrame) -> pd.DataFrame:
 
 # --- Previsão de modais ------------------------------------------------------------------------------
 def _cap_cadastro() -> dict:
-    """Capacidade informada no cadastro da Frota (🏷️ Modelos & Tipos) — tipo → (caixas, kg)."""
+    """Capacidade do cadastro da Frota — tipo → (caixas do perfil em 🏷️ Modelos & Tipos, kg = média do peso das
+    placas do tipo em 🚚 Placas)."""
     try:
         from services import frota_service
 
@@ -362,7 +363,9 @@ def _cap_cadastro() -> dict:
     except Exception:  # noqa: BLE001
         return {}
     out = {}
-    for n, cx, kg in zip(t["nome"], t.get("cap_cx", pd.Series(dtype=float)), t.get("cap_kg", pd.Series(dtype=float))):
+    kg_tipo = t["peso_placas"].where(t["peso_placas"].notna(), t.get("cap_kg")) if "peso_placas" in t else t.get(
+        "cap_kg", pd.Series(dtype=float))
+    for n, cx, kg in zip(t["nome"], t.get("cap_cx", pd.Series(dtype=float)), kg_tipo):
         cx, kg = pd.to_numeric(cx, errors="coerce"), pd.to_numeric(kg, errors="coerce")
         if (pd.notna(cx) and cx > 0) or (pd.notna(kg) and kg > 0):
             out[str(n)] = (float(cx) if pd.notna(cx) and cx > 0 else None, float(kg) if pd.notna(kg) and kg > 0 else None)

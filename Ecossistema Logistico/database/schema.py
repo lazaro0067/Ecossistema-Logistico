@@ -1811,6 +1811,11 @@ MIGRACOES: list[tuple[str, str]] = [
     """),    ("055_frota_capacidade", """
         ALTER TABLE frota_tipos ADD COLUMN cap_cx REAL;
         ALTER TABLE frota_tipos ADD COLUMN cap_kg REAL;
+    """),    ("056_frota_peso_placa", """
+        ALTER TABLE frota_placas ADD COLUMN peso_kg REAL;
+        ALTER TABLE frota_tipos ADD COLUMN cap_baias REAL;
+        UPDATE frota_placas SET peso_kg = (SELECT t.cap_kg FROM frota_tipos t WHERE t.nome = frota_placas.tipo)
+         WHERE peso_kg IS NULL;
     """),
 ]
 

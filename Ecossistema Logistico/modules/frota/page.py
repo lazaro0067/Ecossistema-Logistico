@@ -149,11 +149,13 @@ def _placas(usuario: dict) -> None:
         df["aluguel_txt"] = ["Sim" if a == a and a and int(a) == 1 else "Não" for a in df["aluguel"]]
     tela(chave="fr_placas", titulo="Placas", icone="🚚", df=df, por_linha=3,
          descricao="Proprietário vem das transportadoras · aluguel Sim/Não (escolha a locadora) · revenda · "
-                   "área onde a placa trabalha · motorista do cadastro.",
+                   "área onde a placa trabalha · motorista do cadastro · capacidade de peso (kg) de cada placa.",
          campos=[CampoCad("placa", "Placa", obrigatorio=True),
                  CampoCad("operacao_id", "Revenda", "opcoes", True, revs),
                  CampoCad("tipo", "Tipo de veículo", "opcoes", True, svc.tipos()),
                  CampoCad("marca_modelo", "Marca / modelo", "opcoes", False, _opcoes_modelo(df)),
+                 CampoCad("peso_kg", "Capacidade de peso (kg)", "inteiro",
+                          ajuda="Peso que esta placa carrega (pode variar entre placas do mesmo tipo)."),
                  CampoCad("ano", "Ano", "inteiro", na_tabela=False),
                  CampoCad("proprietario_id", "Proprietário (transportadora)", "opcoes", False, transp),
                  CampoCad("aluguel", "Aluguel?", "opcoes", True, {0: "Não", 1: "Sim"}, padrao=0, na_tabela=False),
@@ -178,14 +180,18 @@ def _modelos_tipos(usuario: dict) -> None:
     st.caption("Os tipos e modelos cadastrados aqui aparecem como opção no 🚚 Cadastro de Placas. Renomear leva junto "
                "as placas que já usam.")
     tp = svc.tipos_df()
-    tela(chave="fr_tipos", titulo="Tipos de veículo", icone="🚛", df=tp, por_linha=2,
-         descricao="Ex.: Truck, Toco, 3/4, VUC, Van, Fiorino… A capacidade (caixas e kg) entra na Produtividade "
-                   "Entrega › previsão de modais (frota sugerida por tipo).",
+    if not tp.empty:
+        tp["peso_txt"] = [f"{v:,.0f} kg".replace(",", ".") if pd.notna(v) else "—" for v in tp["peso_placas"]]
+    tela(chave="fr_tipos", titulo="Tipos de veículo (perfil)", icone="🚛", df=tp, por_linha=2,
+         descricao="Ex.: Truck, Toco, 3/4, VUC, Van, Fiorino… Caixas e baias de cada perfil. O peso é por placa "
+                   "(🚚 Cadastro de Placas); aqui aparece a média das placas do tipo. Entra na Produtividade Entrega › "
+                   "previsão de modais (frota sugerida por tipo).",
          campos=[CampoCad("nome", "Tipo", obrigatorio=True),
                  CampoCad("cap_cx", "Capacidade (caixas)", "inteiro"),
-                 CampoCad("cap_kg", "Capacidade (kg)", "inteiro"),
+                 CampoCad("cap_baias", "Quantidade de baias", "inteiro"),
                  CampoCad("ativo", "Ativo?", "opcoes", True, {1: "Sim", 0: "Não"}, padrao=1)],
-         colunas_extras=[("modelos", "Modelos"), ("placas", "Placas")], rotulo_registro=lambda r: r["nome"],
+         colunas_extras=[("peso_txt", "Peso médio das placas"), ("modelos", "Modelos"), ("placas", "Placas")],
+         rotulo_registro=lambda r: r["nome"],
          salvar=svc.salvar_tipo, excluir=svc.excluir_tipo, aviso_vazio="Nenhum tipo cadastrado.")
     tela(chave="fr_modelos", titulo="Modelos (marca / modelo)", icone="🏷️", df=svc.modelos_df(), por_linha=2,
          descricao="Ex.: VW Delivery 11.180, Mercedes Atego 2426… com o tipo de veículo de cada modelo.",
