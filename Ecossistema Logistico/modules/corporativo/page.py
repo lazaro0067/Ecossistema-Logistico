@@ -13,7 +13,6 @@ from modules.corporativo import cadastros, estoque_dre, faturamento, prod_entreg
 _PLANO = {
     "gente": ("👥 Gente", "Quadro, absenteísmo, turnover, horas extras e treinamentos por revenda.", "gente"),
     "seguranca": ("🦺 Segurança", "Acidentes, incidentes, DDS, inspeções e dias sem acidente.", "gente"),
-    "gestao": ("📊 Gestão", "Painel único com os principais indicadores de todas as áreas (farol do grupo).", None),
 }
 
 
@@ -45,6 +44,18 @@ def _em_construcao(usuario: dict, aba: str) -> None:
             st.rerun()
 
 
+def _painel(usuario: dict, operacao_id: int) -> None:
+    from modules.corporativo import painel_resultados
+
+    painel_resultados.render(usuario, operacao_id)
+
+
+def _agente(usuario: dict, operacao_id: int) -> None:
+    from modules.corporativo import agente
+
+    agente.render(usuario, operacao_id)
+
+
 def render(usuario: dict, operacao_id: int) -> None:
     ui.cabecalho_modulo("corporativo")
     abas = {a: (lambda u, o, a=a: _em_construcao(u, a)) for a in _PLANO}
@@ -52,5 +63,5 @@ def render(usuario: dict, operacao_id: int) -> None:
                  "compras": faturamento.render_compras, "margem": faturamento.render_margem,
                  "vendas_fin": lambda u, o: faturamento.render_faturamento(u, o, "💰 Financeiro › **💵 Vendas**"), "relatorios": relatorios.render, "cadastros": cadastros.render,
                  "estoque_valor": estoque_dre.render_estoque, "dre": estoque_dre.render_dre,
-                 "planejamento": _planejamento})
+                 "planejamento": _planejamento, "gestao": _painel, "agente": _agente})
     ui.abas_modulo(usuario, "corporativo", abas, usuario, operacao_id)

@@ -7,3 +7,4 @@ xlrd
 python-docx
 psycopg[binary,pool]>=3.1
 tzdata
+anthropic>=0.40

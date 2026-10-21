@@ -23,8 +23,13 @@ MODO_MOTORISTA = (str(st.query_params.get("app", "")).lower() in ("motorista", "
                   or os.environ.get("ECO_MODO", "").lower() == "carreteiro")
 # Link do app de recontagem do inventário (conferentes no celular): ...?app=recontagem
 MODO_RECONTAGEM = str(st.query_params.get("app", "")).lower() == "recontagem"
+# Link do 🤖 Agente de Resultados no celular (salvar na tela inicial): ...?app=agente
+MODO_AGENTE = str(st.query_params.get("app", "")).lower() == "agente"
 
-if MODO_RECONTAGEM:
+if MODO_AGENTE:
+    st.set_page_config(page_title="Agente de Resultados", page_icon="🤖", layout="centered",
+                       initial_sidebar_state="collapsed")
+elif MODO_RECONTAGEM:
     st.set_page_config(page_title="Recontagem — Grupo Lima", page_icon="📱", layout="centered",
                        initial_sidebar_state="collapsed")
 elif MODO_MOTORISTA:
@@ -388,6 +393,24 @@ def app_recontagem(usuario: dict) -> None:
         st.rerun()
 
 
+def app_agente(usuario: dict) -> None:
+    """Link ...?app=agente: só o 🤖 Agente de Resultados, em tela de celular (dá para salvar na tela inicial)."""
+    from core.auth import pode_acessar_aba
+    from modules.corporativo import agente
+
+    ui.mostrar_avisos()
+    c1, c2 = st.columns([3, 1])
+    c1.markdown(f"### 🤖 Agente de Resultados\n<small>{tema._e(usuario['nome'])}</small>", unsafe_allow_html=True)
+    if c2.button("🚪 Sair", key="ag_app_sair"):
+        session.sair()
+        st.rerun()
+    if not pode_acessar_aba(usuario, "corporativo", "agente"):
+        st.warning("🔒 Seu usuário não tem acesso ao Agente de Resultados. Peça ao administrador a permissão "
+                   "Gestão Corporativa › 📊 Gestão.")
+        return
+    agente.render(usuario, session.operacao_id(), modo_app=True)
+
+
 def _entrar_lembrado() -> dict | None:
     """“Manter conectado”: o token (?s=...) no endereço refaz o login depois de recarregar a página ou de o
     servidor reiniciar (nova versão). Trocar a senha ou clicar em Sair invalida/remove o token."""
@@ -475,6 +498,9 @@ def main() -> None:
         return
     if MODO_RECONTAGEM:
         app_recontagem(usuario)
+        return
+    if MODO_AGENTE:
+        app_agente(usuario)
         return
 
     pagina = session.pagina() or "inicio"
