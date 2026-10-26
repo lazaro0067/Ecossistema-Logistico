@@ -174,7 +174,7 @@ def restaurar_se_vazio() -> str | None:
 # Ficam fora do backup principal (são grandes). Sem isso, a cada Reboot do Streamlit Cloud (banco temporário)
 # elas sumiam e a Gestão Corporativa ficava vazia. Agora: backup separado e restauração quando a tabela está vazia.
 PASTA_BASES = "backup/bases"
-BASES_MINUTOS = 30
+BASES_MINUTOS = 5  # confere a cada 5 min (barato: só COUNT/MAX); envia só a base que mudou
 _MAX_BYTES_BASE = 70 * 1024 * 1024  # limite de arquivo do GitHub (com folga)
 _bases = {"assin": {}, "ultimo": 0.0, "restaurado": False, "msg": None, "erro": None}
 
@@ -255,9 +255,22 @@ def _iniciar_bases() -> None:
         _bases["restaurado"] = True
 
 
+def _sou_o_atual() -> bool:
+    """Depois de uma atualização "a quente" (o Streamlit troca o código sem reiniciar), o laço da versão antiga
+    encerra e o da versão nova assume — senão o backup ficava rodando com o código velho (ou parado)."""
+    import sys
+
+    return sys.modules.get(__name__) is _ESTE_MODULO
+
+
 def _ciclo() -> None:
+    primeiro = True
     while True:
-        time.sleep(AUTO_MINUTOS * 60)
+        # 1ª volta em 1 min (não espera 5 min depois de ligar/atualizar); depois a cada AUTO_MINUTOS
+        time.sleep(60 if primeiro else AUTO_MINUTOS * 60)
+        primeiro = False
+        if not _sou_o_atual():
+            return
         try:
             salvar_agora()
         except Exception as e:  # noqa: BLE001 — nunca derruba o app
@@ -274,6 +287,10 @@ def _ao_desligar() -> None:
         salvar_agora("ao desligar o servidor")
     except Exception:
         pass
+    try:
+        salvar_bases()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def iniciar() -> None:
@@ -289,8 +306,8 @@ def iniciar() -> None:
     except Exception as e:  # noqa: BLE001
         _estado["erro"] = f"{tempo.agora():%d/%m %H:%M} · {e}"
         return
-    if not any(t.name == "backup-auto" and t.is_alive() for t in threading.enumerate()):
-        threading.Thread(target=_ciclo, name="backup-auto", daemon=True).start()
+    if not any(t.name == _NOME_CICLO and t.is_alive() for t in threading.enumerate()):
+        threading.Thread(target=_ciclo, name=_NOME_CICLO, daemon=True).start()
         atexit.register(_ao_desligar)
     # o 1º backup roda em segundo plano, 1 minuto depois de ligar (não pesa na partida do servidor)
     threading.Thread(target=_primeiro_backup, name="backup-inicio", daemon=True).start()
@@ -312,3 +329,7 @@ def tentar_de_novo() -> None:
 
 def estado() -> dict:
     return dict(_estado, configurado=configurado(), bases=dict(_bases))
+
+
+_ESTE_MODULO = __import__("sys").modules[__name__]
+_NOME_CICLO = f"backup-auto-{id(_ESTE_MODULO)}"  # um laço por versão carregada do código
