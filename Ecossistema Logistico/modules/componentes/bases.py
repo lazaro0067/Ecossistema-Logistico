@@ -127,7 +127,7 @@ def card_base(layout_key: str, operacao_id: int, usuario: dict, titulo: str, fre
 BASES_TITULOS = {
     "produtos": ("Relatório 01.11", "Cadastro · quando mudar"),
     "linear": ("Relatório Linear", "A cada 3 meses"),
-    "estoque": ("Relatório 02.03.04", "Diário"),
+    "estoque": ("Grade Cora", "A cada 2 h"),
     "pedidos_marcados": ("Puxada Marcada", "D0, D1, D2 · diário"),
     "ressuprimento": ("Ressuprimento diário", "Diário · todas as filiais"),
     "politica": ("Política de estoque", "Semanal"),

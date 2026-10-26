@@ -1,4 +1,4 @@
-"""Armazém › ✅ Check de Grade — 02.05.02 do dia (depósito 1) × grade (02.03.04). Diferença acima do limite vira
+"""Armazém › ✅ Check de Grade — 02.05.02 do dia (depósito 1) × Grade Cora (coluna Entrada). Diferença acima do limite vira
 alerta para os gestores do controle e aparece no painel de itens errados."""
 import plotly.graph_objects as go
 import pandas as pd
@@ -32,7 +32,7 @@ def _painel(usuario: dict, op: int) -> None:
     ck = gs.checks(op)
     if ck.empty:
         st.info("Nenhum check de grade ainda. Use ➕ Novo check: suba o 02.05.02 do dia — o depósito 1 é conferido "
-                "com a grade do relatório 02.03.04.")
+                "com a ENTRADA da Grade Cora.")
         return
     ult = ck.iloc[0]
     it = gs.itens(int(ult["id"]))
@@ -88,7 +88,7 @@ def _painel(usuario: dict, op: int) -> None:
 def _tab(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame({
         "": ["🔻" if d < 0 else "🔺" for d in df["dif"]], "Código": df["cod"], "Produto": df["descricao"],
-        "Depósito 1 (cx)": df["sistema"].map(_n), "Grade 02.03.04 (cx)": df["grade"].map(_n),
+        "Depósito 1 (cx)": df["sistema"].map(_n), "Grade Cora — entrada (cx)": df["grade"].map(_n),
         "Diferença (cx)": df["dif"].map(lambda v: f"{v:+.0f}"), "Diferença %": df["dif_pct"].map(_p)}).reset_index(
         drop=True)
 
@@ -103,19 +103,20 @@ def _novo(usuario: dict, op: int) -> None:
     c1, c2, c3 = st.columns([1, 1.6, 1])
     data = c1.date_input("Data do check", value=tempo.hoje(), format="DD/MM/YYYY", key="gr_data")
     if grade.empty:
-        c2.warning("A grade vem do relatório **02.03.04** — suba ele em 📥 Atualizar relatórios.")
+        c2.warning("A grade vem da **Grade Cora** — o robô atualiza a cada 2 h (ou suba em 📥 Atualizar relatórios).")
         return
     quando = pd.to_datetime(dt_grade, errors="coerce") if dt_grade else None
-    c2.markdown(f"**Grade (02.03.04):** {len(grade)} produto(s) · {_n(grade['grade'].sum())} cx  \n"
-                f"carregado em {quando.strftime('%d/%m/%Y %H:%M') if quando is not None and pd.notna(quando) else '—'}")
+    c2.markdown(f"**Grade Cora ({grade.attrs.get('coluna', 'entrada')}):** {len(grade)} produto(s) · "
+                f"{_n(grade['grade'].sum())} cx  \n"
+                f"carregada em {quando.strftime('%d/%m/%Y %H:%M') if quando is not None and pd.notna(quando) else '—'}")
     if quando is not None and pd.notna(quando) and quando.date() != data:
-        c2.caption("⚠️ O 02.03.04 não é da data do check — atualize se quiser conferir com a grade do dia.")
+        c2.caption("⚠️ A Grade Cora não é da data do check — atualize se quiser conferir com a grade do dia.")
     c3.metric("Limite de diferença", f"{lim:.0f}%")
     arq = st.file_uploader("📤 02.05.02 do dia (" + arquivos.FORMATOS_TXT + ") — o sistema confere o depósito 1",
                            type=arquivos.FORMATOS, key="gr_arq")
     if arq is None:
         st.caption("Suba o 02.05.02 do dia: todos os produtos com saldo no depósito 1 são comparados, em caixas, com o "
-                   "disponível da grade (02.03.04).")
+                   "a ENTRADA da Grade Cora.")
         return
     try:
         a2 = arquivos.preparar(arq)

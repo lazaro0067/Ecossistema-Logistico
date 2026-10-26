@@ -519,7 +519,8 @@ def render_real(usuario: dict, operacao_id: int) -> None:
         st.markdown("**📗 Base OBZ (planilha com uma aba por departamento)**")
         st.caption("Grava departamentos (abas), contas, VBZ, o mapa conta × depto (a aba Folha vai para o "
                    "departamento pelo código da coluna B), o plan de todos os meses, o real histórico das abas e o "
-                   "razão da aba 16.03.01.")
+                   "razão da aba 16.03.01. Também aceita o layout com uma aba consolidada (UNIDADE · DEP · DONO · "
+                   "DPT · Nº CONTA · PLAN/Real por mês) — a revenda vem da coluna UNIDADE.")
         c1, c2 = st.columns([1, 3])
         ano = c1.selectbox("Ano da base", [str(dt.date.today().year + i) for i in (0, -1, 1)], key="obz_b_ano")
         arqb = c2.file_uploader("Base OBZ (.xlsx)", type=["xlsx"], key="obz_b_up")
@@ -531,7 +532,8 @@ def render_real(usuario: dict, operacao_id: int) -> None:
             except RegraNegocioError as e:
                 st.error(str(e))
             else:
-                ui.avisar(f"Base OBZ: {r['departamentos']} departamentos · {r['contas']} contas · plan de "
+                ui.avisar((f"Base OBZ de {r['revenda']} (lida da coluna UNIDADE) — " if r.get("revenda") else "")
+                          + f"Base OBZ: {r['departamentos']} departamentos · {r['contas']} contas · plan de "
                           f"{len(r['meses_plan'])} meses ({_m(r['plan'])}) · real histórico: "
                           f"{len(r['meses_historico'])} meses"
                           + (f" · razão 16.03.01: {r['real']['lancamentos']} lançamentos" if r.get("real") else ""))

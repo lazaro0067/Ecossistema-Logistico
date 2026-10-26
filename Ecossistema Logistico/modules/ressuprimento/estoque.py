@@ -23,7 +23,7 @@ def render(usuario: dict, operacao_id: int) -> None:
 def _gestao_doi(usuario: dict, operacao_id: int) -> None:
     df = armazem_service.posicao_com_indicadores(operacao_id)
     if df.empty:
-        st.info("Sem posição de estoque. Atualize o **Relatório 02.03.04** na aba de bases.")
+        st.info("Sem posição de estoque. Atualize a **Grade Cora** na aba de bases.")
         return
     r = armazem_service.resumo(operacao_id, df)
     meta_media = float(df.loc[df["linear_cx_dia"] > 0, "doi_meta"].mean() or 7)

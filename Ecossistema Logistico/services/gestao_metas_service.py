@@ -147,8 +147,14 @@ def _real_por_dia(operacao_id: int, mes_ano: str) -> pd.DataFrame:
     return d
 
 
+def ultimo_fechado() -> dt.date:
+    """Ressuprimento: o BI da Ambev só traz até ONTEM — hoje ainda é dia de puxada pendente."""
+    return tempo.hoje() - dt.timedelta(days=1)
+
+
 def referencia(operacao_id: int, mes_ano: str, real: pd.DataFrame | None = None) -> dt.date | None:
-    """Último dia já realizado: a última data com lançamento (no mês corrente, no máximo ontem/hoje)."""
+    """Último dia já realizado: a última data com lançamento — no mês corrente, no máximo ONTEM (o BI atualiza até o
+    dia anterior; hoje conta como dia pendente)."""
     real = _real_por_dia(operacao_id, mes_ano) if real is None else real
     hoje = tempo.hoje()
     dias = dias_do_mes(mes_ano)
@@ -158,7 +164,8 @@ def referencia(operacao_id: int, mes_ano: str, real: pd.DataFrame | None = None)
         return None
     if real.empty:
         return None
-    return min(max(real["data"]), hoje)
+    ref = min(max(real["data"]), ultimo_fechado())
+    return ref if ref.strftime("%Y-%m") == mes_ano else None  # dia 1º: nada fechado ainda no mês
 
 
 def fator_tendencia(operacao_id: int, mes_ano: str, ultima: dt.date | None) -> float:

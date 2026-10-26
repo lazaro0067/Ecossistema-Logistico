@@ -16,7 +16,7 @@ STATUS = {  # rótulo: (status de cor, ícone, descrição)
 def render(operacao_id: int, key: str, mostrar_download: bool = True) -> None:
     df = armazem_service.estoque_comercial(operacao_id)
     if df.empty:
-        st.info("ℹ️ Nenhum estoque disponível no momento. Peça a atualização da base 02.03.04 no Ressuprimento.")
+        st.info("ℹ️ Nenhum estoque disponível no momento. Peça a atualização da Grade Cora.")
         return
     ult = df["dt_atualizacao"].dropna().max() if "dt_atualizacao" in df else None
     if ult:

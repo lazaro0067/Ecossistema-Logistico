@@ -10,7 +10,7 @@ from repositories import operacoes_repo
 NOMES = {
     "vendas": "03.02.37 vendas", "compra": "03.02.37 compra", "pcd": "Relatório de mapas (PCD)",
     "saldo_estoque": "02.05.02 saldo de estoque", "contagem_validade": "Contagem com validade (WMS)",
-    "estoque": "02.03.04 posição de estoque", "pedidos_marcados": "Puxada marcada",
+    "estoque": "Grade Cora", "pedidos_marcados": "Puxada marcada",
     "ressuprimento": "Ressuprimento diário", "linear": "Relatório linear", "produtos": "01.11 produtos",
     "politica": "Política de estoque", "so_baixar": "Só baixar (sem importar)",
 }

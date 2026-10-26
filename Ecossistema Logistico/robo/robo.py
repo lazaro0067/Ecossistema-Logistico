@@ -116,6 +116,8 @@ class Ctx:
             d = getattr(self, nome)
             setattr(self, f"{nome}_br", d.strftime("%d/%m/%Y"))
         self.arquivo: Path | None = None
+        self.revenda = ""    # revenda do sistema deste relatório (ex.: Lima Barreiras)
+        self.operacao = ""   # como a operação aparece no site (operacao_site no config; padrão = revenda)
 
     def login_microsoft(self, page, espera_seg: int = 300) -> None:
         """Se o site (Power BI) mandar para o login da Microsoft: preenche e-mail e senha (do cofre), pede o código
@@ -230,6 +232,8 @@ def baixar(rel: dict, cfg: dict, ver: bool = False) -> Path:
     pasta_dia = Path(cfg["pasta"]) / f"{dt.date.today():%Y-%m-%d}"
     pasta_dia.mkdir(parents=True, exist_ok=True)
     ctx = Ctx(cfg.get(site, {}), site, pasta_dia, rel["nome"])
+    ctx.revenda = rel.get("revenda") or cfg.get("revenda", "")
+    ctx.operacao = str(rel.get("operacao_site") or ctx.revenda)  # a mesma receita serve para todas as operações
     receita = carregar_receita(rel.get("receita", rel["nome"]))
     # Power BI/Microsoft não carrega direito com o navegador escondido (login e desenho do relatório): por padrão
     # ele abre visível e fecha sozinho no fim. Para esconder: mostrar = false no relatório ou na seção do site.
@@ -485,6 +489,7 @@ def main() -> None:
     ap.add_argument("--site", default="promax", help="site da gravação (seção do config.toml), padrão promax")
     ap.add_argument("--testar", help="roda uma receita com o navegador aparecendo")
     ap.add_argument("--so", help="roda só estes relatórios (separados por vírgula)")
+    ap.add_argument("--grupo", help="roda só os relatórios deste grupo (ex.: grade, a cada 2 h)")
     ap.add_argument("--ver", action="store_true", help="mostra o navegador")
     a = ap.parse_args()
     if a.senha:
@@ -498,7 +503,7 @@ def main() -> None:
         gravar(a.gravar, cfg, a.site)
         return
     rels = cfg.get("relatorios", [])
-    log(f"▶️ Início ({'teste' if a.testar else 'só ' + a.so if a.so else 'agendado/rodada completa'})")
+    log(f"▶️ Início ({'teste' if a.testar else 'só ' + a.so if a.so else 'grupo ' + a.grupo if a.grupo else 'agendado/rodada completa'})")
     if a.testar:
         rels = [r for r in rels if r["nome"] == a.testar] or [{"nome": a.testar, "importar": "so_baixar",
                                                                "site": a.site}]
@@ -506,8 +511,15 @@ def main() -> None:
     elif a.so:
         quer = {x.strip() for x in a.so.split(",")}
         rels = [r for r in rels if r["nome"] in quer]
+    elif a.grupo:  # ex.: grade de cada revenda, a cada 2 h (agendar_grade.bat)
+        rels = [r for r in rels if str(r.get("grupo") or "") == a.grupo]
+    else:  # rodada normal (07:00/09:00): os relatórios com grupo têm agendamento próprio
+        rels = [r for r in rels if not r.get("grupo")]
     hoje = dt.date.today().weekday()  # 0 = segunda
     rels = [r for r in rels if a.testar or a.so or (r.get("ativo", True) and hoje in _dias(r.get("dias", "seg-sab")))]
+    if a.grupo and not rels:
+        log(f"Nenhum relatório ativo no grupo '{a.grupo}' (confira grupo/ativo no config.toml).")
+        return
     if not rels:
         log("Nenhum relatório para rodar agora.")
         return

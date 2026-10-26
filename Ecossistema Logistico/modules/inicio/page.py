@@ -12,7 +12,7 @@ def _bloco_alertas(usuario: dict, operacao_id: int) -> None:
     """Bases vencidas = primeira coisa que o time precisa saber."""
     if not pode_acessar_modulo(usuario, "ressuprimento"):
         return
-    nomes = {"estoque": "02.03.04 (estoque)", "pedidos_marcados": "Puxada marcada", "linear": "Linear",
+    nomes = {"estoque": "Grade Cora", "pedidos_marcados": "Puxada marcada", "linear": "Linear",
              "produtos": "01.11 (cadastro)"}
     vencidas = []
     for base, nome in nomes.items():

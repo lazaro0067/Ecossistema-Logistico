@@ -47,6 +47,12 @@ se o PC estiver suspenso ele acorda, e se estiver desligado no horário roda ass
 Conferir: `ver_agendamento.bat` (última vez que rodou, resultado e próxima vez — salvo em `logs\agendamento.txt`).
 Tudo o que o robô agendado escreve fica em `logs\agendador.log`; o resumo do dia em `logs\AAAA-MM-DD.log`.
 
+## Grade Cora (a cada 2 horas, uma por revenda)
+Uma receita só (`receitas/grade_cora.py`) para todas as revendas: no config, um bloco `[[relatorios]]` por revenda
+com `receita = "grade_cora"`, `revenda`, `operacao_site` (como a operação aparece no Cora) e `grupo = "grade"`.
+A receita escolhe a operação com `ctx.operacao`. Agendar: `agendar_grade.bat` (06:00–22:00, de 2 em 2 horas).
+Testar uma revenda vendo o navegador: `robo.bat --testar grade_barreiras`. Rodar o grupo: `robo.bat --grupo grade`.
+
 ## Como cada relatório entra no sistema (`importar` no config.toml)
 | importar | O que faz |
 | --- | --- |

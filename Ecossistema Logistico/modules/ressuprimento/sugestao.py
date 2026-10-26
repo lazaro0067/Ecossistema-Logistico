@@ -20,7 +20,7 @@ def render(usuario: dict, operacao_id: int) -> None:
 
     sug = sugestao_service.sugestao(operacao_id, alvo, None if regra.startswith("Meta DOI") else meta, arred)
     if sug.empty:
-        st.info("Sem posição de estoque para calcular. Atualize as bases (02.03.04, Linear e 01.11).")
+        st.info("Sem posição de estoque para calcular. Atualize as bases (Grade Cora, Linear e 01.11).")
         return
     comprar = sug[sug["sugestao_cx"] > 0]
     dias = max(1, (alvo - tempo.hoje()).days)

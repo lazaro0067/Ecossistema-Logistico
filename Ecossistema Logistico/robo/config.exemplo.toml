@@ -19,6 +19,10 @@ usuario = "SEU_USUARIO"
 [powerbi]
 url = "https://app.powerbi.com/groups/me/reports/..."   # o link do relatório
 
+[cora]
+url = "https://ENDERECO-DO-CORA"         # site da Grade Cora
+usuario = "SEU_USUARIO"
+
 [wms]
 url = "https://ENDERECO-DO-WMS"
 usuario = "SEU_USUARIO"
@@ -27,6 +31,8 @@ usuario = "SEU_USUARIO"
 #   vendas | compra | pcd | saldo_estoque | contagem_validade | estoque | pedidos_marcados | ressuprimento |
 #   linear | produtos | politica | so_baixar
 # dias: seg-sab, todos, seg,qua,sex …   revenda: opcional (outra revenda para este relatório)
+# receita: opcional (outra receita; ex.: a MESMA receita para várias revendas)   operacao_site: como a operação
+# aparece no site (a receita usa ctx.operacao)   grupo: agendamento próprio (ex.: "grade" = agendar_grade.bat)
 
 [[relatorios]]
 nome = "ressuprimento"
@@ -64,3 +70,34 @@ nome = "contagem"
 site = "wms"
 importar = "contagem_validade"
 dias = "seg"
+
+# --- Grade Cora: a mesma receita (grade_cora) para cada revenda, a cada 2 h (agendar_grade.bat) ---------------
+[[relatorios]]
+nome = "grade_rio_verde"
+receita = "grade_cora"
+site = "cora"
+importar = "estoque"
+revenda = "Lima Rio Verde"
+operacao_site = "RIO VERDE"             # como aparece para escolher no Cora
+grupo = "grade"
+dias = "todos"
+
+[[relatorios]]
+nome = "grade_barreiras"
+receita = "grade_cora"
+site = "cora"
+importar = "estoque"
+revenda = "Lima Barreiras"
+operacao_site = "BARREIRAS"
+grupo = "grade"
+dias = "todos"
+
+[[relatorios]]
+nome = "grade_sao_felix"
+receita = "grade_cora"
+site = "cora"
+importar = "estoque"
+revenda = "Lima São Félix"
+operacao_site = "SÃO FÉLIX"
+grupo = "grade"
+dias = "todos"

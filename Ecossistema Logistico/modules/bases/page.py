@@ -13,7 +13,7 @@ GRUPOS = [
     ("📦 Estoque, Puxada & Ressuprimento", [
         ("produtos", "1. Relatório 01.11", "Cadastro · quando mudar", ("ressuprimento", "armazem", "puxada")),
         ("linear", "2. Relatório Linear", "A cada 3 meses · embalagem e venda/dia", ("ressuprimento", "armazem", "vendas")),
-        ("estoque", "3. Relatório 02.03.04", "Diário · posição de estoque", ("ressuprimento", "armazem", "puxada", "vendas")),
+        ("estoque", "3. Grade Cora", "A cada 2 h · entrada (grade) e disponível (DOI)", ("ressuprimento", "armazem", "puxada", "vendas")),
         ("pedidos_marcados", "4. Puxada Marcada", "Diário · um arquivo só (D0, D1, D2 pela data)",
          ("ressuprimento", "armazem", "puxada")),
         ("ressuprimento", "5. Ressuprimento diário", "Diário · todas as filiais (A, C, E, F)", ("ressuprimento", "puxada")),

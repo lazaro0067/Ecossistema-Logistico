@@ -861,13 +861,131 @@ def _vbz(t) -> str:
     return {"gente": "Pessoal"}.get(t.lower(), t[:1].upper() + t[1:].lower()) if t else "Gerais"
 
 
+_MES_ABREV = {"jan": 1, "fev": 2, "mar": 3, "abr": 4, "mai": 5, "jun": 6, "jul": 7, "ago": 8, "set": 9, "out": 10,
+              "nov": 11, "dez": 12}
+
+
+def _cod_num(v) -> str:
+    """Código que pode vir como 501, 501.0 ou '501' (o _cod tiraria só o ponto e viraria 5010)."""
+    try:
+        return str(int(float(str(v).replace(",", "."))))
+    except (TypeError, ValueError):
+        return _cod(v)
+
+
+def _mes_de(t) -> int | None:
+    t = _n(t).replace("ç", "c")
+    if not t:
+        return None
+    if t in _MESES_NOME:
+        return _MESES_NOME[t]
+    return _MES_ABREV.get(t[:3]) if t[:3] in _MES_ABREV and (len(t) <= 4 or t in _MESES_NOME) else None
+
+
+def _ler_consolidado(xl: "pd.ExcelFile") -> tuple[list[dict], str | None, str]:
+    """Layout com uma aba CONSOLIDADA: UNIDADE · DEP · DONO · DPT · DESCRIÇÃO CONTA · Nº CONTA · PLAN <mês> / Real
+    <mês> (ou mês em cima e Plano/Real/R-P embaixo). Usa a aba com mais linhas/departamentos como base e só
+    acrescenta departamento que ela não tem (ex.: Puxada numa aba à parte) — sem somar em dobro.
+    Devolve (linhas, unidade, nome da aba base)."""
+    abas = []
+    for aba in xl.sheet_names:
+        if _n(aba).strip() in _IGNORAR_ABAS:
+            continue
+        df = xl.parse(aba, header=None)
+        if len(df) < 2:
+            continue
+        hr = None
+        for i in range(min(4, len(df))):
+            cab = [_n(x) for x in df.iloc[i].tolist()]
+            if "dono" in cab and any(c.startswith("n") and "conta" in c for c in cab):
+                hr = i
+                break
+        if hr is None:
+            continue
+        cab = [_n(x) for x in df.iloc[hr].tolist()]
+        topo = [_n(x) for x in df.iloc[hr - 1].tolist()] if hr > 0 else [""] * len(cab)
+        col = lambda nome: cab.index(nome) if nome in cab else None  # noqa: E731
+        c_conta = next(j for j, c in enumerate(cab) if c.startswith("n") and "conta" in c)
+        c_dep, c_dpt, c_dono, c_uni = col("dep"), col("dpt"), col("dono"), col("unidade")
+        c_nome = next((j for j, c in enumerate(cab) if "descricao" in c), None)
+        if c_dep is None:  # sem o código do departamento não dá para ligar ao 16.03.01
+            continue
+        plan, real, mes_topo = {}, {}, None
+        for j, h in enumerate(cab):
+            if _mes_de(topo[j]):
+                mes_topo = _mes_de(topo[j])
+            m = re.match(r"^(plan[o]?|real)\s+([a-z]+)", h)
+            if m and _mes_de(m.group(2)):
+                (plan if m.group(1).startswith("plan") else real).setdefault(_mes_de(m.group(2)), j)
+            elif h == "plano" and mes_topo:
+                plan.setdefault(mes_topo, j)
+            elif h == "real" and mes_topo:
+                real.setdefault(mes_topo, j)
+        if not plan:
+            continue
+        area_aba = re.sub(r"^obz[_ ]?\d{4}[_ ]*", "", str(aba).strip(), flags=re.I).strip() or str(aba).strip()
+        itens, unidade = [], None
+        for _, r in df.iloc[hr + 1:].iterrows():
+            conta = pd.to_numeric(r[c_conta], errors="coerce")
+            dep = pd.to_numeric(r[c_dep], errors="coerce")
+            if pd.isna(conta) or pd.isna(dep):
+                continue
+            dpt = str(r[c_dpt]).strip() if c_dpt is not None and pd.notna(r[c_dpt]) else ""
+            area = dpt if dpt and not re.fullmatch(r"[\d.,]+", dpt) else area_aba
+            if c_uni is not None and pd.notna(r[c_uni]) and not unidade:
+                unidade = str(r[c_uni]).strip()
+            itens.append({"area": area, "vbz": _vbz(r[c_dono] if c_dono is not None else ""),
+                          "depto": _cod_num(dep), "nome": str(r[c_nome] if c_nome is not None else "").strip(),
+                          "conta": _cod_num(conta),
+                          "plan": {m: pd.to_numeric(r[j], errors="coerce") for m, j in plan.items()},
+                          "real": {m: pd.to_numeric(r[j], errors="coerce") for m, j in real.items()}})
+        if itens:
+            abas.append((aba, itens, unidade, len({i["area"] for i in itens})))
+    if not abas:
+        return [], None, ""
+    base = max(abas, key=lambda a: (a[3], len(a[1])))  # a consolidada: mais departamentos e mais linhas
+    linhas = list(base[1])
+    vistos = {(i["depto"], i["conta"]) for i in linhas}
+    areas_base = {_n(i["area"]) for i in linhas}
+    for aba, itens, _u, _n_areas in abas:
+        if aba == base[0]:
+            continue
+        for it in itens:  # só departamento que a consolidada não tem (ex.: Puxada numa aba à parte)
+            k = (it["depto"], it["conta"])
+            if k not in vistos and _n(it["area"]) not in areas_base:
+                vistos.add(k)
+                linhas.append({**it, "_aba": str(aba)})
+    unidade = base[2] or next((a[2] for a in abas if a[2]), None)
+    return linhas, unidade, str(base[0])
+
+
+def _operacao_da_unidade(unidade: str | None) -> int | None:
+    """'LIMA BARREIRAS' / 'LIMA SÃO FELIX' → id da revenda com o mesmo nome (sem acento e maiúscula)."""
+    if not unidade:
+        return None
+    alvo = re.sub(r"[^a-z0-9]+", " ", _n(unidade)).strip()
+    for o in operacoes_repo.listar():
+        if operacoes_repo.e_consolidada(o["id"]):
+            continue
+        if re.sub(r"[^a-z0-9]+", " ", _n(o["nome"])).strip() == alvo:
+            return int(o["id"])
+    return None
+
+
+def _area_existente(nome: str) -> str:
+    """Reaproveita o departamento já cadastrado com o mesmo nome (sem acento/maiúscula): ARMAZÉM = Armazém."""
+    alvo = _n(nome)
+    for a in areas()["nome"].tolist():
+        if _n(a) == alvo:
+            return a
+    return nome
+
+
 def importar_base(conteudo: bytes, nome: str, operacao_id: int, ano: str, usuario: str = "",
                   importar_real_aba: bool = True) -> dict:
     """Base OBZ: cada aba é um departamento (colunas: DONO/VBZ, DPT, Nome da conta, Conta, e por mês Plano/Real/R-P).
     A aba "Folha" é distribuída nos departamentos pelo código do DPT (coluna B). A aba "16.03.01" (razão do ano)
     vira o realizado. Grava departamentos, contas, mapa conta × depto → departamento e o plan de todos os meses."""
-    if operacoes_repo.e_consolidada(operacao_id):
-        raise RegraNegocioError("Escolha uma revenda (não a visão consolidada) para subir a Base OBZ.")
     try:
         xl = pd.ExcelFile(io.BytesIO(conteudo))
     except Exception as e:
@@ -898,8 +1016,23 @@ def importar_base(conteudo: bytes, nome: str, operacao_id: int, ano: str, usuari
                     "real": {m: pd.to_numeric(r[j + 1], errors="coerce") for m, j in meses_col.items()
                              if j + 1 < len(r)}}
             (folha if _n(aba) == "folha" else linhas).append(item)
+    layout, aba_base, revenda_arquivo = "abas por departamento", None, None
+    if not linhas and not folha:  # 2º layout: aba consolidada (UNIDADE, DEP, DONO, DPT, Nº CONTA, PLAN/Real por mês)
+        linhas, unidade, aba_base = _ler_consolidado(xl)
+        if linhas:
+            layout = f"consolidado (aba {aba_base})"
+            op_arq = _operacao_da_unidade(unidade)
+            if op_arq and op_arq != operacao_id:
+                operacao_id = op_arq  # o arquivo diz de qual revenda é (coluna UNIDADE)
+            if op_arq:
+                revenda_arquivo = (operacoes_repo.buscar(op_arq) or {}).get("nome")
+            for it in linhas:
+                it["area"] = _area_existente(it["area"])
     if not linhas and not folha:
-        raise RegraNegocioError("Não achei as abas de departamento (cabeçalho DONO, DPT, Nome da Conta, Conta).")
+        raise RegraNegocioError("Não achei as abas de departamento (cabeçalho DONO, DPT, Nome da Conta, Conta) nem a "
+                                "aba consolidada (UNIDADE, DEP, DONO, DPT, Nº CONTA, PLAN por mês).")
+    if operacoes_repo.e_consolidada(operacao_id):
+        raise RegraNegocioError("Escolha uma revenda (não a visão consolidada) para subir a Base OBZ.")
     # código do depto → departamento (o mais comum entre as abas)
     cont: dict[str, dict[str, int]] = {}
     for it in linhas:
@@ -950,7 +1083,8 @@ def importar_base(conteudo: bytes, nome: str, operacao_id: int, ano: str, usuari
                          [(operacao_id, *k, v) for k, v in plan.items()])
     res = {"departamentos": len({it["area"] for it in todos}), "contas": len({it["conta"] for it in todos}),
            "linhas": len(todos), "folha": len(folha), "meses_plan": meses_plan, "plan": sum(plan.values()),
-           "real": None}
+           "real": None, "layout": layout, "operacao_id": operacao_id, "revenda": revenda_arquivo,
+           "abas_extra": sorted({it["_aba"] for it in todos if it.get("_aba")})}
     if importar_real_aba and "16.03.01" in xl.sheet_names:
         rz = xl.parse("16.03.01")
         c = list(rz.columns)
@@ -964,10 +1098,11 @@ def importar_base(conteudo: bytes, nome: str, operacao_id: int, ano: str, usuari
     # realizado dos meses que não têm 16.03.01 carregado: vem da coluna "Real" das abas (histórico)
     com_razao = set(query_df("SELECT DISTINCT mes FROM obz_real WHERE operacao_id = ?", (operacao_id,))["mes"])
     hist = {}
+    limite_hist = tempo.hoje().strftime("%Y-%m") if aba_base else "9999-99"  # consolidado: só meses fechados
     for it in todos:
         for m, v in it["real"].items():
             mes = f"{ano}-{m:02d}"
-            if mes not in com_razao and pd.notna(v) and float(v) != 0:
+            if mes not in com_razao and mes < limite_hist and pd.notna(v) and float(v) != 0:
                 k = (mes, it["conta"], it["depto"])
                 hist[k] = hist.get(k, 0.0) + float(v)
     if hist:

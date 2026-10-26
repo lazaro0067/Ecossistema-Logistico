@@ -7,7 +7,7 @@ from database.connection import query_df
 from repositories import operacoes_repo
 
 TABELAS = {
-    "produtos": "Produtos (01.11)", "estoque": "Estoque (02.03.04)", "linear_vendas": "Linear de vendas",
+    "produtos": "Produtos (01.11)", "estoque": "Grade Cora (estoque)", "linear_vendas": "Linear de vendas",
     "metas_doi": "Metas de DOI", "pedidos_marcados": "Pedidos marcados", "ressuprimento_diario": "Ressuprimento diário",
     "metas_ressuprimento": "Metas de ressuprimento", "politica_estoque": "Política de estoque",
     "curva_abc": "Curva ABC", "cotacoes_frete": "Fretes (cotações)", "trechos": "Trechos de frete",

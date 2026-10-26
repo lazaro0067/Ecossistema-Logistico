@@ -15,7 +15,7 @@ def render(usuario: dict, operacao_id: int) -> None:
     with c2:
         card_base("linear", operacao_id, usuario, "2. Relatório Linear", "A cada 3 meses")
     with c3:
-        card_base("estoque", operacao_id, usuario, "3. Relatório 02.03.04", "Diário")
+        card_base("estoque", operacao_id, usuario, "3. Grade Cora", "A cada 2 h")
     with c4:
         card_base("pedidos_marcados", operacao_id, usuario, "4. Puxada Marcada", "D0, D1, D2 · diário")
     st.write("")

@@ -43,7 +43,7 @@ def aba_saude(usuario: dict, operacao_id: int) -> None:
          "status": tema.status_ocupacao(r["ocup_hl"]) if r["cap_hl"] else "neutro"},
     ], key="kp_arm_saude")
     if df.empty:
-        st.info("Sem posição de estoque. Atualize o Relatório 02.03.04 no Ressuprimento.")
+        st.info("Sem posição de estoque. Atualize a Grade Cora em 📥 Atualizar relatórios.")
         return
     g1, g2 = st.columns(2)
     with g1:

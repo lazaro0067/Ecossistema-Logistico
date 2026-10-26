@@ -1,5 +1,5 @@
-"""Armazém › ✅ Check de Grade — sobe o 02.05.02 do dia (sistema, depósito 1) e confere com a grade, que vem do
-relatório 02.03.04 (disponível). Diferença acima do limite (padrão 5%) vira alerta para os gestores do controle e
+"""Armazém › ✅ Check de Grade — sobe o 02.05.02 do dia (sistema, depósito 1) e confere com a grade, que vem da
+Grade Cora (coluna ENTRADA; o DISPONÍVEL fica para o DOI do Ressuprimento). Diferença acima do limite (padrão 5%) vira alerta para os gestores do controle e
 entra no painel de itens errados."""
 import pandas as pd
 
@@ -41,7 +41,7 @@ def salvar_controle(operacao_id: int, ids: list[int]) -> None:
 
 
 # --- Sistema (02.05.02 do dia, depósito 1) × grade (02.03.04) ----------------------------------------------------
-FONTE = "02.05.02 do dia (depósito 1) × grade 02.03.04"
+FONTE = "02.05.02 do dia (depósito 1) × Grade Cora (entrada)"
 
 
 def sistema_020502(conteudo, nome: str, deposito: str = "1") -> pd.DataFrame:
@@ -59,16 +59,20 @@ def sistema_020502(conteudo, nome: str, deposito: str = "1") -> pd.DataFrame:
 
 
 def grade_020304(operacao_id: int) -> tuple[pd.DataFrame, str | None]:
-    """Grade = disponível do relatório 02.03.04 (último carregado): (cod, descricao, grade), data da carga."""
+    """Grade = coluna ENTRADA da Grade Cora (última carregada): (cod, descricao, grade), data da carga.
+    O DISPONÍVEL é usado no DOI. Base antiga sem a coluna Entrada: usa o disponível (e avisa na tela)."""
     trecho, p = operacoes_repo.filtro("operacao_id", operacao_id)
-    df = query_df(f"SELECT cod, MAX(descricao) AS descricao, SUM(disponivel) AS grade, MAX(dt_atualizacao) AS dt "
-                  f"FROM estoque WHERE {trecho} GROUP BY cod", p)
+    df = query_df(f"SELECT cod, MAX(descricao) AS descricao, SUM(entrada) AS entrada, SUM(disponivel) AS disponivel, "
+                  f"MAX(dt_atualizacao) AS dt FROM estoque WHERE {trecho} GROUP BY cod", p)
     if df.empty:
         return pd.DataFrame(columns=["cod", "descricao", "grade"]), None
     dt_ = df["dt"].dropna().max() if "dt" in df else None
     df["cod"] = df["cod"].astype(str).str.replace(r"\.0$", "", regex=True).str.lstrip("0")
-    df["grade"] = pd.to_numeric(df["grade"], errors="coerce").fillna(0.0)
-    return df.drop(columns="dt"), dt_
+    ent = pd.to_numeric(df["entrada"], errors="coerce").fillna(0.0)
+    usa_entrada = bool((ent != 0).any())
+    df["grade"] = ent if usa_entrada else pd.to_numeric(df["disponivel"], errors="coerce").fillna(0.0)
+    df.attrs["coluna"] = "entrada" if usa_entrada else "disponível (a grade carregada não tem Entrada)"
+    return df.drop(columns=["dt", "entrada", "disponivel"]), dt_
 
 
 def comparar(sist: pd.DataFrame, grade: pd.DataFrame, lim: float) -> pd.DataFrame:
