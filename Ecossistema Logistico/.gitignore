@@ -10,3 +10,6 @@ robo/.venv/
 robo/logs/
 robo/receitas/_gravado_*
 robo/perfil_navegador/
+robo/perfil_navegador_*/
+robo/segredos/
+robo/servidor/robo_servidor.zip

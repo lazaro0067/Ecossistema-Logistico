@@ -1,30 +1,63 @@
 #!/usr/bin/env bash
-# Instala o servidor do Ecossistema Logístico numa VPS Ubuntu 22.04/24.04 nova. Rode UMA vez, como root:
-#   bash instalar.sh seu@email.com git@github.com:USUARIO/Ecossistema-Logistico.git
+# Instala o servidor do Ecossistema Logístico (Ubuntu/Debian). Rode UMA vez, como root:
+#   VPS nova ............ bash instalar.sh seu@email.com git@github.com:USUARIO/Ecossistema-Logistico.git
+#   servidor que JÁ USA . EXISTENTE=1 bash instalar.sh seu@email.com git@github.com:USUARIO/Ecossistema-Logistico.git
+#     (servidor existente: não atualiza o sistema inteiro, não liga firewall desligado, não mexe no SSH)
 set -euo pipefail
 [[ $EUID -eq 0 ]] || { echo "Rode como root:  sudo -i  e depois  bash instalar.sh ..."; exit 1; }
 EMAIL=${1:?"uso: bash instalar.sh seu@email.com git@github.com:USUARIO/REPO.git"}
 REPO=${2:?"uso: bash instalar.sh seu@email.com git@github.com:USUARIO/REPO.git"}
 BASE=/opt/eco
 PASTA_APP="Ecossistema Logistico"
+EXISTENTE=${EXISTENTE:-0}
+
+if [[ "$EXISTENTE" == "1" ]]; then
+  echo "==> 0/7 Conferindo o servidor (modo servidor existente)"
+  for porta in 80 443; do
+    if ss -ltnp 2>/dev/null | grep -qE "[:.]$porta\s"; then
+      echo "    ❌ A porta $porta já está em uso por outro programa:"
+      ss -ltnp | grep -E "[:.]$porta\s" | sed 's/^/       /'
+      echo "    O HTTPS do sistema precisa das portas 80 e 443. Fale com o TI (ou mande esta tela) para decidir:"
+      echo "    desligar o outro site, ou colocar o sistema atrás do servidor web que já existe."
+      exit 1
+    fi
+  done
+  echo "    portas 80 e 443 livres ✅  ·  memória: $(free -h | awk '/Mem:/{print $2}')  ·  disco livre: $(df -h / | awk 'NR==2{print $4}')"
+fi
 
 echo "==> 1/7 Atualizando o sistema e instalando o básico"
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -q && apt-get -yq upgrade
-apt-get install -yq ca-certificates curl git ufw fail2ban unattended-upgrades age gzip openssl rclone
-dpkg-reconfigure -f noninteractive unattended-upgrades   # atualizações de segurança automáticas
+apt-get update -q
+if [[ "$EXISTENTE" == "1" ]]; then
+  apt-get install -yq ca-certificates curl git age gzip openssl rclone   # só o necessário, sem upgrade geral
+else
+  apt-get -yq upgrade
+  apt-get install -yq ca-certificates curl git ufw fail2ban unattended-upgrades age gzip openssl rclone
+  dpkg-reconfigure -f noninteractive unattended-upgrades   # atualizações de segurança automáticas
+fi
 
 echo "==> 2/7 Docker"
 command -v docker >/dev/null || curl -fsSL https://get.docker.com | sh
 
-echo "==> 3/7 Firewall: só SSH, HTTP e HTTPS"
-ufw default deny incoming && ufw default allow outgoing
-ufw allow OpenSSH && ufw allow 80/tcp && ufw allow 443/tcp
-ufw --force enable
-systemctl enable --now fail2ban   # bloqueia quem erra a senha do SSH várias vezes
+echo "==> 3/7 Firewall"
+if [[ "$EXISTENTE" == "1" ]]; then
+  if command -v ufw >/dev/null && ufw status | grep -q "Status: active"; then
+    ufw allow 80/tcp && ufw allow 443/tcp
+    echo "    firewall já estava ligado: liberadas só as portas 80 e 443."
+  else
+    echo "    firewall do servidor não foi alterado (cuide das portas 80/443 no roteador/firewall da empresa)."
+  fi
+else
+  ufw default deny incoming && ufw default allow outgoing
+  ufw allow OpenSSH && ufw allow 80/tcp && ufw allow 443/tcp
+  ufw --force enable
+  systemctl enable --now fail2ban   # bloqueia quem erra a senha do SSH várias vezes
+fi
 
 echo "==> 4/7 SSH só com chave"
-if compgen -G "/root/.ssh/authorized_keys" >/dev/null && [[ -s /root/.ssh/authorized_keys ]]; then
+if [[ "$EXISTENTE" == "1" ]]; then
+  echo "    servidor existente: SSH não alterado."
+elif compgen -G "/root/.ssh/authorized_keys" >/dev/null && [[ -s /root/.ssh/authorized_keys ]]; then
   printf "PasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin prohibit-password\n" \
     > /etc/ssh/sshd_config.d/99-eco.conf
   systemctl reload ssh || systemctl reload sshd || true

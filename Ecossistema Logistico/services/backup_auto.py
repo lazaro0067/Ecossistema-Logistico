@@ -87,27 +87,27 @@ def verificar_repositorio() -> None:
         raise BackupErro("O repositório de backup é PÚBLICO — o backup tem dados pessoais. Torne-o privado.")
 
 
-def _sha_atual() -> str | None:
+def _sha_atual(caminho: str = CAMINHO) -> str | None:
     # o parâmetro muda a cada chamada: evita o GitHub devolver a versão anterior em cache logo após um envio
-    info = _req("GET", _url(f"/contents/{CAMINHO}?t={time.time_ns()}"))
-    return info.get("sha") if info else None
+    info = _req("GET", _url(f"/contents/{caminho}?t={time.time_ns()}"))
+    return info.get("sha") if isinstance(info, dict) and info else None
 
 
-def baixar() -> bytes | None:
-    return _req("GET", _url(f"/contents/{CAMINHO}"), raw=True)
+def baixar(caminho: str = CAMINHO) -> bytes | None:
+    return _req("GET", _url(f"/contents/{caminho}"), raw=True)
 
 
-def enviar(arquivo: bytes, mensagem: str) -> None:
+def enviar(arquivo: bytes, mensagem: str, caminho: str = CAMINHO) -> None:
     """Envia o backup. Se outro envio (outra aba/instância) gravou no meio do caminho, o GitHub responde 409
     (versão do arquivo mudou): busca a versão nova e tenta de novo."""
     conteudo = base64.b64encode(arquivo).decode()
     for tentativa in range(4):
         corpo = {"message": mensagem, "content": conteudo}
-        sha = _sha_atual()
+        sha = _sha_atual(caminho)
         if sha:
             corpo["sha"] = sha
         try:
-            _req("PUT", _url(f"/contents/{CAMINHO}"), corpo)
+            _req("PUT", _url(f"/contents/{caminho}"), corpo)
             return
         except BackupErro as e:
             conflito = "respondeu 409" in str(e) or ("respondeu 422" in str(e) and "sha" in str(e).lower())
@@ -170,6 +170,91 @@ def restaurar_se_vazio() -> str | None:
     return f"Banco restaurado automaticamente do backup de {man.get('gerado_em', '?')}."
 
 
+# --- Bases de relatório (vendas, compra, PCD, 02.05.02, razão…): um arquivo por tabela -------------------------
+# Ficam fora do backup principal (são grandes). Sem isso, a cada Reboot do Streamlit Cloud (banco temporário)
+# elas sumiam e a Gestão Corporativa ficava vazia. Agora: backup separado e restauração quando a tabela está vazia.
+PASTA_BASES = "backup/bases"
+BASES_MINUTOS = 30
+_MAX_BYTES_BASE = 70 * 1024 * 1024  # limite de arquivo do GitHub (com folga)
+_bases = {"assin": {}, "ultimo": 0.0, "restaurado": False, "msg": None, "erro": None}
+
+
+def _assinatura(t: str) -> str:
+    """Muda quando a tabela muda: linhas + maior data de carga (quando a tabela tem)."""
+    from database.connection import get_conn
+    from services.backup_service import _colunas
+
+    with get_conn() as conn:
+        n = conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+        cols = [c for c in _colunas(conn, t) if c in ("importado_em", "dt_atualizacao", "atualizado_em", "data",
+                                                     "mes", "criado_em")]
+        extra = [str(conn.execute(f"SELECT MAX({c}) FROM {t}").fetchone()[0]) for c in cols]
+    return f"{n}|{'|'.join(extra)}"
+
+
+def _tabelas_bases() -> list[str]:
+    from database.connection import get_conn
+    from services.backup_service import BASES_RELATORIO, _tabelas_do_banco
+
+    with get_conn() as conn:
+        return [t for t in _tabelas_do_banco(conn) if t in BASES_RELATORIO]
+
+
+def restaurar_bases_vazias() -> list[str]:
+    """Base de relatório vazia no banco + arquivo no backup → restaura. Devolve as tabelas restauradas."""
+    from database.connection import get_conn
+    from services import backup_service
+
+    feitas = []
+    for t in _tabelas_bases():
+        with get_conn() as conn:
+            if conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]:
+                continue
+        arq = baixar(f"{PASTA_BASES}/{t}.zip")
+        if not arq:
+            continue
+        backup_service.importar(arq, [t])
+        feitas.append(t)
+    return feitas
+
+
+def salvar_bases(forcar: bool = False) -> list[str]:
+    """Envia as bases que mudaram desde o último envio (nunca envia tabela vazia por cima de um backup)."""
+    from services import backup_service
+
+    if not _bases["restaurado"]:
+        return []
+    enviadas = []
+    for t in _tabelas_bases():
+        assin = _assinatura(t)
+        if assin.startswith("0|") or (assin == _bases["assin"].get(t) and not forcar):
+            continue
+        arq = backup_service.exportar(so_tabelas={t})
+        if len(arq) > _MAX_BYTES_BASE:
+            _bases["erro"] = f"{t}: {len(arq) // 1024 ** 2} MB — grande demais para o backup no GitHub."
+            continue
+        enviar(arq, f"Backup base {t} · {tempo.agora():%d/%m/%Y %H:%M}", f"{PASTA_BASES}/{t}.zip")
+        _bases["assin"][t] = assin
+        enviadas.append(t)
+    _bases["ultimo"] = time.time()
+    return enviadas
+
+
+def _iniciar_bases() -> None:
+    """Ao ligar (em segundo plano): restaura as bases vazias e só então libera o envio delas."""
+    try:
+        feitas = restaurar_bases_vazias()
+        if feitas:
+            _bases["msg"] = f"Bases de relatório restauradas do backup: {', '.join(feitas)}."
+        for t in _tabelas_bases():  # o que já está no backup não precisa reenviar logo ao ligar
+            if t in feitas:
+                _bases["assin"][t] = _assinatura(t)
+    except Exception as e:  # noqa: BLE001
+        _bases["erro"] = f"{tempo.agora():%d/%m %H:%M} · restaurar bases: {e}"
+    finally:
+        _bases["restaurado"] = True
+
+
 def _ciclo() -> None:
     while True:
         time.sleep(AUTO_MINUTOS * 60)
@@ -177,6 +262,11 @@ def _ciclo() -> None:
             salvar_agora()
         except Exception as e:  # noqa: BLE001 — nunca derruba o app
             _estado["erro"] = f"{tempo.agora():%d/%m %H:%M} · {e}"
+        if time.time() - _bases["ultimo"] >= BASES_MINUTOS * 60:
+            try:
+                salvar_bases()
+            except Exception as e:  # noqa: BLE001
+                _bases["erro"] = f"{tempo.agora():%d/%m %H:%M} · {e}"
 
 
 def _ao_desligar() -> None:
@@ -204,6 +294,7 @@ def iniciar() -> None:
         atexit.register(_ao_desligar)
     # o 1º backup roda em segundo plano, 1 minuto depois de ligar (não pesa na partida do servidor)
     threading.Thread(target=_primeiro_backup, name="backup-inicio", daemon=True).start()
+    threading.Thread(target=_iniciar_bases, name="backup-bases", daemon=True).start()
 
 
 def _primeiro_backup() -> None:
@@ -220,4 +311,4 @@ def tentar_de_novo() -> None:
 
 
 def estado() -> dict:
-    return dict(_estado, configurado=configurado())
+    return dict(_estado, configurado=configurado(), bases=dict(_bases))

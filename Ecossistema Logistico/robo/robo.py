@@ -1,6 +1,8 @@
 """🤖 Robô de relatórios — baixa os relatórios dos sites (Promax, WMS…), salva na pasta e importa no sistema.
 
-Roda no computador da empresa (Windows), agendado. Cada relatório tem uma "receita" (robo/receitas/<nome>.py):
+Roda no computador da empresa (Windows) ou num servidor Linux sem tela (ECO_ROBO_SERVIDOR=1: senhas em arquivo
+protegido, código do celular pedido pelo próprio Ecossistema, navegador numa tela virtual — instalar_robo_linux.sh).
+Agendado. Cada relatório tem uma "receita" (robo/receitas/<nome>.py):
 os cliques para entrar no site e exportar o arquivo, gravados uma vez com `python robo.py --gravar <nome>`.
 
 Comandos (na pasta robo):
@@ -33,12 +35,26 @@ APP = AQUI.parent
 sys.path.insert(0, str(APP))
 COFRE = "eco-robo"
 RECEITAS = AQUI / "receitas"
+SERVIDOR = os.environ.get("ECO_ROBO_SERVIDOR") == "1"  # servidor Linux sem ninguém na tela
+SEGREDOS = Path(os.environ.get("ECO_ROBO_SEGREDOS") or (AQUI / "segredos"))
+_CFG: dict = {}
 PERFIL = AQUI / "perfil_navegador"  # o navegador do robô guarda aqui os logins (Microsoft/Power BI, Promax…)
+
+
+def perfil(acesso: str | None = None) -> Path:
+    """Navegador salvo: um só (padrão) ou um por ACESSO, quando cada operação tem login próprio no site
+    (acesso = "promax_barreiras" → perfil_navegador_promax_barreiras, senha no cofre com o mesmo nome)."""
+    if not acesso:
+        return PERFIL
+    return AQUI / ("perfil_navegador_" + re.sub(r"[^a-z0-9_-]", "_", str(acesso).lower()))
 
 
 # --- configuração ------------------------------------------------------------------------------------------------
 def config() -> dict:
-    import tomllib
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # Python 3.10 (Ubuntu 22.04)
+        import tomli as tomllib
 
     arq = AQUI / "config.toml"
     if not arq.exists():
@@ -46,16 +62,34 @@ def config() -> dict:
     return tomllib.loads(arq.read_text(encoding="utf-8"))
 
 
+def _cofre_arquivo(nome: str) -> Path:
+    return SEGREDOS / re.sub(r"[^a-z0-9_-]", "_", nome.lower())
+
+
 def cofre_ler(nome: str) -> str | None:
+    """Windows: cofre do Windows. Servidor Linux: arquivo legível só pelo usuário do robô (segredos/<nome>)."""
+    arq = _cofre_arquivo(nome)
+    if SERVIDOR or arq.exists():
+        return arq.read_text(encoding="utf-8").strip() if arq.exists() else None
     import keyring
 
     return keyring.get_password(COFRE, nome)
 
 
 def cofre_gravar(nome: str) -> None:
-    import keyring
-
     v = None
+    if SERVIDOR:  # terminal do Linux: colar funciona normalmente
+        v = getpass.getpass(f"Cole ou digite o valor de '{nome}' (não aparece na tela) e Enter: ")
+        v = (v or "").strip().strip('"').strip()
+        if not v:
+            sys.exit("Nada digitado.")
+        SEGREDOS.mkdir(parents=True, exist_ok=True)
+        os.chmod(SEGREDOS, 0o700)
+        arq = _cofre_arquivo(nome)
+        arq.write_text(v, encoding="utf-8")
+        os.chmod(arq, 0o600)
+        print(f"✅ '{nome}' guardado em {arq} (só o usuário do robô lê).")
+        return
     try:  # janelinha: no Prompt o campo escondido não aceita colar (Ctrl+V)
         import tkinter as tk
         from tkinter import simpledialog
@@ -72,6 +106,8 @@ def cofre_gravar(nome: str) -> None:
     v = (v or "").strip().strip('"').strip()
     if not v:
         sys.exit("Nada digitado.")
+    import keyring
+
     keyring.set_password(COFRE, nome, v)
     print(f"✅ '{nome}' guardado no cofre do Windows.")
 
@@ -180,8 +216,11 @@ def navegador(cfg: dict, site: str, rel: dict | None = None) -> str | None:
 
 
 def pedir_codigo(texto: str) -> str | None:
-    """Janelinha para digitar o código que chegou no celular (sem janela: pede no Prompt)."""
+    """Janelinha para digitar o código que chegou no celular (sem janela: pede no Prompt). No servidor, o pedido
+    aparece no Ecossistema para o Master digitar (até 10 min)."""
     log("🔐 " + texto.replace("\n", " "))
+    if SERVIDOR:
+        return _pedir_pelo_sistema("codigo", texto)
     try:
         import tkinter as tk
         from tkinter import simpledialog
@@ -201,6 +240,12 @@ def pedir_codigo(texto: str) -> str | None:
 
 def avisar(texto: str) -> None:
     log("📱 " + texto)
+    if SERVIDOR:
+        try:
+            _pedir_pelo_sistema("aviso", texto, esperar=False)
+        except Exception:  # noqa: BLE001
+            pass
+        return
     try:
         import tkinter as tk
         from tkinter import messagebox
@@ -232,16 +277,21 @@ def baixar(rel: dict, cfg: dict, ver: bool = False) -> Path:
     pasta_dia = Path(cfg["pasta"]) / f"{dt.date.today():%Y-%m-%d}"
     pasta_dia.mkdir(parents=True, exist_ok=True)
     ctx = Ctx(cfg.get(site, {}), site, pasta_dia, rel["nome"])
+    if rel.get("acesso"):  # login próprio desta operação: usuário do bloco e senha do cofre com o nome do acesso
+        ctx.usuario = rel.get("usuario") or ctx.usuario
+        ctx.senha = cofre_ler(rel["acesso"]) or ""
     ctx.revenda = rel.get("revenda") or cfg.get("revenda", "")
     ctx.operacao = str(rel.get("operacao_site") or ctx.revenda)  # a mesma receita serve para todas as operações
     receita = carregar_receita(rel.get("receita", rel["nome"]))
     # Power BI/Microsoft não carrega direito com o navegador escondido (login e desenho do relatório): por padrão
     # ele abre visível e fecha sozinho no fim. Para esconder: mostrar = false no relatório ou na seção do site.
-    padrao = site == "powerbi"
+    padrao = site == "powerbi" or SERVIDOR  # servidor: abre "visível" na tela virtual (xvfb), ninguém vê
+    _CFG["_rel_atual"] = rel["nome"]
     mostrar = ver or bool(rel.get("mostrar", cfg.get(site, {}).get("mostrar", cfg.get("mostrar", padrao))))
     with sync_playwright() as p:
         context = p.chromium.launch_persistent_context(
-            str(PERFIL), channel=navegador(cfg, site, rel), headless=not mostrar, accept_downloads=True,
+            str(perfil(rel.get("acesso"))), channel=navegador(cfg, site, rel), headless=not mostrar,
+            accept_downloads=True,
             locale="pt-BR", viewport={"width": 1440, "height": 900})
         context.set_default_timeout(int(rel.get("espera_seg", cfg.get("espera_seg", 120))) * 1000)
         page = context.new_page()
@@ -270,7 +320,7 @@ def baixar(page, ctx):
 '''
 
 
-def entrar(cfg: dict, site: str) -> None:
+def entrar(cfg: dict, site: str, acesso: str | None = None) -> None:
     """Abre o navegador do robô no site para VOCÊ entrar (login, código no celular…). O login fica salvo no perfil
     do robô e ele reaproveita nas próximas vezes. Feche o navegador quando terminar."""
     from playwright.sync_api import sync_playwright
@@ -280,7 +330,8 @@ def entrar(cfg: dict, site: str) -> None:
         sys.exit(f"Falta a url do site [{site}] no config.toml.")
     print("Entre no site normalmente (marque 'manter conectado' se aparecer). Depois feche o navegador.")
     with sync_playwright() as p:
-        context = p.chromium.launch_persistent_context(str(PERFIL), channel=navegador(cfg, site), headless=False,
+        context = p.chromium.launch_persistent_context(str(perfil(acesso)), channel=navegador(cfg, site),
+                                                       headless=False,
                                                        locale="pt-BR", viewport={"width": 1440, "height": 900})
         page = context.pages[0] if context.pages else context.new_page()
         page.goto(url)
@@ -295,7 +346,7 @@ def entrar(cfg: dict, site: str) -> None:
     print("✅ Login guardado no perfil do robô.")
 
 
-def gravar(nome: str, cfg: dict, site: str) -> None:
+def gravar(nome: str, cfg: dict, site: str, acesso: str | None = None) -> None:
     url = cfg.get(site, {}).get("url")
     if not url:
         sys.exit(f"Falta a url do site [{site}] no config.toml.")
@@ -306,7 +357,7 @@ def gravar(nome: str, cfg: dict, site: str) -> None:
     print("Quando o arquivo terminar de baixar, feche o navegador.")
     canal = navegador(cfg, site)
     cmd = [sys.executable, "-m", "playwright", "codegen", "--target", "python", "-o", str(bruto),
-           "--user-data-dir", str(PERFIL), "--viewport-size", "1440, 900"]
+           "--user-data-dir", str(perfil(acesso)), "--viewport-size", "1440, 900"]
     if canal:
         cmd += ["--channel", canal]
     subprocess.run(cmd + [url], check=False)
@@ -386,6 +437,64 @@ def slug(txt: str) -> str:
 
     t = unicodedata.normalize("NFKD", str(txt)).encode("ascii", "ignore").decode().lower()
     return re.sub(r"[^a-z0-9]+", "-", t).strip("-")
+
+
+def _gh(metodo: str, caminho: str, corpo: dict | None = None, raw: bool = False):
+    """Chamada ao repositório de entrada no GitHub (o mesmo do envio dos relatórios)."""
+    import base64  # noqa: F401
+    import json
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    token, repo = nuvem(_CFG) or (None, None)
+    if not token:
+        raise RuntimeError("Sem o repositório de entrada (repo_nuvem no config + robo --senha github).")
+    url = f"https://api.github.com/repos/{repo}/contents/{urllib.parse.quote(caminho)}"
+    dados = json.dumps(corpo).encode() if corpo is not None else None
+    r = urllib.request.Request(url, data=dados, method=metodo, headers={
+        "Authorization": f"Bearer {token}", "User-Agent": "eco-robo", "X-GitHub-Api-Version": "2022-11-28",
+        "Accept": "application/vnd.github.raw+json" if raw else "application/vnd.github+json",
+        **({"Content-Type": "application/json"} if dados else {})})
+    try:
+        with urllib.request.urlopen(r, timeout=120) as resp:
+            c = resp.read()
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return None
+        raise RuntimeError(f"GitHub respondeu {e.code}: {e.read().decode(errors='ignore')[:200]}") from e
+    return c if raw else (json.loads(c) if c else {})
+
+
+def _pedir_pelo_sistema(tipo: str, texto: str, esperar: bool = True, minutos: int = 10) -> str | None:
+    """Servidor sem tela: grava o pedido em entrada/_pedidos; o Ecossistema mostra ao Master, que digita o código; a
+    resposta volta em entrada/_respostas. Devolve o código (ou None se ninguém respondeu a tempo)."""
+    import base64
+    import json
+
+    pid = f"{dt.datetime.now():%Y%m%d%H%M%S}-{os.getpid()}"
+    corpo = {"id": pid, "tipo": tipo, "texto": texto, "relatorio": _CFG.get("_rel_atual", ""),
+             "quando": f"{dt.datetime.now():%d/%m %H:%M}", "maquina": socket.gethostname()}
+    _gh("PUT", f"entrada/_pedidos/{pid}.json", {"message": f"robô: pedido {tipo}",
+                                                 "content": base64.b64encode(json.dumps(corpo, ensure_ascii=False)
+                                                                             .encode()).decode()})
+    if not esperar:
+        return None
+    log(f"⏳ Pedido enviado ao Ecossistema ({pid}) — aguardando até {minutos} min.")
+    fim = time.time() + minutos * 60
+    while time.time() < fim:
+        time.sleep(10)
+        info = _gh("GET", f"entrada/_respostas/{pid}.txt")
+        if info:
+            cod = (_gh("GET", f"entrada/_respostas/{pid}.txt", raw=True) or b"").decode().strip()
+            try:
+                _gh("DELETE", f"entrada/_respostas/{pid}.txt", {"message": "robô: resposta usada", "sha": info["sha"]})
+            except Exception:  # noqa: BLE001
+                pass
+            log("✅ Código recebido pelo Ecossistema.")
+            return cod
+    log("⌛ Ninguém respondeu o pedido a tempo.")
+    return None
 
 
 def nuvem(cfg: dict) -> tuple[str, str] | None:
@@ -490,17 +599,19 @@ def main() -> None:
     ap.add_argument("--testar", help="roda uma receita com o navegador aparecendo")
     ap.add_argument("--so", help="roda só estes relatórios (separados por vírgula)")
     ap.add_argument("--grupo", help="roda só os relatórios deste grupo (ex.: grade, a cada 2 h)")
+    ap.add_argument("--acesso", help="com --entrar/--gravar: usa o login próprio deste acesso (ex.: promax_barreiras)")
     ap.add_argument("--ver", action="store_true", help="mostra o navegador")
     a = ap.parse_args()
     if a.senha:
         cofre_gravar(a.senha)
         return
     cfg = config()
+    _CFG.update(cfg)
     if a.entrar:
-        entrar(cfg, a.entrar)
+        entrar(cfg, a.entrar, a.acesso)
         return
     if a.gravar:
-        gravar(a.gravar, cfg, a.site)
+        gravar(a.gravar, cfg, a.site, a.acesso)
         return
     rels = cfg.get("relatorios", [])
     log(f"▶️ Início ({'teste' if a.testar else 'só ' + a.so if a.so else 'grupo ' + a.grupo if a.grupo else 'agendado/rodada completa'})")

@@ -435,6 +435,36 @@ def _entrar_lembrado() -> dict | None:
     return usuario
 
 
+def _pedidos_robo() -> None:
+    """🔐 O robô no servidor pediu o código do celular (Power BI/Microsoft): o Master digita aqui e ele continua."""
+    try:
+        from services import robo_nuvem
+
+        lista = robo_nuvem.pedidos()
+    except Exception:  # noqa: BLE001
+        return
+    for p in lista:
+        with st.container(border=True):
+            if p.get("tipo") == "codigo":
+                st.warning(f"🔐 **O robô precisa do código do celular** ({p.get('relatorio') or 'relatório'} · "
+                           f"{p.get('quando', '')}): {p.get('texto', '')}")
+                with st.form(f"robo_cod_{p['id']}", border=False):
+                    c1, c2, c3 = st.columns([2, 1, 1])
+                    cod = c1.text_input("Código", key=f"robo_cod_v_{p['id']}", label_visibility="collapsed",
+                                        placeholder="Digite o código que chegou no celular")
+                    ok = c2.form_submit_button("Enviar ao robô", type="primary")
+                    nao = c3.form_submit_button("Dispensar")
+                if ok and cod.strip():
+                    ui.acao(robo_nuvem.responder, p, cod, sucesso="Código enviado — o robô continua em instantes.")
+                elif nao:
+                    ui.acao(robo_nuvem.responder, p, None, sucesso="Pedido dispensado.")
+            else:
+                c1, c2 = st.columns([5, 1])
+                c1.info(f"🤖 Robô ({p.get('quando', '')}): {p.get('texto', '')}")
+                if c2.button("Ok", key=f"robo_av_{p['id']}"):
+                    ui.acao(robo_nuvem.responder, p, None, sucesso="Aviso fechado.")
+
+
 def _alertas(usuario: dict) -> None:
     """Gera os avisos semanais (CNH vencendo) e lembra o usuário das notificações não lidas."""
     try:
@@ -522,6 +552,8 @@ def main() -> None:
     menu_lateral(usuario, pagina)
     operacao_id = session.operacao_id()
     ui.mostrar_avisos()
+    if e_master(usuario):
+        _pedidos_robo()
 
     from repositories import operacoes_repo
     if operacoes_repo.e_consolidada(operacao_id) and pagina in SO_FILIAL:

@@ -24,12 +24,20 @@ O que fica configurado: firewall (só SSH, 80 e 443), SSH só com chave, bloquei
 criptografado todo dia às 02:30.
 
 ## 2. Cada empresa
+**Grupo Lima com os dados de hoje** (vêm sozinhos do backup do GitHub — usuários, cadastros e bases de relatório).
+Antes, no sistema atual: 💾 Backup › **Salvar backup agora** e **📚 Salvar as bases de relatório agora**. Depois:
 ```
-/opt/eco/nova_empresa.sh grupolima grupolima.seudominio.com.br "Grupo Lima" completo admin@grupolima.com.br "postgresql://...supabase..."
+export BACKUP_GITHUB_TOKEN="(o mesmo dos Secrets do Streamlit)" BACKUP_GITHUB_REPO="lazaro0067/eco-backup"
+/opt/eco/nova_empresa.sh grupolima ecossistema.SEUDOMINIO.com.br "Grupo Lima" completo SEU@EMAIL
+```
+Entre com o seu e-mail e a sua senha de sempre. Conferiu? **Apague os Secrets BACKUP_GITHUB_* do Streamlit**
+(senão os dois gravam o mesmo backup) e avise os usuários do endereço novo.
+
+Outras empresas (banco novo, só delas):
+```
 /opt/eco/nova_empresa.sh empresa2  empresa2.seudominio.com.br  "Distribuidora X" profissional ti@distx.com.br
 ```
-- O último parâmetro (opcional) é um banco externo — use o do Supabase para o Grupo Lima continuar com os dados de
-  hoje. Sem ele, a empresa ganha um banco novo, só dela, dentro da VPS.
+- O último parâmetro (opcional) é um banco externo. Sem ele, a empresa ganha um banco novo, só dela, dentro da VPS.
 - Ele mostra a **senha provisória** do Master (troca obrigatória no 1º login).
 - E-mail (SMTP), módulos extras e limites: edite `/opt/eco/empresas/<empresa>/.env` e rode `./atualizar.sh`.
 

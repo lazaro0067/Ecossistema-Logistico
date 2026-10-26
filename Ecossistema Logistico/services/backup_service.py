@@ -98,16 +98,23 @@ _LOTE = 5_000
 _MAX_LINHAS_TABELA = 400_000  # tabela maior que isso não entra (protege a memória do servidor)
 
 
-def exportar(completo: bool = False) -> bytes:
+_MAX_LINHAS_BASE = 2_000_000  # uma base de relatório sozinha (backup separado por tabela)
+
+
+def exportar(completo: bool = False, so_tabelas: set[str] | None = None) -> bytes:
     """Gera o .zip tabela por tabela, em lotes — sem montar o banco inteiro na memória (isso derrubava o
-    servidor da nuvem). completo=False deixa de fora as bases de relatório (BASES_RELATORIO)."""
+    servidor da nuvem). completo=False deixa de fora as bases de relatório (BASES_RELATORIO).
+    so_tabelas = só estas tabelas (o backup separado de cada base de relatório)."""
     buf = io.BytesIO()
     manifesto = {"gerado_em": tempo.agora().strftime("%Y-%m-%d %H:%M:%S"),
                  "banco": "postgres" if is_postgres() else "sqlite", "tabelas": {}, "fora": {}}
     with get_conn() as conn, zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for t in _tabelas_do_banco(conn):
+            if so_tabelas is not None and t not in so_tabelas:
+                continue
             n = conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
-            if (not completo and t in BASES_RELATORIO) or n > _MAX_LINHAS_TABELA:
+            limite = _MAX_LINHAS_BASE if so_tabelas is not None else _MAX_LINHAS_TABELA
+            if (so_tabelas is None and not completo and t in BASES_RELATORIO) or n > limite:
                 manifesto["fora"][t] = int(n)
                 continue
             cols = _colunas(conn, t)

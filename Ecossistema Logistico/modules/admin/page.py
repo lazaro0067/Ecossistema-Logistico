@@ -601,6 +601,21 @@ def _bloco_backup_auto(backup_auto) -> None:
     if not e["pode_salvar"] and b2.button("🔁 Tentar de novo", key="bk_auto_retry"):
         backup_auto.tentar_de_novo()
         st.rerun()
+    bs = e.get("bases") or {}
+    st.markdown(f"**📚 Bases de relatório** (vendas, compra, PCD, 02.05.02, razão…) — arquivo separado por tabela, a "
+                f"cada {backup_auto.BASES_MINUTOS} min quando mudam; ao ligar, a base vazia volta do backup.")
+    if bs.get("msg"):
+        st.success(f"♻️ {bs['msg']}")
+    if bs.get("erro"):
+        st.warning(f"Bases: {bs['erro']}")
+    if st.button("📚 Salvar as bases de relatório agora", key="bk_bases_salvar", disabled=not bs.get("restaurado")):
+        try:
+            with st.spinner("Enviando as bases (pode levar alguns minutos)…"):
+                env = backup_auto.salvar_bases(forcar=True)
+        except Exception as ex:  # noqa: BLE001
+            st.error(str(ex))
+        else:
+            st.success(f"Bases enviadas: {', '.join(env) or 'nenhuma com dados'}.")
 
 
 def _aba_backup() -> None:

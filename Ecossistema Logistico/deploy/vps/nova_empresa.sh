@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # Coloca uma empresa no ar:  ./nova_empresa.sh <slug> <dominio> "<Nome>" <plano> <email_admin> [DATABASE_URL externa]
+#   Trazer os dados de hoje (Grupo Lima): antes, exporte o backup do GitHub —
+#     export BACKUP_GITHUB_TOKEN="github_pat_..." BACKUP_GITHUB_REPO="lazaro0067/eco-backup"
+#   O banco novo nasce vazio e o sistema restaura sozinho: usuários, cadastros e as bases de relatório.
 #   slug    = nome curto, só letras minúsculas, números e hífen (ex.: grupolima)
 #   dominio = endereço dela (o DNS já apontando para o IP desta VPS), ex.: grupolima.seudominio.com.br
 #   plano   = essencial | profissional | completo
@@ -37,6 +40,9 @@ TZ=America/Sao_Paulo
 ECO_DATA_DIR=/data
 # Senha provisória do Master (vale uma vez; o sistema pede para trocar no 1º login). Pode apagar depois.
 MASTER_NOVA_SENHA=$PROVISORIA
+# Backup automático no GitHub (repositório PRIVADO). Com ele, o banco novo já nasce com os dados de hoje.
+BACKUP_GITHUB_TOKEN=${BACKUP_GITHUB_TOKEN:-}
+BACKUP_GITHUB_REPO=${BACKUP_GITHUB_REPO:-}
 # E-mail (redefinição de senha) — preencha e rode ./atualizar.sh
 # SMTP_HOST=smtp.gmail.com
 # SMTP_PORT=587

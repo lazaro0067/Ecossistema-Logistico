@@ -33,6 +33,9 @@ usuario = "SEU_USUARIO"
 # dias: seg-sab, todos, seg,qua,sex …   revenda: opcional (outra revenda para este relatório)
 # receita: opcional (outra receita; ex.: a MESMA receita para várias revendas)   operacao_site: como a operação
 # aparece no site (a receita usa ctx.operacao)   grupo: agendamento próprio (ex.: "grade" = agendar_grade.bat)
+# acesso + usuario: login PRÓPRIO desta operação no site (quando cada revenda tem o seu). A senha vai no cofre com
+#   o nome do acesso (robo --senha promax_barreiras) e o navegador salvo é separado (robo --entrar promax --acesso
+#   promax_barreiras). Sem acesso = o login do site, e a receita troca a operação (ctx.operacao).
 
 [[relatorios]]
 nome = "ressuprimento"
@@ -101,3 +104,14 @@ revenda = "Lima São Félix"
 operacao_site = "SÃO FÉLIX"
 grupo = "grade"
 dias = "todos"
+
+# --- Exemplo: o mesmo relatório do Promax, um login por revenda (acessos separados) ------------------------------
+# [[relatorios]]
+# nome = "vendas_barreiras"
+# receita = "vendas"
+# site = "promax"
+# importar = "vendas"
+# revenda = "Lima Barreiras"
+# acesso = "promax_barreiras"
+# usuario = "USUARIO_BARREIRAS"
+# dias = "seg-sab"
