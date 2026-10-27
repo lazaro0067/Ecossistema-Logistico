@@ -8,6 +8,12 @@ from core import session, tema
 from core.auth import pode_acessar_modulo
 from modules.componentes.bases import card_base
 
+# frequência de cada base na central (📅 diário · 🗓️ mensal · 1️⃣ uma vez / quando mudar)
+FREQ = {"estoque": "dia", "pedidos_marcados": "dia", "ressuprimento": "dia", "financeiro": "dia", "politica": "dia",
+        "linear": "mes", "curva_abc": "mes", "produtos": "uma", "metas_doi": "uma"}
+NOTAS_FREQ = {"dia": {"vendas", "compra", "pcd"}, "mes": {"estoque", "contab"}, "uma": {"operacoes"}}
+ABAS_FREQ = {"dia": "📅 Diário (e semanal)", "mes": "🗓️ Mensal (e trimestral)", "uma": "1️⃣ Uma vez / quando mudar"}
+
 # (layout, título, frequência, módulos que usam a base)
 GRUPOS = [
     ("📦 Estoque, Puxada & Ressuprimento", [
@@ -58,9 +64,13 @@ def render(usuario: dict, operacao_id: int) -> None:
     escolhida = relatorios.seletor_revenda(usuario, operacao_id, "central_op")
     if escolhida:
         operacao_id = escolhida
+    from core import ui
+
+    aba_freq = ui._escolha("central_freq", list(ABAS_FREQ), "dia", pills=True, formatar=ABAS_FREQ.get)
     algum = False
     for titulo, itens in GRUPOS:
-        visiveis = [i for i in itens if any(pode_acessar_modulo(usuario, m) for m in i[3])]
+        visiveis = [i for i in itens if any(pode_acessar_modulo(usuario, m) for m in i[3])
+                    and FREQ.get(i[0], "uma") == aba_freq]
         if not visiveis:
             continue
         algum = True
@@ -72,9 +82,10 @@ def render(usuario: dict, operacao_id: int) -> None:
     if escolhida and any(pode_acessar_modulo(usuario, m) for m in MODULOS_NOTAS):
         algum = True
         tema.secao("🚚 Entrega, Faturamento & DRE",
-                   "PCD, 03.02.37 vendas e compra, 02.05.02 e financeiro da contabilidade. Subir de novo um mês "
-                   "substitui o mês inteiro.")
-        relatorios.cartoes(usuario, operacao_id, "todos")
+                   {"dia": "PCD e 03.02.37 vendas e compra — suba o mês corrente todo dia (substitui o mês inteiro).",
+                    "mes": "02.05.02 (saldo inicial e final) e financeiro da contabilidade — no fechamento do mês.",
+                    "uma": "Relatório de operações — quando entrar operação nova no Promax."}[aba_freq])
+        relatorios.cartoes(usuario, operacao_id, "todos", so=NOTAS_FREQ[aba_freq])
     if not algum:
         st.info("Você não tem acesso a nenhuma pasta que use relatórios.")
     st.caption("O Ressuprimento diário traz todas as filiais num arquivo só. As demais bases são da revenda "

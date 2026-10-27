@@ -33,10 +33,23 @@ def posicao_estoque_df(operacao_id: int) -> pd.DataFrame:
               .agg(**{c: (c, "sum") for c in soma}, **{c: (c, "first") for c in primeiro}, doi_meta=("doi_meta", "mean")))
 
 
+def _linear_dinamica(operacao_id: int) -> pd.DataFrame | None:
+    """📈 Linear dinâmica ligada nesta revenda → cod, linear_cx_dia (senão None = linear subida)."""
+    try:
+        from services import linear_service
+
+        return linear_service.efetiva(operacao_id)
+    except Exception:  # noqa: BLE001 — qualquer problema: segue com a linear subida
+        return None
+
+
 def _posicao_filial(operacao_id: int) -> pd.DataFrame:
     df = _estoque_filial(operacao_id)
     if df.empty:
         return df
+    din = _linear_dinamica(operacao_id)
+    if din is not None:
+        return _com_linear_dinamica(operacao_id, df, din)
     # produto com venda na linear e fora da grade de estoque (02.03.04) = Stock Out (disponível 0)
     fora = query_df("""
         SELECT l.cod, COALESCE(p.descricao, 'Cód ' || CAST(l.cod AS TEXT)) AS descricao, p.tipo, p.categoria,
@@ -51,6 +64,29 @@ def _posicao_filial(operacao_id: int) -> pd.DataFrame:
     """, (operacao_id,))
     if fora.empty:
         return df
+    return pd.concat([df, fora], ignore_index=True).sort_values("cod").reset_index(drop=True)
+
+
+def _com_linear_dinamica(operacao_id: int, df: pd.DataFrame, din: pd.DataFrame) -> pd.DataFrame:
+    """Troca a linear subida pela dinâmica e acrescenta os produtos com venda que não estão na grade (Stock Out)."""
+    lin = dict(zip(din["cod"].astype(int), din["linear_cx_dia"].astype(float)))
+    df = df.copy()
+    df["linear_cx_dia"] = df["cod"].map(lambda c: lin.get(int(c), 0.0) if pd.notna(c) else 0.0)
+    na_grade = set(df["cod"].dropna().astype(int))
+    faltam = [c for c, v in lin.items() if v > 0 and c not in na_grade]
+    if not faltam:
+        return df
+    ph = ", ".join("?" * len(faltam))
+    fora = query_df(f"""
+        SELECT p.cod, p.descricao, p.tipo, p.categoria, 0 AS inicial, 0 AS entrada, 0 AS saida, 0 AS disponivel,
+               COALESCE(p.fator_hl, 0) AS fator_hl, COALESCE(p.cx_pallet, 0) AS cx_pallet,
+               COALESCE(m.doi_meta, 7.0) AS doi_meta, NULL AS dt_atualizacao
+        FROM produtos p LEFT JOIN metas_doi m ON m.operacao_id = ? AND m.cod = p.cod
+        WHERE p.cod IN ({ph})""", (operacao_id, *faltam))
+    if fora.empty:
+        return df
+    fora["linear_cx_dia"] = fora["cod"].map(lambda c: lin.get(int(c), 0.0))
+    fora = fora[df.columns.intersection(fora.columns)]
     return pd.concat([df, fora], ignore_index=True).sort_values("cod").reset_index(drop=True)
 
 

@@ -106,8 +106,9 @@ def render(usuario: dict, operacao_id: int) -> None:
         cartoes(usuario, op, "dre")
 
 
-def cartoes(usuario: dict, operacao_id: int, grupo: str = "todos") -> None:
-    """grupo "dre" = 03.02.37 vendas e compra, operações, 02.05.02 e contabilidade · "todos" = + PCD."""
+def cartoes(usuario: dict, operacao_id: int, grupo: str = "todos", so: set | None = None) -> None:
+    """grupo "dre" = 03.02.37 vendas e compra, operações, 02.05.02 e contabilidade · "todos" = + PCD.
+    so = só estes cartões: {"vendas", "compra", "operacoes", "pcd", "estoque", "contab"} (central por frequência)."""
     nome_rev = (operacoes_repo.buscar(operacao_id) or {}).get("nome", "")
     st.caption(f"🏢 Os arquivos serão gravados em **{nome_rev}** (o PCD reconhece a revenda pela coluna “Nome UNB”).")
     ult = fs.ultimas(operacao_id)
@@ -133,26 +134,38 @@ def cartoes(usuario: dict, operacao_id: int, grupo: str = "todos") -> None:
     def operacoes(arq, _prog=None):
         return f"{fs.importar_operacoes(arq.getvalue(), arq.name)} operações atualizadas."
 
-    c1, c2 = st.columns(2)
-    with c1:
-        _card("03.02.37 vendas", _quando(ult["entregas_notas"]),
-              "Notas de saída. Coluna Z = total faturado; C = operação (1 venda, 2 bonificação…); HL = coluna T × fator "
-              "HL da 01.11; AA = mapa. → 💵 Faturamento, 📑 DRE e 🚚 Produtividade Entrega.",
-              "vendas" + sufixo, arquivos.FORMATOS, vendas, usuario, varios=True)
-        _card("Relatório de operações", f"{ult['operacoes']} operações cadastradas",
-              "Código; Tipo Movimento; Nome da Operação — dá nome às operações nos filtros e no ⚙️ Cadastro.",
-              "operacoes" + sufixo, arquivos.FORMATOS, operacoes, usuario)
-    with c2:
-        _card("03.02.37 compra", _quando(ult["notas_compra"]),
-              "Notas de entrada (o que foi investido em mercadoria). Coluna Z = total; HL = coluna T × fator HL da "
-              "01.11. → 🛒 Compras, 📑 DRE e Remuneração Ambev.", "compra" + sufixo, arquivos.FORMATOS, compra,
-              usuario, varios=True)
-        if grupo != "dre":
-            _card("Relatório de mapas (PCD)", _quando(ult["entregas_pcd"]),
-                  "Uma linha por mapa: placa, veículo, entregas, caixas, % ocupação, peso, KM previsto. "
-                  "→ 🚚 Produtividade Entrega e Frota por modal.", "pcd" + sufixo, arquivos.FORMATOS, pcd, usuario)
-    _card_estoque(usuario, operacao_id, sufixo)
-    _card_contab(usuario, operacao_id, sufixo)
+    quer = (lambda n: so is None or n in so)  # noqa: E731
+    lista = []
+    if quer("vendas"):
+        lista.append(lambda: _card(
+            "03.02.37 vendas", _quando(ult["entregas_notas"]),
+            "Notas de saída. Coluna Z = total faturado; C = operação (1 venda, 2 bonificação…); HL = coluna T × fator "
+            "HL da 01.11; AA = mapa. → 💵 Faturamento, 📑 DRE e 🚚 Produtividade Entrega.",
+            "vendas" + sufixo, arquivos.FORMATOS, vendas, usuario, varios=True))
+    if quer("compra"):
+        lista.append(lambda: _card(
+            "03.02.37 compra", _quando(ult["notas_compra"]),
+            "Notas de entrada (o que foi investido em mercadoria). Coluna Z = total; HL = coluna T × fator HL da "
+            "01.11. → 🛒 Compras, 📑 DRE e Remuneração Ambev.", "compra" + sufixo, arquivos.FORMATOS, compra,
+            usuario, varios=True))
+    if quer("pcd") and grupo != "dre":
+        lista.append(lambda: _card(
+            "Relatório de mapas (PCD)", _quando(ult["entregas_pcd"]),
+            "Uma linha por mapa: placa, veículo, entregas, caixas, % ocupação, peso, KM previsto. "
+            "→ 🚚 Produtividade Entrega e Frota por modal.", "pcd" + sufixo, arquivos.FORMATOS, pcd, usuario))
+    if quer("operacoes"):
+        lista.append(lambda: _card(
+            "Relatório de operações", f"{ult['operacoes']} operações cadastradas",
+            "Código; Tipo Movimento; Nome da Operação — dá nome às operações nos filtros e no ⚙️ Cadastro.",
+            "operacoes" + sufixo, arquivos.FORMATOS, operacoes, usuario))
+    for ini in range(0, len(lista), 2):
+        for col, f in zip(st.columns(2), lista[ini:ini + 2]):
+            with col:
+                f()
+    if quer("estoque"):
+        _card_estoque(usuario, operacao_id, sufixo)
+    if quer("contab"):
+        _card_contab(usuario, operacao_id, sufixo)
 
 
 def _card_contab(usuario: dict, operacao_id: int, sufixo: str = "") -> None:

@@ -67,6 +67,7 @@ MODULOS = {
         "puxada_pedidos": "🚛 Placas & Pedidos da Puxada",
         "ruptura": "⚠️ Projeção de Falta",
         "risco_shelf": "🧊 Risco de Shelf",
+        "linear": "📈 Linear Dinâmica",
     }},
     "vendas": {"rotulo": "Vendas", "icone": "📈", "abas": {
         "acompanhamento": "📈 Acompanhamento Sell-out",
@@ -173,7 +174,7 @@ GRUPOS_ABAS = {
         "⚙️ Cadastros": ["cadastros"],
     },
     "ressuprimento": {
-        "📦 Estoque": ["estoque", "ruptura", "risco_shelf", "politica"],
+        "📦 Estoque": ["estoque", "ruptura", "risco_shelf", "politica", "linear"],
         "🛒 Marcação": ["sugestao", "puxada_pedidos", "diario"],
         "📈 Acompanhamento": ["cestas", "sellin", "gestao_dia", "metas"],
     },

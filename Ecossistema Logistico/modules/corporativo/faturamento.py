@@ -388,47 +388,70 @@ def _fluxo(c: dict, venda: float, um_mes: bool) -> None:
 
 
 def _clientes_lucro(op: int, de: str, ate: str) -> None:
-    tema.secao("👥 Clientes que deram menos lucro para a revenda",
+    tema.secao("👥 Lucro por cliente — 20 que mais e 20 que menos deram lucro",
                "Lucro = venda − HL (venda + bonificação) × custo/HL de cada produto comprado. Inclui o efeito da "
-               "bonificação dada ao cliente.")
+               "bonificação dada ao cliente. Em %, entram só clientes com venda relevante (acima do 1º quartil).")
     cl = fs.lucro_clientes(op, de, ate)
     if cl.empty:
         st.info("Suba de novo a 03.02.37 vendas do período (esta versão passou a guardar cliente × produto) para ver o "
                 "lucro por cliente.")
         return
-    ordem = st.segmented_control("Ordenar por", ["Lucro (R$)", "Margem %"], default="Lucro (R$)",
-                                 key="cli_lucro_ordem") or "Lucro (R$)"
-    base = cl if ordem == "Lucro (R$)" else cl[cl["venda"] >= cl["venda"].quantile(.25)]
-    col = "lucro" if ordem == "Lucro (R$)" else "margem_pct"
+    visao = st.segmented_control("Visão", ["R$ (lucro)", "% (margem)"], default="R$ (lucro)",
+                                 key="cli_lucro_ordem") or "R$ (lucro)"
+    em_pct = visao.startswith("%")
+    base = cl[cl["venda"] >= cl["venda"].quantile(.25)] if em_pct else cl
+    col = "margem_pct" if em_pct else "lucro"
+    melhor = base.nlargest(20, col)
     pior = base.nsmallest(20, col)
     neg = cl[cl["lucro"] < 0]
+    tot_l, tot_v = cl["lucro"].sum(), cl["venda"].sum()
     tema.kpis([
-        {"titulo": "Clientes com prejuízo", "valor": _n(len(neg)), "icone": "🔻",
-         "status": "critico" if len(neg) else "bom", "detalhe": f"{_m(neg['lucro'].sum())} de lucro negativo"},
+        {"titulo": "Lucro dos 20 melhores", "valor": _m(melhor["lucro"].sum()), "icone": "🏆", "status": "bom",
+         "detalhe": f"{_p(_div(melhor['lucro'].sum(), tot_l) * 100 if tot_l else None)} do lucro · margem "
+                    f"{_p(_div(melhor['lucro'].sum(), melhor['venda'].sum()) * 100 if melhor['venda'].sum() else None)}",
+         "dados": _vis_clientes(melhor)},
         {"titulo": "Lucro dos 20 piores", "valor": _m(pior["lucro"].sum()), "icone": "📉", "status": "atencao",
-         "detalhe": f"venda {_m(pior['venda'].sum())}"},
+         "detalhe": f"venda {_m(pior['venda'].sum())} · margem "
+                    f"{_p(_div(pior['lucro'].sum(), pior['venda'].sum()) * 100 if pior['venda'].sum() else None)}",
+         "dados": _vis_clientes(pior)},
+        {"titulo": "Clientes com prejuízo", "valor": _n(len(neg)), "icone": "🔻",
+         "status": "critico" if len(neg) else "bom", "detalhe": f"{_m(neg['lucro'].sum())} de lucro negativo",
+         "dados": _vis_clientes(neg) if len(neg) else None},
         {"titulo": "Clientes analisados", "valor": _n(len(cl)), "icone": "👥", "status": "info",
-         "detalhe": f"margem média {_p(_div(cl['lucro'].sum(), cl['venda'].sum()) * 100 if cl['venda'].sum() else None)}"},
+         "detalhe": f"margem média {_p(_div(tot_l, tot_v) * 100 if tot_v else None)}"},
     ], key="kp_cli_lucro")
-    rot = [f"{str(n or c)[:26]}" for c, n in zip(pior["cliente"], pior["nome"])]
-    graficos.mostrar(graficos.barras_h(rot, pior[col].round(1 if col == "margem_pct" else 0),
-                                       cores=["#c0392b" if v < 0 else "#eda100" for v in pior["lucro"]],
-                                       textos=[_p(v) if col == "margem_pct" else _m(v) for v in pior[col]],
-                                       titulo=f"20 clientes com menor {ordem.lower()}"), key="g_cli_lucro")
-    vis = pd.DataFrame({"Cliente": pior["cliente"].astype(str) + " · " + pior["nome"].fillna(""),
-                        "Venda (R$)": pior["venda"].map(_m), "HL (c/ bonif.)": pior["hl"].map(lambda v: _n(v, 1)),
-                        "Custo (R$)": pior["cmv"].map(_m), "Lucro (R$)": pior["lucro"].map(_m),
-                        "Margem %": pior["margem_pct"].map(_p), "Lucro/HL": pior["lucro_hl"].map(_m),
-                        "Produtos": pior["produtos"].map(_n)}).reset_index(drop=True)
-    vis.loc[len(vis)] = ["TOTAL (20)", _m(pior["venda"].sum()), _n(pior["hl"].sum(), 1), _m(pior["cmv"].sum()),
-                         _m(pior["lucro"].sum()), _p(_div(pior["lucro"].sum(), pior["venda"].sum()) * 100
-                                                    if pior["venda"].sum() else None), "", ""]
-    ui.tabela(vis, baixar="clientes_menor_lucro")
+    g1, g2 = st.columns(2)
+    for colg, d, titulo, chave in ((g1, melhor, "🏆 20 que mais deram lucro", "g_cli_mais"),
+                                   (g2, pior, "🔻 20 que menos deram lucro", "g_cli_menos")):
+        with colg:
+            rot = [f"{str(n or c)[:24]}" for c, n in zip(d["cliente"], d["nome"])]
+            cores = ["#c0392b" if v < 0 else "#1baf7a" if chave == "g_cli_mais" else "#eda100" for v in d["lucro"]]
+            graficos.mostrar(graficos.barras_h(rot, d[col].round(1 if em_pct else 0), cores=cores,
+                                               textos=[_p(v) if em_pct else _m(v) for v in d[col]],
+                                               titulo=f"{titulo} ({'margem %' if em_pct else 'R$'})"), key=chave)
+    t1, t2 = st.columns(2)
+    with t1.expander("📋 Tabela — 20 que mais deram lucro"):
+        ui.tabela(_vis_clientes(melhor, total=True), baixar="clientes_maior_lucro")
+    with t2.expander("📋 Tabela — 20 que menos deram lucro"):
+        ui.tabela(_vis_clientes(pior, total=True), baixar="clientes_menor_lucro")
     with st.expander("📋 Todos os clientes (do menor para o maior lucro)"):
         ui.tabela(pd.DataFrame({"Cliente": cl["cliente"].astype(str) + " · " + cl["nome"].fillna(""),
                                 "Venda (R$)": cl["venda"].map(_m), "Custo (R$)": cl["cmv"].map(_m),
                                 "Lucro (R$)": cl["lucro"].map(_m), "Margem %": cl["margem_pct"].map(_p)}),
                   baixar="clientes_lucro_todos", height=600)
+
+
+def _vis_clientes(d: pd.DataFrame, total: bool = False) -> pd.DataFrame:
+    vis = pd.DataFrame({"Cliente": d["cliente"].astype(str) + " · " + d["nome"].fillna(""),
+                        "Venda (R$)": d["venda"].map(_m), "HL (c/ bonif.)": d["hl"].map(lambda v: _n(v, 1)),
+                        "Custo (R$)": d["cmv"].map(_m), "Lucro (R$)": d["lucro"].map(_m),
+                        "Margem %": d["margem_pct"].map(_p), "Lucro/HL": d["lucro_hl"].map(_m),
+                        "Produtos": d["produtos"].map(_n)}).reset_index(drop=True)
+    if total and len(d):
+        vis.loc[len(vis)] = [f"TOTAL ({len(d)})", _m(d["venda"].sum()), _n(d["hl"].sum(), 1), _m(d["cmv"].sum()),
+                             _m(d["lucro"].sum()), _p(_div(d["lucro"].sum(), d["venda"].sum()) * 100
+                                                      if d["venda"].sum() else None), "", ""]
+    return vis
 
 
 def render_margem(usuario: dict, operacao_id: int) -> None:

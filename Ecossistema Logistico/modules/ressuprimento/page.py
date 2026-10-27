@@ -1,8 +1,8 @@
 """Módulo Ressuprimento — cada aba (pasta) vive no seu próprio arquivo."""
 from core import ui
 from modules.puxada import pedidos_dia
-from modules.ressuprimento import (bases, cestas, diario, estoque, gestao_dia, metas, politica, risco_shelf, ruptura,
-                                   sellin, sugestao)
+from modules.ressuprimento import (bases, cestas, diario, estoque, gestao_dia, linear, metas, politica, risco_shelf,
+                                   ruptura, sellin, sugestao)
 
 ABAS = {
     "estoque": estoque.render,
@@ -16,6 +16,7 @@ ABAS = {
     "puxada_pedidos": pedidos_dia.tela_ressuprimento,
     "ruptura": ruptura.render,
     "risco_shelf": risco_shelf.render,
+    "linear": linear.render,
 }
 
 

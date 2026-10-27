@@ -1822,6 +1822,23 @@ MIGRACOES: list[tuple[str, str]] = [
             modulo     TEXT NOT NULL,
             PRIMARY KEY (usuario_id, modulo)
         );
+    """),    ("058_linear_dinamica", """
+        CREATE TABLE IF NOT EXISTS linear_config (
+            operacao_id   INTEGER PRIMARY KEY,
+            ativa         INTEGER NOT NULL DEFAULT 0,
+            crescimento   REAL NOT NULL DEFAULT 0,
+            atualizado_por TEXT,
+            atualizado_em TEXT
+        );
+        CREATE TABLE IF NOT EXISTS linear_ajustes (
+            operacao_id   INTEGER NOT NULL,
+            cod           INTEGER NOT NULL,
+            linear_manual REAL,
+            obs           TEXT,
+            por           TEXT,
+            em            TEXT,
+            PRIMARY KEY (operacao_id, cod)
+        );
     """),
 ]
 
