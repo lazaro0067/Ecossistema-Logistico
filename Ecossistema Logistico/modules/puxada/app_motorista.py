@@ -307,12 +307,11 @@ def tela_login() -> None:
                              "(interjornada de 11 h depois de finalizar a viagem). Bom descanso! 😴")
                 elif usuario:
                     session.logar(usuario)
-                    if lembrar:
+                    if lembrar:  # cookie só deste celular (nunca no link)
+                        from core import lembrar as _lembrar
                         from core.auth import gerar_token
 
-                        token = gerar_token(usuario["id"])
-                        if token:
-                            st.query_params["k"] = token
+                        _lembrar.guardar("k", gerar_token(usuario["id"]))
                     st.rerun()
                 else:
                     st.error("Acesso ou senha inválidos.")
@@ -1037,10 +1036,11 @@ def _area_dados(usuario: dict, mot: dict) -> None:
             except RegraNegocioError as e:
                 st.error(str(e))
             else:
-                if "k" in st.query_params:  # o acesso lembrado antigo deixa de valer; gera um novo
+                if st.session_state.get("_lembrar"):  # a chave antiga deixa de valer; grava a nova
+                    from core import lembrar as _lembrar
                     from core.auth import gerar_token
 
-                    st.query_params["k"] = gerar_token(usuario["id"])
+                    _lembrar.guardar("k", gerar_token(usuario["id"]))
                 ui.avisar("Senha alterada!")
                 st.rerun()
     if st.button("🚪 Sair do app", key="car_sair_dados", **ui.LARGURA):

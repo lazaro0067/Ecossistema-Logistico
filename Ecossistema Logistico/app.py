@@ -104,12 +104,11 @@ def tela_login() -> None:
                                  "(interjornada de 11 h depois de finalizar a viagem).")
                     elif usuario:
                         session.logar(usuario)
-                        if manter:
+                        if manter:  # cookie só deste navegador (nunca no endereço — o link pode ser copiado)
+                            from core import lembrar
                             from core.auth import gerar_token
 
-                            token = gerar_token(usuario["id"])
-                            if token:
-                                st.query_params["s"] = token
+                            lembrar.guardar("s", gerar_token(usuario["id"]))
                         st.rerun()
                     else:
                         st.error("E-mail ou senha inválidos.")
@@ -183,10 +182,11 @@ def tela_troca_obrigatoria(usuario: dict) -> None:
                     st.error(str(e))
                 else:
                     usuario["trocar_senha"] = 0
-                    if "s" in st.query_params:
+                    if st.session_state.get("_lembrar"):  # a chave antiga deixou de valer: grava a nova
+                        from core import lembrar
                         from core.auth import gerar_token
 
-                        st.query_params["s"] = gerar_token(usuario["id"])
+                        lembrar.guardar("s", gerar_token(usuario["id"]))
                     ui.avisar("Senha criada! Bem-vindo(a).")
                     st.rerun()
         if st.button("Sair"):
@@ -344,14 +344,18 @@ def app_carreteiro() -> None:
 
     session.iniciar()
     usuario = session.usuario()
-    if not usuario and st.query_params.get("k"):  # acesso lembrado neste celular
+    from core import lembrar
+
+    lembrar.limpar_endereco("k")  # ?k antigo do motorista não vale mais
+    if not usuario and lembrar.ler("k"):  # acesso lembrado neste celular (cookie, nunca no link)
         from core.auth import entrar_por_token
 
-        usuario = entrar_por_token(st.query_params.get("k"))
+        usuario = entrar_por_token(lembrar.ler("k"))
         if usuario:
             session.logar(usuario)
+            st.session_state["_lembrar"] = True
         else:
-            del st.query_params["k"]
+            lembrar.esquecer("k")
     if not usuario and (st.query_params.get("t") or st.session_state.get("car_terceiro")):
         app_motorista.tela_terceiro()  # terceiro (frete spot): sem login, só a viagem
         return
@@ -414,9 +418,12 @@ def app_agente(usuario: dict) -> None:
 
 
 def _entrar_lembrado() -> dict | None:
-    """“Manter conectado”: o token (?s=...) no endereço refaz o login depois de recarregar a página ou de o
-    servidor reiniciar (nova versão). Trocar a senha ou clicar em Sair invalida/remove o token."""
-    token = st.query_params.get("s")
+    """“Manter conectado”: o cookie deste navegador refaz o login depois de recarregar a página ou de o servidor
+    reiniciar. A chave NUNCA vem do endereço (link copiado não entra na conta de ninguém). Trocar a senha ou clicar
+    em Sair invalida/apaga a chave."""
+    from core import lembrar
+
+    token = lembrar.ler("s")
     if not token:
         return None
     from core.auth import entrar_por_token
@@ -424,11 +431,12 @@ def _entrar_lembrado() -> dict | None:
 
     usuario = entrar_por_token(token)
     if not usuario or bloqueio(usuario):
-        for q in ("s", "p"):
-            if q in st.query_params:
-                del st.query_params[q]
+        lembrar.esquecer("s")
+        if "p" in st.query_params:
+            del st.query_params["p"]
         return None
     session.logar(usuario)
+    st.session_state["_lembrar"] = True
     pagina = st.query_params.get("p")
     if pagina:
         st.session_state.pagina = pagina
@@ -486,6 +494,10 @@ def _alertas(usuario: dict) -> None:
 def main() -> None:
     ui.limpar_chaves_tabela()
     tema.aplicar()
+    from core import lembrar
+
+    lembrar.limpar_endereco()  # ?s/?k antigos no link não valem mais (segurança)
+    lembrar.aplicar()
     try:
         from database.schema import MIGRACOES
 

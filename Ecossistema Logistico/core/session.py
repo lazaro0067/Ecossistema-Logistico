@@ -19,9 +19,12 @@ def logar(dados: dict) -> None:
 
 
 def sair() -> None:
+    from core import lembrar
+
     for k in list(st.session_state.keys()):
         del st.session_state[k]
-    for q in ("s", "p", "k"):  # acesso lembrado e página atual no endereço
+    lembrar.esquecer()  # apaga o cookie do “manter conectado” deste navegador
+    for q in ("s", "p"):  # chave antiga e página atual no endereço
         if q in st.query_params:
             del st.query_params[q]
 
@@ -40,5 +43,5 @@ def pagina() -> str | None:
 
 def ir_para(pag: str) -> None:
     st.session_state.pagina = pag
-    if "s" in st.query_params:  # sistema com "manter conectado": volta na mesma página ao recarregar
+    if st.session_state.get("_lembrar"):  # “manter conectado”: volta na mesma página ao recarregar
         st.query_params["p"] = pag

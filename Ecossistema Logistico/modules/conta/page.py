@@ -20,10 +20,11 @@ def render(usuario: dict, operacao_id: int | None) -> None:
             if st.form_submit_button("Alterar senha", type="primary"):
                 def _trocar():
                     usuarios_service.trocar_propria_senha(usuario["id"], atual, nova, conf)
-                    if "s" in st.query_params:  # o acesso lembrado antigo deixa de valer; gera um novo
+                    if st.session_state.get("_lembrar"):  # a chave antiga deixa de valer; grava a nova
+                        from core import lembrar
                         from core.auth import gerar_token
 
-                        st.query_params["s"] = gerar_token(usuario["id"])
+                        lembrar.guardar("s", gerar_token(usuario["id"]))
 
                 ui.acao(_trocar, sucesso="Senha alterada!")
         tema.secao("Alterar e-mail de acesso", f"Hoje você entra com: {usuario.get('email') or usuario.get('login')}")

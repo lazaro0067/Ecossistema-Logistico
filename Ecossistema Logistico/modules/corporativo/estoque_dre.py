@@ -308,12 +308,27 @@ def render_dre(usuario: dict, operacao_id: int) -> None:
 
         contabilidade.render(usuario, op, meses)
         return
-    c1, c2, _ = st.columns([1.2, 1, 2])
+    c1, c2, c3, _ = st.columns([1.6, 1, 1, 1])
     with c1:
-        modo = ui._escolha("dre_modo", ["mes", "ano"], "mes", pills=True, formatar={"mes": "🗓️ Mês", "ano": "📆 Ano"}.get)
+        modo = ui._escolha("dre_modo", ["mes", "periodo", "ano"], "mes", pills=True,
+                           formatar={"mes": "🗓️ Mês", "periodo": "📅 Período", "ano": "📆 Ano"}.get)
+    pronto = _mes_completo(op, meses)  # abre no último mês com os relatórios completos (não no mês pela metade)
     if modo == "mes":
+        if st.session_state.get("dre_mes") not in meses:
+            st.session_state["dre_mes"] = pronto
         lista = [ui.seletor_mes("Mês", meses, key="dre_mes", container=c2)]
         rotulo = _nome_mes(lista[0])
+    elif modo == "periodo":
+        asc = sorted(meses)
+        if st.session_state.get("dre_de") not in asc:
+            st.session_state["dre_de"] = asc[max(asc.index(pronto) - 2, 0)] if pronto in asc else asc[0]
+        if st.session_state.get("dre_ate") not in asc:
+            st.session_state["dre_ate"] = pronto if pronto in asc else asc[-1]
+        de = c2.selectbox("De", asc, key="dre_de", format_func=_nome_mes)
+        ate = c3.selectbox("Até", asc, key="dre_ate", format_func=_nome_mes)
+        de, ate = min(de, ate), max(de, ate)
+        lista = [m for m in asc if de <= m <= ate]
+        rotulo = f"{_nome_mes(de)} a {_nome_mes(ate)}" if len(lista) > 1 else _nome_mes(lista[0])
     else:
         a = c2.selectbox("Ano", sorted({m[:4] for m in meses}, reverse=True), key="dre_ano")
         lista = sorted(m for m in meses if m.startswith(a))
@@ -336,6 +351,24 @@ def render_dre(usuario: dict, operacao_id: int) -> None:
     _kpis_dre(tot, rotulo)
     _manuais(usuario, op, lista)
     tabela_dre(lista, res, tot, rotulo, "DRE")
+
+
+def _mes_completo(op: int, meses: list[str]) -> str:
+    """Último mês já fechado pela contabilidade e com o 02.05.02; senão o último mês antes do atual; senão o mais
+    recente. É o mês em que a tela abre."""
+    from core import tempo
+    from services import contabilidade_service as cs
+
+    atual = tempo.hoje().strftime("%Y-%m")
+    com_saldo = set(ev.meses(op))
+    for m in meses:  # meses vem do mais novo para o mais velho
+        try:
+            if m < atual and m in com_saldo and cs.fechado(op, m):
+                return m
+        except Exception:  # noqa: BLE001
+            break
+    anteriores = [m for m in meses if m < atual]
+    return anteriores[0] if anteriores else meses[0]
 
 
 def _selo_fechado(tot: dict, lista: list[str]) -> None:
