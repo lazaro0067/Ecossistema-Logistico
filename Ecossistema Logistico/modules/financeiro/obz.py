@@ -540,6 +540,7 @@ def render_real(usuario: dict, operacao_id: int) -> None:
                 st.rerun()
         if not obz.pode_plan(usuario):
             st.caption("🔒 Gravar a Base OBZ altera o plan — só quem o Master liberou.")
+        _zerar_base(usuario, operacao_id, ano)
     st.markdown("**📒 16.03.01 do mês**")
     arq = st.file_uploader("16.03.01 (CSV, Excel ou .zip)", type=["csv", "txt", "zip", "xlsx", "xlsm", "xls"], key="obz_r_up")
     if arq is not None and st.button("Gravar realizado", type="primary", key="obz_r_gravar"):
@@ -563,6 +564,32 @@ def render_real(usuario: dict, operacao_id: int) -> None:
                         "Crédito": _m(rl["credito"].sum())})
     if tab:
         ui.tabela(pd.DataFrame(tab), baixar=False)
+
+
+def _zerar_base(usuario: dict, operacao_id: int, ano: str) -> None:
+    """🧹 Zerar a Base OBZ de uma ou mais revendas (só o Master) antes de subir de novo."""
+    from core.auth import e_master
+    from repositories import operacoes_repo
+
+    if not e_master(usuario):
+        return
+    filiais = {o["id"]: o["nome"] for o in operacoes_repo.listar(apenas_ativas=True)
+               if not operacoes_repo.e_consolidada(o["id"])}
+    with st.popover("🧹 Zerar a Base OBZ de uma revenda (para subir do zero)"):
+        st.caption(f"Apaga o **plan** e o **realizado** (16.03.01 e real das abas) de **{ano}** das revendas escolhidas. "
+                   "Departamentos, contas, donos, justificativas, tendências, ações, CAPEX e simulador ficam.")
+        alvo = st.multiselect("Revendas", list(filiais), default=[operacao_id] if operacao_id in filiais else [],
+                              format_func=filiais.get, key="obz_zerar_ops")
+        conf = st.text_input("Para confirmar, digite ZERAR", key="obz_zerar_conf")
+        if st.button("🧹 Zerar agora", key="obz_zerar_ok", type="primary",
+                     disabled=not alvo or conf.strip().upper() != "ZERAR"):
+            msgs = []
+            for o in alvo:
+                r = obz.zerar_base(o, usuario, ano)
+                msgs.append(f"{filiais[o]}: {r['obz_plan']} plan · {r['obz_real']} real · {r['obz_real_lanc']} lançamentos")
+            st.session_state.pop("obz_zerar_conf", None)
+            ui.avisar("Base OBZ zerada — " + " | ".join(msgs) + ". Agora suba a Base OBZ de cada revenda.")
+            st.rerun()
 
 
 # --- ⚙️ Cadastros -------------------------------------------------------------------------------------------

@@ -1096,6 +1096,9 @@ def importar_base(conteudo: bytes, nome: str, operacao_id: int, ano: str, usuari
                               "credito": pd.to_numeric(rz[c[8]], errors="coerce").fillna(0.0)})
             res["real"] = _gravar_real(operacao_id, d, f"{nome} (aba 16.03.01)", usuario)
     # realizado dos meses que não têm 16.03.01 carregado: vem da coluna "Real" das abas (histórico)
+    # o real histórico das abas (lancamentos = 0) da subida anterior sai: subir de novo SUBSTITUI, não soma
+    execute("DELETE FROM obz_real WHERE operacao_id = ? AND mes LIKE ? AND COALESCE(lancamentos, 0) = 0",
+            (operacao_id, f"{ano}-%"))
     com_razao = set(query_df("SELECT DISTINCT mes FROM obz_real WHERE operacao_id = ?", (operacao_id,))["mes"])
     hist = {}
     limite_hist = tempo.hoje().strftime("%Y-%m") if aba_base else "9999-99"  # consolidado: só meses fechados
@@ -1118,6 +1121,33 @@ def importar_base(conteudo: bytes, nome: str, operacao_id: int, ano: str, usuari
     res["alertas"] = alertar_dispersoes(operacao_id, sorted(set(meses_plan) | set(res["meses_historico"])
                                                             | set((res["real"] or {}).get("meses", []))))
     return res
+
+
+def zerar_base(operacao_id: int, usuario: dict, ano: str | None = None) -> dict:
+    """🧹 Apaga o plan e o realizado (razão 16.03.01 e real das abas) de UMA revenda — para subir a Base OBZ do zero.
+    Não mexe em departamentos, contas e donos (são de todas as revendas) nem no que foi lançado à mão
+    (justificativas, tendências, ações, CAPEX, simulador). Só o Master."""
+    from core.auth import e_master
+
+    if not e_master(usuario):
+        raise RegraNegocioError("Só o Master pode zerar a Base OBZ.")
+    if operacoes_repo.e_consolidada(operacao_id):
+        raise RegraNegocioError("Escolha uma revenda (não a visão consolidada).")
+    filtro, p = ("AND mes LIKE ?", (f"{ano}-%",)) if ano else ("", ())
+    out = {}
+    with get_conn() as conn:
+        for t in ("obz_plan", "obz_real", "obz_real_lanc"):
+            n = conn.execute(f"SELECT COUNT(*) FROM {t} WHERE operacao_id = ? {filtro}",
+                             (int(operacao_id), *p)).fetchone()[0]
+            conn.execute(f"DELETE FROM {t} WHERE operacao_id = ? {filtro}", (int(operacao_id), *p))
+            out[t] = int(n)
+    try:
+        from services.produtividade_entrega_service import _log
+
+        _log(operacao_id, "obz_zerar", sum(out.values()), f"zerou {ano or 'tudo'}", usuario.get("nome", ""))
+    except Exception:  # noqa: BLE001
+        pass
+    return out
 
 
 def salvar_plan_valor(operacao_id: int, mes: str, conta: str, depto: str, valor: float, usuario: dict) -> None:
