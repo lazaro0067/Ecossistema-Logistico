@@ -11,7 +11,7 @@ from services.erros import RegraNegocioError
 
 def render(usuario: dict, operacao_id: int) -> None:
     tema.secao("👔 Gestores", "Cadastre os gestores; depois crie o acesso ao sistema e vincule como dono de "
-               "departamento e sub-dono de contas do OBZ (💰 Financeiro › ⚙️ Cadastros OBZ › 🌳 Árvore de donos).")
+               "departamento e sub-dono de contas do OBZ (💰 Financeiro › 👤 Donos).")
     pode = e_master(usuario) or obz.pode_aprovar(usuario)
     areas = obz.areas()["nome"].tolist()
     with st.expander("➕ Novo gestor", expanded=gs.listar().empty):

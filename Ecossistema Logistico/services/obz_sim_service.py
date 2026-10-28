@@ -43,7 +43,9 @@ DRIVERS = {
 }
 TIPOS_INIC = {"despesa": "➕ Despesa nova", "economia": "➖ Economia / corte"}
 PREMISSAS_PADRAO = {"ipca": 4.5, "aluguel": 4.5, "fretes": 6.0, "insumos": 5.0, "dissidio_mes": 5,
-                    "dissidio_pct": 5.0, "crescimento_volume": 0.0, "base": "media"}
+                    "dissidio_pct": 5.0, "crescimento_volume": 0.0, "base": "media", "distribuicao": "hl"}
+DISTRIBUICAO = {"hl": "🍺 Pelo HL planejado de cada mês (mês que vende mais, custa mais)",
+                "linear": "➖ Linear (1/12 por mês)"}
 _CHAVES = [
     ("pessoal", ("salario", "ferias", " 13", "13o", "rescis", "inss", "fgts", "plano saude", "odonto", "alimenta",
                  "ticket", "vale ", "seguro de vida", "uniforme", "epi", "exame", "estagi", "aprendiz",
@@ -264,6 +266,15 @@ def _razao_volume(sim_id: int) -> tuple[dict, float]:
     return {m: (plan.get(m, hl_med) / hl_med) if hl_med else 1.0 for m in range(1, 13)}, hl_med
 
 
+def pesos_hl(sim_id: int) -> dict:
+    """{mês 1–12: participação do mês no HL planejado do ano} — soma 1. Sem HL, 1/12 cada."""
+    vol = volume(sim_id)
+    hp = {int(m[5:]): (float(h) if pd.notna(h) else float(b) if pd.notna(b) else 0.0)
+          for m, b, h in zip(vol["mes"], vol["hl_base"], vol["hl_plan"])}
+    tot = sum(max(v, 0.0) for v in hp.values())
+    return {m: (max(hp.get(m, 0.0), 0.0) / tot) if tot else 1 / 12 for m in range(1, 13)}
+
+
 def qlp_mensal(sim_id: int) -> pd.DataFrame:
     """QLP projetado por departamento e mês: o planejado (se informado) ou o de hoje × crescimento do HL."""
     razao, _ = _razao_volume(sim_id)
@@ -366,6 +377,8 @@ def calcular(sim_id: int) -> None:
 
     pct = {k: float(pm.get(k) or 0) / 100 for k in ("ipca", "aluguel", "fretes", "insumos", "dissidio_pct")}
     mes_dis = int(pm.get("dissidio_mes") or 1)
+    pelo_hl = (pm.get("distribuicao") or "hl") == "hl"
+    peso = pesos_hl(sim_id) if pelo_hl else {m: 1 / 12 for m in range(1, 13)}
     linhas = query_df("SELECT id, conta, depto, area, driver FROM obz_sim_linha WHERE sim_id = ?", (int(sim_id),))
     ano = s["ano"]
     valores, upd = [], []
@@ -379,12 +392,12 @@ def calcular(sim_id: int) -> None:
                 v = b * razao[m] * (1 + pct["fretes"])
             elif r.driver == "insumos":
                 v = b * razao[m] * (1 + pct["insumos"])
-            elif r.driver == "aluguel":
-                v = b * (1 + pct["aluguel"])
+            elif r.driver == "aluguel":  # o total do ano se reparte pelos meses conforme o HL planejado
+                v = b * 12 * peso[m] * (1 + pct["aluguel"])
             elif r.driver in ("ipca", "receita"):
-                v = b * (1 + pct["ipca"])
+                v = b * 12 * peso[m] * (1 + pct["ipca"])
             else:
-                v = b
+                v = b * 12 * peso[m]
             valores.append((int(sim_id), r.conta, r.depto, f"{ano}-{m:02d}", round(v, 2)))
             tot += v
         upd.append((round(b * 12, 2), round(tot, 2), int(r.id)))
@@ -477,6 +490,9 @@ def valores_mensais(sim_id: int, final: bool = True) -> pd.DataFrame:
         return v
     li = query_df("SELECT conta, depto, calc_ano, final_ano FROM obz_sim_linha WHERE sim_id = ?", (int(sim_id),))
     li = li.set_index(["conta", "depto"])
+    s = buscar(sim_id)
+    peso = pesos_hl(sim_id) if ((s or {}).get("premissas") or {}).get("distribuicao", "hl") == "hl" \
+        else {m: 1 / 12 for m in range(1, 13)}
     fat, plano = {}, {}
     for (c, d), r in li.iterrows():
         ca, fa = float(r["calc_ano"] or 0), float(r["final_ano"] or 0)
@@ -485,8 +501,9 @@ def valores_mensais(sim_id: int, final: bool = True) -> pd.DataFrame:
         if ca:
             fat[(c, d)] = fa / ca
         else:
-            plano[(c, d)] = fa / 12
-    v["valor"] = [plano.get((c, d), x * fat.get((c, d), 1.0)) for c, d, x in zip(v["conta"], v["depto"], v["valor"])]
+            plano[(c, d)] = fa
+    v["valor"] = [plano[(c, d)] * peso[int(m[5:])] if (c, d) in plano else x * fat.get((c, d), 1.0)
+                  for c, d, m, x in zip(v["conta"], v["depto"], v["mes"], v["valor"])]
     return v
 
 

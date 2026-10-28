@@ -100,9 +100,9 @@ def _barras_plan_real(g: pd.DataFrame, chave: str, titulo: str, rotulos=None) ->
     fig = go.Figure()
     fig.add_bar(y=rot, x=g["plan"], name="Plan", orientation="h", marker_color="#c9d3e3", customdata=g[chave],
                 hovertemplate="<b>%{y}</b><br>Plan: R$ %{x:,.0f}<extra></extra>")
-    fig.add_bar(y=rot, x=g["fechamento"], name="Real / Tend", orientation="h", customdata=g[chave],
+    fig.add_bar(y=rot, x=g["fechamento"], name="Real", orientation="h", customdata=g[chave],
                 marker_color=[_cor(d, p) for d, p in zip(g["desfavoravel"], g["plan"])],
-                hovertemplate="<b>%{y}</b><br>Fechamento: R$ %{x:,.0f}<extra></extra>")
+                hovertemplate="<b>%{y}</b><br>Real: R$ %{x:,.0f}<extra></extra>")
     fig.update_layout(barmode="group")
     fig.update_yaxes(autorange="reversed")
     return graficos._layout(fig, titulo, max(260, 46 * len(rot) + 80))
@@ -117,11 +117,11 @@ def _sunburst(b: pd.DataFrame, raiz: str) -> go.Figure:
             ids.append(f"A|{area}"), labels.append(area), parents.append(raiz)
             values.append(float(ga["fechamento"].abs().sum()))
             cores.append(_cor(ga["desfavoravel"].sum(), ga["plan"].sum()))
-            hover.append(f"Plan {_mk(ga['plan'].sum())} · Fech. {_mk(ga['fechamento'].sum())}")
+            hover.append(f"Plan {_mk(ga['plan'].sum())} · Real {_mk(ga['fechamento'].sum())}")
         ids.append(f"V|{area}|{vbz}"), labels.append(vbz), parents.append(f"A|{area}")
         values.append(float(g["fechamento"].abs().sum()))
         cores.append(_cor(g["desfavoravel"].sum(), g["plan"].sum()))
-        hover.append(f"Plan {_mk(g['plan'].sum())} · Fech. {_mk(g['fechamento'].sum())}")
+        hover.append(f"Plan {_mk(g['plan'].sum())} · Real {_mk(g['fechamento'].sum())}")
     fig = go.Figure(go.Sunburst(ids=ids, labels=labels, parents=parents, values=values, branchvalues="remainder",
                                 marker=dict(colors=cores, line=dict(color="#fff", width=2)), hovertext=hover,
                                 hovertemplate="<b>%{label}</b><br>%{hovertext}<extra></extra>", maxdepth=2,
@@ -137,6 +137,8 @@ def _linha_mes(op: int, ano: str, area: str | None = None) -> go.Figure | None:
         s = s[s["area"] == area]
     p = s.pivot_table(index="mes", columns="tipo", values="valor", aggfunc="sum").reindex(
         [f"{ano}-{m:02d}" for m in range(1, 13)])
+    if "real" in p:  # mês sem real carregado fica vazio (não é zero)
+        p["real"] = p["real"].where(p["real"].abs() > 0.004)
     x = [obz.nome_mes(m)[:3] for m in p.index]
     fig = go.Figure()
     if "plan" in p:
@@ -155,9 +157,10 @@ def _kpis(b: pd.DataFrame, rotulo: str, chave: str) -> None:
     pct = t["disp"] / abs(t["plan"]) * 100 if t["plan"] else None
     tema.kpis([
         {"titulo": f"Plan · {rotulo}", "valor": _mk(t["plan"]), "icone": "🎯", "status": "info"},
-        {"titulo": "Real", "valor": _mk(t["real"]), "icone": "📥", "status": "info", "detalhe": "16.03.01"},
-        {"titulo": "Fechamento (real/tend)", "valor": _mk(t["fechamento"]), "icone": "🔮", "status": "info",
-         "detalhe": "mês aberto usa a tend"},
+        {"titulo": "Real", "valor": _mk(t["real"]), "icone": "📥", "status": "info",
+         "detalhe": "16.03.01 / Base OBZ"},
+        {"titulo": "Real ÷ Plan", "valor": f"{t['real'] / t['plan'] * 100:.1f}%".replace(".", ",") if t["plan"] else "—",
+         "icone": "📏", "status": "info", "detalhe": "quanto do plan foi gasto"},
         {"titulo": "Dispersão", "valor": _mk(t["disp"]), "icone": "⚖️",
          "status": "critico" if t["desfavoravel"] > 0 and (pct or 0) >= 10 else "atencao" if t["desfavoravel"] > 0
          else "bom", "detalhe": f"{_p(pct)} sobre o plan"},
@@ -175,7 +178,7 @@ def _tabela(b: pd.DataFrame) -> pd.DataFrame:
         "": [("🔴" if c and d > 0 else "🟡" if d > 0 else "🟢") for c, d in zip(b["critica"], b["desfavoravel"])],
         "Conta": b["conta"].astype(str) + " · " + b["nome_conta"].fillna(""), "Departamento": b["area"],
         "VBZ": b["vbz"], "Responsável": b["responsavel"], "Plan": b["plan"].map(_m), "Real": b["real"].map(_m),
-        "Tend": b["tend"].map(_m), "Dispersão": b["disp"].map(_m), "Disp. %": b["disp_pct"].map(_p),
+        "Dispersão": b["disp"].map(_m), "Disp. %": b["disp_pct"].map(_p),
         "Status": b["status"].map(obz.STATUS).fillna(""), "Justificativa": b["justificativa"].fillna("")}) \
         .reset_index(drop=True)
 
@@ -223,7 +226,11 @@ def render(usuario: dict, operacao_id: int) -> None:
     if obz.contas().empty:
         st.info("Suba a **Base OBZ** (ou o 16.03.01) em ⚙️ OBZ: bases & cadastros › 📥 Realizado & Base.")
         return
-    meses = obz.meses(op)
+    meses = obz.meses_real(op)
+    if not meses:
+        st.info("Ainda não há realizado carregado. Suba o 16.03.01 ou a Base OBZ em ⚙️ OBZ: bases & cadastros. "
+                "A projeção do ano fica na aba 📈 L.E.")
+        return
     c1, c2, c3 = st.columns([1.3, 1, 1.6])
     with c1:
         per = ui._escolha("obz_p_per", ["mes", "ytd"], "mes", pills=True,
@@ -232,10 +239,12 @@ def render(usuario: dict, operacao_id: int) -> None:
     with c3:
         visao = ui._escolha("obz_p_visao", ["area", "dono"], "area", pills=True,
                             formatar={"area": "🏢 Por departamento", "dono": "👤 Por dono"}.get)
-    lista = [f"{mes[:4]}-{m:02d}" for m in range(1, int(mes[5:]) + 1)] if per == "ytd" else [mes]
+    lista = [m for m in meses if m[:4] == mes[:4] and m <= mes] if per == "ytd" else [mes]
     rotulo = f"jan a {obz.nome_mes(mes).lower()}" if per == "ytd" else obz.nome_mes(mes)
     with st.spinner("Calculando o OBZ..."):
-        b = obz.painel(op, lista)
+        b = obz.painel(op, lista, so_real=True)
+    st.caption("📥 Só o **realizado** (meses com 16.03.01 / Base OBZ carregados) contra o plan — sem tendência nem "
+               "projeção. A projeção do fechamento do ano está em **📈 L.E**.")
     if b.empty:
         st.info(f"Sem plan/real em {rotulo}.")
         return
@@ -260,7 +269,7 @@ def render(usuario: dict, operacao_id: int) -> None:
                 _abrir(nome)
         a1, a2 = st.columns([1.3, 1])
         with a1:
-            clic = _clicavel(_barras_plan_real(g, campo, f"Plan × fechamento por {'departamento' if visao == 'area' else 'dono'}"),
+            clic = _clicavel(_barras_plan_real(g, campo, f"Plan × real por {'departamento' if visao == 'area' else 'dono'}"),
                              "obz_g_bar")
             if clic in set(g[campo]):
                 _abrir(clic)
@@ -273,19 +282,17 @@ def render(usuario: dict, operacao_id: int) -> None:
                 vb = _agrupar(b, "vbz")
                 fig = go.Figure(go.Pie(labels=vb["vbz"], values=vb["fechamento"].abs(), hole=.55,
                                        marker=dict(colors=graficos.CATEGORICAS, line=dict(color="#fff", width=2))))
-                graficos.mostrar(graficos._layout(fig, "Fechamento por VBZ", 340), key="obz_g_pie")
+                graficos.mostrar(graficos._layout(fig, "Real por VBZ", 340), key="obz_g_pie")
         fig = _linha_mes(op, mes[:4])
         if fig is not None:
             graficos.mostrar(fig, key="obz_g_lin")
         vis = pd.DataFrame({"": [("🔴" if r["criticas"] else "🟡" if r["desfavoravel"] > 0 else "🟢")
                                  for _, r in g.iterrows()], ("Departamento" if visao == "area" else "Dono"): g[campo],
                             "Contas": g["contas"], "Plan": g["plan"].map(_m), "Real": g["real"].map(_m),
-                            "Tend": g["tend"].map(_m), "Fechamento": g["fechamento"].map(_m),
                             "Dispersão": g["disp"].map(_m), "Disp. %": g["disp_pct"].map(_p),
                             "Críticas": g["criticas"].astype(int)})
-        t = b[["plan", "real", "tend", "fechamento", "disp"]].sum()
-        vis.loc[len(vis)] = ["Σ", "TOTAL", b["conta"].nunique(), _m(t["plan"]), _m(t["real"]), _m(t["tend"]),
-                             _m(t["fechamento"]), _m(t["disp"]), _p(t["disp"] / abs(t["plan"]) * 100 if t["plan"] else None),
+        t = b[["plan", "real", "disp"]].sum()
+        vis.loc[len(vis)] = ["Σ", "TOTAL", b["conta"].nunique(), _m(t["plan"]), _m(t["real"]), _m(t["disp"]), _p(t["disp"] / abs(t["plan"]) * 100 if t["plan"] else None),
                              int(g["criticas"].sum())]
         ui.tabela(vis, baixar=f"obz_geral_{mes}")
         return
@@ -305,7 +312,7 @@ def render(usuario: dict, operacao_id: int) -> None:
         a1, a2 = st.columns([1.5, 1])
         with a1:
             top = ct.head(15)
-            clic = _clicavel(_barras_plan_real(top, "conta", "Contas — plan × fechamento (clique para abrir)",
+            clic = _clicavel(_barras_plan_real(top, "conta", "Contas — plan × real (clique para abrir)",
                                                rot[:15]), "obz_d_bar")
             if clic in set(ct["conta"].astype(str)):
                 _abrir(nivel[0], clic)
@@ -313,7 +320,7 @@ def render(usuario: dict, operacao_id: int) -> None:
             fig = go.Figure(go.Pie(labels=vb["vbz"], values=vb["fechamento"].abs(), hole=.55,
                                    marker=dict(colors=[_cor(d, p) for d, p in zip(vb["desfavoravel"], vb["plan"])],
                                                line=dict(color="#fff", width=2))))
-            graficos.mostrar(graficos._layout(fig, "Fechamento por VBZ (cor = dispersão)", 360), key="obz_d_pie")
+            graficos.mostrar(graficos._layout(fig, "Real por VBZ (cor = dispersão)", 360), key="obz_d_pie")
         if visao == "area":
             fig = _linha_mes(op, mes[:4], nivel[0])
             if fig is not None:

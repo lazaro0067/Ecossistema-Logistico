@@ -602,9 +602,9 @@ def render_cadastros(usuario: dict, operacao_id: int) -> None:
     pode = e_master(usuario) or obz.pode_aprovar(usuario)
     if not pode:
         st.info("Somente o Master e os aprovadores do financeiro alteram os cadastros do OBZ.")
-    aba = ui._escolha("obz_c_aba", ["donos", "arvore", "areas", "deptos", "contas", "papeis"], "donos", pills=True,
-                      formatar={"donos": "👤 Donos (cascata)", "arvore": "🌳 Árvore de donos",
-                                "areas": "🏢 Departamentos",
+    st.caption("👤 Os **donos** de departamentos e contas ficam na pasta **👤 Donos** (ligados aos acessos do sistema).")
+    aba = ui._escolha("obz_c_aba", ["areas", "deptos", "contas", "papeis"], "areas", pills=True,
+                      formatar={"areas": "🏢 Departamentos",
                                 "deptos": "🔢 Códigos de depto", "contas": "🧾 Contas",
                                 "papeis": "🔑 Papéis (lança / aprova / plan)"}.get)
     if aba == "donos":

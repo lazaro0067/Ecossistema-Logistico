@@ -1262,13 +1262,27 @@ def enriquecer(b: pd.DataFrame) -> pd.DataFrame:
     return b
 
 
-def painel(operacao_id: int, meses_: list[str]) -> pd.DataFrame:
-    """Soma conta × depto nos meses (fechamento = real nos fechados, tend no aberto) já com área/VBZ/donos."""
+def meses_real(operacao_id: int) -> list[str]:
+    """Meses que têm realizado carregado (16.03.01 ou histórico da Base OBZ), do mais recente para o mais antigo."""
+    trecho, p = operacoes_repo.filtro("operacao_id", operacao_id)
+    r = query_df(f"SELECT DISTINCT mes FROM obz_real WHERE {trecho} AND ABS(COALESCE(valor, 0)) > 0.004", p)
+    return sorted(set(r["mes"]), reverse=True) if not r.empty else []
+
+
+def painel(operacao_id: int, meses_: list[str], so_real: bool = False) -> pd.DataFrame:
+    """Soma conta × depto nos meses (fechamento = real nos fechados, tend no aberto) já com área/VBZ/donos.
+    so_real=True: só o realizado — sem tendência nem projeção (fechamento = real, dispersão = real − plan)."""
     partes = [base(operacao_id, m).assign(mes=m) for m in meses_]
     partes = [p for p in partes if not p.empty]
     if not partes:
         return pd.DataFrame()
     b = pd.concat(partes, ignore_index=True)
+    if so_real:
+        sinal = b["natureza"].map(lambda n: -1 if n == "receita" else 1)
+        b["tend"] = b["real"]
+        b["fechamento"] = b["real"]
+        b["disp"] = b["real"] - b["plan"]
+        b["desfavoravel"] = b["disp"] * sinal
     num = ["plan", "real", "tend", "fechamento", "disp", "desfavoravel"]
     info = b.drop_duplicates(["conta", "depto"], keep="last").set_index(["conta", "depto"])
     g = b.groupby(["conta", "depto"], as_index=False)[num].sum()
@@ -1334,3 +1348,73 @@ def gastos_ano(operacao_id: int, ano: str) -> pd.DataFrame:
     df["area"] = [area_de(c, d, mp) for c, d in zip(df["conta"], df["depto"])]
     df["nome_conta"] = df["conta"].map(nome)
     return df
+
+
+# --- 📈 L.E: projeção do fechamento do ano na curva atual -----------------------------------------------------------
+METODOS_LE = {
+    "curva": "📈 Curva atual — eficiência dos últimos 3 meses (real ÷ plan) aplicada ao plan dos meses que faltam",
+    "media": "➗ Média dos meses realizados no ano",
+    "ultimos3": "🕒 Média dos últimos 3 meses realizados",
+    "plan": "🎯 Plan nos meses que faltam",
+}
+
+
+def le_projecao(operacao_id: int, ano: str, metodo: str = "curva", usar_tend: bool = True) -> pd.DataFrame:
+    """Conta × depto × mês (despesa líquida: receita reduz) com plan, real e L.E.
+    Meses com real = real; meses seguintes = projeção pelo método (o mês aberto usa a tendência lançada, se houver).
+    Colunas: mes, conta, depto, area, nome_conta, plan, real, le, fonte ('real' | 'tend' | 'proj')."""
+    g = gastos_ano(operacao_id, ano)
+    ms = [f"{ano}-{m:02d}" for m in range(1, 13)]
+    if g.empty:
+        return pd.DataFrame(columns=["mes", "conta", "depto", "area", "nome_conta", "plan", "real", "le", "fonte"])
+    reais = sorted(m for m in meses_real(operacao_id) if m.startswith(ano) and m < mes_atual())
+    ultimo = reais[-1] if reais else None
+    chaves = g[["conta", "depto", "area", "nome_conta"]].drop_duplicates(["conta", "depto"])
+    pr = g.pivot_table(index=["conta", "depto"], columns="mes", values="real", aggfunc="sum").reindex(columns=ms).fillna(0.0)
+    pp = g.pivot_table(index=["conta", "depto"], columns="mes", values="plan", aggfunc="sum").reindex(columns=ms).fillna(0.0)
+    idx = pr.index.union(pp.index)
+    pr, pp = pr.reindex(idx).fillna(0.0), pp.reindex(idx).fillna(0.0)
+    fechados = [m for m in ms if ultimo and m <= ultimo]
+    abertos = [m for m in ms if m not in fechados]
+    ult3 = fechados[-3:]
+    r3 = pr[ult3].sum(axis=1) if ult3 else pd.Series(0.0, index=idx)
+    p3 = pp[ult3].sum(axis=1) if ult3 else pd.Series(0.0, index=idx)
+    med_ano = pr[fechados].mean(axis=1) if fechados else pd.Series(0.0, index=idx)
+    med3 = (r3 / len(ult3)) if ult3 else pd.Series(0.0, index=idx)
+    ratio = (r3 / p3.where(p3.abs() > 0.01)).clip(lower=0, upper=3)
+    le = pd.DataFrame(index=idx, columns=ms, dtype=float)
+    fonte = pd.DataFrame("real", index=idx, columns=ms)
+    for m in fechados:
+        le[m] = pr[m]
+    for m in abertos:
+        if metodo == "plan" or not fechados:
+            v = pp[m]
+        elif metodo == "media":
+            v = med_ano
+        elif metodo == "ultimos3":
+            v = med3
+        else:  # curva: plan do mês × eficiência recente; sem plan (ou sem plan no período), a média recente
+            v = pd.Series([pl * ra if pd.notna(ra) and abs(pl) > 0.01 else md
+                           for pl, ra, md in zip(pp[m], ratio, med3)], index=idx)
+        le[m] = v
+        fonte[m] = "proj"
+    if usar_tend and mes_atual() in abertos:
+        td = tend_df(operacao_id, mes_atual())
+        if not td.empty:
+            ct = contas()
+            nat = dict(zip(ct["codigo"], ct["natureza"]))
+            for c, d, v in zip(td["conta"], td["depto"], td["valor"]):
+                if (c, d) in le.index and pd.notna(v):
+                    le.at[(c, d), mes_atual()] = -float(v) if nat.get(c) == "receita" else float(v)
+                    fonte.at[(c, d), mes_atual()] = "tend"
+    def _longo(df: pd.DataFrame, nome: str) -> pd.DataFrame:
+        x = df.copy()
+        x.columns = list(ms)
+        x.index = pd.MultiIndex.from_tuples(list(idx), names=["conta", "depto"])
+        return x.reset_index().melt(id_vars=["conta", "depto"], var_name="mes", value_name=nome)
+
+    out = _longo(le, "le")
+    for df, nome in ((pr, "real"), (pp, "plan"), (fonte, "fonte")):
+        out[nome] = _longo(df, nome)[nome].values
+    out = out.merge(chaves, on=["conta", "depto"], how="left")
+    return out[["mes", "conta", "depto", "area", "nome_conta", "plan", "real", "le", "fonte"]]
