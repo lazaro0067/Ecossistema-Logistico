@@ -959,6 +959,87 @@ def _ler_consolidado(xl: "pd.ExcelFile") -> tuple[list[dict], str | None, str]:
     return linhas, unidade, str(base[0])
 
 
+def _ler_departamentos(xl: "pd.ExcelFile") -> tuple[list[dict], str | None, list[str]]:
+    """Layout com UMA ABA POR DEPARTAMENTO trazendo PLAN e REAL por mês (Barreiras/São Félix 2026): usa só as abas
+    de departamento que têm o real preenchido — a consolidada (vários departamentos, real zerado), a Folha e os
+    rascunhos sem real ficam de fora (a folha já está dentro dos departamentos). Departamento = DPT (texto) ou o
+    nome da aba; código do depto = DEP ou, sem ele, o DPT numérico. Devolve (linhas, unidade, abas usadas)."""
+    candidatas = []
+    for aba in xl.sheet_names:
+        nome = _n(aba).strip()
+        if nome in _IGNORAR_ABAS or nome.startswith("folha"):
+            continue
+        df = xl.parse(aba, header=None, nrows=600)
+        if len(df) < 2:
+            continue
+        hr = None
+        for i in range(min(4, len(df))):
+            cab = [_n(x) for x in df.iloc[i].tolist()]
+            if "dono" in cab and any(c.startswith("n") and "conta" in c for c in cab):
+                hr = i
+                break
+        if hr is None:
+            continue
+        cab = [_n(x) for x in df.iloc[hr].tolist()]
+        topo = [_n(x) for x in df.iloc[hr - 1].tolist()] if hr > 0 else [""] * len(cab)
+        col = lambda nome_: cab.index(nome_) if nome_ in cab else None  # noqa: E731
+        c_conta = next(j for j, c in enumerate(cab) if c.startswith("n") and "conta" in c)
+        c_dep, c_dpt, c_dono, c_uni = col("dep"), col("dpt"), col("dono"), col("unidade")
+        c_nome = next((j for j, c in enumerate(cab) if "descricao" in c), None)
+        plan, real, mes_topo = {}, {}, None
+        for j, h in enumerate(cab):
+            if _mes_de(topo[j]):
+                mes_topo = _mes_de(topo[j])
+            m = re.match(r"^(plan[o]?|real)\s+([a-z]+)", h)
+            if m and _mes_de(m.group(2)):
+                (plan if m.group(1).startswith("plan") else real).setdefault(_mes_de(m.group(2)), j)
+            elif h == "plano" and mes_topo:
+                plan.setdefault(mes_topo, j)
+            elif h == "real" and mes_topo:
+                real.setdefault(mes_topo, j)
+        if not plan or not real:
+            continue
+        area_aba = re.sub(r"^obz[_ ]?\d{4}[_ ]*", "", str(aba).strip(), flags=re.I).strip() or str(aba).strip()
+        itens, unidade, areas_txt, soma_real = [], None, set(), 0.0
+        for _, r in df.iloc[hr + 1:].iterrows():
+            conta = pd.to_numeric(r[c_conta], errors="coerce")
+            dpt = str(r[c_dpt]).strip() if c_dpt is not None and pd.notna(r[c_dpt]) else ""
+            dpt_num = bool(re.fullmatch(r"\d+(\.0+)?", dpt))
+            dep_txt = str(r[c_dep]).strip() if c_dep is not None and pd.notna(r[c_dep]) else ""
+            dep = pd.to_numeric(dep_txt, errors="coerce") if dep_txt else float("nan")
+            if pd.isna(dep) and dpt_num:  # DEP em texto (ex.: MANUTENÇÃO) e o código no DPT
+                dep = pd.to_numeric(dpt, errors="coerce")
+            if pd.isna(conta) or pd.isna(dep):
+                continue
+            area = dpt if dpt and not dpt_num else (dep_txt if dep_txt and not re.fullmatch(r"[\d.]+", dep_txt)
+                                                    else area_aba)
+            if dpt and not dpt_num:
+                areas_txt.add(_n(dpt))
+            if c_uni is not None and pd.notna(r[c_uni]) and not unidade:
+                unidade = str(r[c_uni]).strip()
+            rv = {m: pd.to_numeric(r[j], errors="coerce") for m, j in real.items()}
+            soma_real += sum(abs(float(v)) for v in rv.values() if pd.notna(v))
+            itens.append({"area": area, "vbz": _vbz(r[c_dono] if c_dono is not None else ""), "depto": _cod_num(dep),
+                          "nome": str(r[c_nome] if c_nome is not None else "").strip(), "conta": _cod_num(conta),
+                          "plan": {m: pd.to_numeric(r[j], errors="coerce") for m, j in plan.items()}, "real": rv,
+                          "_aba": str(aba)})
+        if itens and soma_real > 0 and len(areas_txt) <= 2:  # tem real e não é a consolidada
+            candidatas.append((str(aba), itens, unidade, soma_real))
+    if not candidatas:
+        return [], None, []
+    # o mesmo departamento em duas abas (ex.: rascunho): fica a de maior real
+    por_area: dict[str, tuple] = {}
+    for c in candidatas:
+        areas = {_n(i["area"]) for i in c[1]}
+        chave = min(areas) if len(areas) == 1 else c[0]
+        if chave not in por_area or c[3] > por_area[chave][3]:
+            por_area[chave] = c
+    usadas = [c for c in candidatas if c in por_area.values()]
+    linhas = [i for c in usadas for i in c[1]]
+    unidade = next((c[2] for c in usadas if c[2]), None)
+    return linhas, unidade, [c[0] for c in usadas]
+
+
 def _operacao_da_unidade(unidade: str | None) -> int | None:
     """'LIMA BARREIRAS' / 'LIMA SÃO FELIX' → id da revenda com o mesmo nome (sem acento e maiúscula)."""
     if not unidade:
@@ -1017,10 +1098,15 @@ def importar_base(conteudo: bytes, nome: str, operacao_id: int, ano: str, usuari
                              if j + 1 < len(r)}}
             (folha if _n(aba) == "folha" else linhas).append(item)
     layout, aba_base, revenda_arquivo = "abas por departamento", None, None
-    if not linhas and not folha:  # 2º layout: aba consolidada (UNIDADE, DEP, DONO, DPT, Nº CONTA, PLAN/Real por mês)
-        linhas, unidade, aba_base = _ler_consolidado(xl)
+    if not linhas and not folha:  # 2º layout: uma aba por departamento com PLAN e REAL por mês
+        linhas, unidade, usadas = _ler_departamentos(xl)
         if linhas:
+            aba_base = usadas[0]
+            layout = "abas de departamento (plan e real): " + ", ".join(usadas)
+        else:  # 3º layout: aba consolidada (UNIDADE, DEP, DONO, DPT, Nº CONTA, PLAN/Real por mês)
+            linhas, unidade, aba_base = _ler_consolidado(xl)
             layout = f"consolidado (aba {aba_base})"
+        if linhas:
             op_arq = _operacao_da_unidade(unidade)
             if op_arq and op_arq != operacao_id:
                 operacao_id = op_arq  # o arquivo diz de qual revenda é (coluna UNIDADE)
@@ -1084,7 +1170,7 @@ def importar_base(conteudo: bytes, nome: str, operacao_id: int, ano: str, usuari
     res = {"departamentos": len({it["area"] for it in todos}), "contas": len({it["conta"] for it in todos}),
            "linhas": len(todos), "folha": len(folha), "meses_plan": meses_plan, "plan": sum(plan.values()),
            "real": None, "layout": layout, "operacao_id": operacao_id, "revenda": revenda_arquivo,
-           "abas_extra": sorted({it["_aba"] for it in todos if it.get("_aba")})}
+           "abas_extra": sorted({it["_aba"] for it in todos if it.get("_aba")}) if layout.startswith("consol") else []}
     if importar_real_aba and "16.03.01" in xl.sheet_names:
         rz = xl.parse("16.03.01")
         c = list(rz.columns)
