@@ -155,12 +155,18 @@ def _ao_vivo(operacao_id: int) -> None:
                                  parada=parados["parada_h"].map(svc.formatar_duracao))[
         ["placa", "motorista", "chegada", "parada"]] if not parados.empty else parados
     col_parados = {"placa": "Placa", "motorista": "Último motorista", "chegada": "Chegou em", "parada": "Parada há"}
+    from modules.componentes import carretas_fases as cf
+
+    regs_cf = cf.dados(operacao_id)
+
     def card(titulo, icone, etapas, status="info", detalhe=None):
         n = sum(f in etapas for f in fases)
+        sel = [r for r in regs_cf if r["_et"] in etapas]
         return {"titulo": titulo, "valor": n, "icone": icone, "status": status if n else "neutro",
-                "detalhe": detalhe, "dados": em(*etapas), "colunas": _COLS_VIAGEM}
+                "detalhe": detalhe, "ao_clicar": lambda t=titulo, s=sel: cf._dialogo(t, s)}
 
-    tema.secao("🚛 Viagens por fase", "Cada etapa do App Carreteiro. Toque no card para ver quem está nela.")
+    tema.secao("🚛 Viagens por fase", "Cada etapa do App Carreteiro. Toque no card para ver as carretas e os itens do "
+                                     "pedido de cada uma.")
     tema.kpis([
         {"titulo": "Em viagem agora", "valor": len(ativas), "icone": "🚛", "status": "info", "dados": tab_ativas,
          "colunas": _COLS_VIAGEM},

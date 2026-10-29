@@ -237,6 +237,9 @@ def render(usuario: dict, operacao_id: int) -> None:
     from modules.componentes.bases import barra_atualizar
 
     barra_atualizar("armazem", operacao_id, usuario)
+    from modules.componentes import carretas_fases
+
+    carretas_fases.faixa(operacao_id, "armazem")
     ui.abas_modulo(usuario, "armazem", {
         "saude": aba_saude, "fundamentos": aba_fundamentos, "manter": aba_manter, "melhorar": aba_melhorar,
         "patio": aba_patio, "pedidos": aba_pedidos, "estrutura": aba_estrutura, "produtos": aba_produtos,

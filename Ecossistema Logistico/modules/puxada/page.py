@@ -38,4 +38,7 @@ def render(usuario: dict, operacao_id: int) -> None:
     from modules.componentes.bases import barra_atualizar
 
     barra_atualizar("puxada", operacao_id, usuario)
+    from modules.componentes import carretas_fases
+
+    carretas_fases.faixa(operacao_id, "puxada")
     ui.abas_modulo(usuario, "puxada", ABAS, usuario, operacao_id)
