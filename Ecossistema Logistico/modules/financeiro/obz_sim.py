@@ -359,12 +359,15 @@ def _volume(s: dict, usuario: dict) -> None:
     vol = sim.volume(s["id"])
     hb, hp = float(vol["hl_base"].sum()), float(vol["hl_plan"].sum())
     faltam = vol[vol["hl_base"].isna()]
+    do_diretor = sim.tem_volume_diretor(s["operacao_id"], s["ano"])
     _passo("2", "Volume de HL e gente (QLP)",
            f"O HL planejado de {s['ano']} comanda o orçamento: fretes, insumos e o quadro acompanham o HL do mês, e o "
            "custo fixo se espalha pelos meses na mesma proporção.",
            [_trava(ed), (f"HL {s['ano_base']}: {ui.numero(hb)}", ""), (f"HL {s['ano']}: {ui.numero(hp)}", ""),
             (f"{_p((hp / hb - 1) * 100 if hb else None)} vs {s['ano_base']}", "ok" if hp >= hb else "at"),
-            *([(f"⚠️ {len(faltam)} mês(es) sem HL", "at")] if len(faltam) else [])])
+            *([(f"⚠️ {len(faltam)} mês(es) sem HL", "at")] if len(faltam) else []),
+            ("🎩 HL planejado definido pelo diretor" if do_diretor else "⚠️ diretor ainda não preencheu o volume",
+             "ok" if do_diretor else "at")])
     if len(faltam):
         st.warning(f"Meses de {s['ano_base']} sem volume: " + ", ".join(_MESES[int(m[5:]) - 1] for m in faltam["mes"])
                    + ". Preencha o HL na tabela (fica marcado como ✏️ manual).")
@@ -380,13 +383,19 @@ def _volume(s: dict, usuario: dict) -> None:
         fig.update_layout(barmode="group", yaxis2=dict(overlaying="y", side="right", showgrid=False, ticksuffix="%"))
         graficos.mostrar(graficos._layout(fig, "HL mês a mês e peso de cada mês no orçamento", 330), key="sim_g_vol")
     with g2:
-        with st.container(border=True):
-            st.markdown('<p class="sp-tit">⚡ Atalho: crescer sobre o histórico</p>', unsafe_allow_html=True)
-            cr = st.number_input("Crescimento (%)", value=0.0, step=1.0, key="sim_vol_cr", disabled=not ed)
-            if st.button("Aplicar no HL planejado", key="sim_vol_ap", disabled=not ed, **ui.LARGURA):
-                ui.acao(sim.salvar_volume, s["id"], vol.assign(hl_plan=vol["hl_base"] * (1 + cr / 100)), usuario,
-                        sucesso="Volume planejado atualizado.")
-            st.caption("Ou ajuste mês a mês na tabela abaixo (sazonalidade, promoções, feriados).")
+        if do_diretor:
+            with st.container(border=True):
+                st.markdown('<p class="sp-tit">🎩 Volume do diretor</p>', unsafe_allow_html=True)
+                st.caption("O HL planejado mês a mês vem da aba **🍺 Volume planejado (diretor)** e pondera todo o "
+                           "orçamento. Para mudar, o diretor ajusta lá — aqui só o histórico é editável.")
+        else:
+            with st.container(border=True):
+                st.markdown('<p class="sp-tit">⚡ Atalho: crescer sobre o histórico</p>', unsafe_allow_html=True)
+                cr = st.number_input("Crescimento (%)", value=0.0, step=1.0, key="sim_vol_cr", disabled=not ed)
+                if st.button("Aplicar no HL planejado", key="sim_vol_ap", disabled=not ed, **ui.LARGURA):
+                    ui.acao(sim.salvar_volume, s["id"], vol.assign(hl_plan=vol["hl_base"] * (1 + cr / 100)), usuario,
+                            sucesso="Volume planejado atualizado.")
+                st.caption("Ou ajuste mês a mês na tabela abaixo (sazonalidade, promoções, feriados).")
     fonte = {"vendas": "📥 03.02.37", "manual": "✏️ manual"}
     tab = vol.assign(Mês=[_MESES[int(m[5:]) - 1] + "/" + m[:4] for m in vol["mes"]],
                      Origem=[fonte.get(f) or ("≈ média — confira" if pd.notna(b) else "⚠️ preencha")
@@ -398,11 +407,13 @@ def _volume(s: dict, usuario: dict) -> None:
     with st.container(border=True):
         st.markdown('<p class="sp-tit">🍺 HL mês a mês</p>', unsafe_allow_html=True)
         novo = st.data_editor(tab, hide_index=True, key=f"sim_vol_{s['id']}", **ui.LARGURA, height=13 * 35 + 3,
-                              disabled=[c for c in tab.columns if c not in ("hl_base", "hl_plan")] if ed
+                              disabled=[c for c in tab.columns if c not in (("hl_base",) if do_diretor
+                                                                           else ("hl_base", "hl_plan"))] if ed
                               else list(tab.columns),
                               column_order=["Mês", "hl_base", "Origem", "hl_plan", "Var", "Peso"],
                               column_config={"hl_base": din(f"HL {s['ano_base']} ✏️", format="%.0f"),
-                                             "hl_plan": din(f"HL {s['ano']} ✏️", format="%.0f"),
+                                             "hl_plan": din(f"HL {s['ano']}" + (" 🎩 diretor" if do_diretor else " ✏️"),
+                                                            format="%.0f"),
                                              "Var": din("Var. %", format="%.1f%%"),
                                              "Peso": din("Peso no orçamento", format="%.1f%%")})
         if ed and st.button("💾 Salvar volume e recalcular", type="primary", key="sim_vol_s"):

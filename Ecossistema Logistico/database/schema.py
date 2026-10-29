@@ -1840,6 +1840,16 @@ MIGRACOES: list[tuple[str, str]] = [
             PRIMARY KEY (operacao_id, cod)
         );
     """),
+    ("059_obz_volume_plan", """
+        CREATE TABLE IF NOT EXISTS obz_volume_plan (
+            operacao_id INTEGER NOT NULL,
+            mes         TEXT NOT NULL,
+            hl          REAL,
+            por         TEXT,
+            em          TEXT,
+            PRIMARY KEY (operacao_id, mes)
+        );
+    """),
 ]
 
 

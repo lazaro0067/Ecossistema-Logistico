@@ -178,6 +178,7 @@ def criar(operacao_id: int, ano: str, nome: str, usuario: dict, premissas: dict 
         for a in sorted({obz.area_de(c, d, mp) for c, d in pares.itertuples(index=False)}):
             conn.execute("INSERT INTO obz_sim_equipe (sim_id, area, acompanha) VALUES (?, ?, 1)", (sim_id, a))
     _log(sim_id, "rascunho", "Simulador criado a partir do histórico de " + base_ano, usuario)
+    _aplicar_volume_diretor(sim_id)  # volume que o diretor já preencheu manda no HL planejado
     calcular(sim_id)
     return sim_id
 
@@ -233,6 +234,7 @@ def salvar_volume(sim_id: int, df: pd.DataFrame, usuario: dict) -> None:
                 fonte = "manual"
             conn.execute("UPDATE obz_sim_volume SET hl_base = ?, hl_plan = ?, fonte = ? WHERE sim_id = ? AND mes = ?",
                          (hb, float(hp) if pd.notna(hp) else None, fonte if hb is not None else None, int(sim_id), m))
+    _aplicar_volume_diretor(sim_id)  # o HL planejado do diretor prevalece
     calcular(sim_id)
 
 
@@ -812,3 +814,96 @@ def salvar_reuniao(sim_id: int, dados: dict, usuario: dict, reuniao_id: int | No
 
 def excluir_reuniao(reuniao_id: int) -> None:
     execute("DELETE FROM obz_sim_reuniao WHERE id = ?", (int(reuniao_id),))
+
+
+# --- 🍺 Volume planejado pelo diretor (por revenda e mês) — pondera o orçamento do ano --------------------------------
+def pode_volume(u: dict) -> bool:
+    """Diretor preenche; Master, CEO e o dono do financeiro também podem ajustar."""
+    return _master(u) or u.get("id") in (set(obz.usuarios_papel("diretor")) | set(obz.usuarios_papel("ceo"))
+                                         | set(obz.usuarios_papel("fin_dono")))
+
+
+def volume_diretor(operacao_id: int, ano: str) -> pd.DataFrame:
+    """12 meses do ano: HL de 2 anos atrás e do ano anterior (vendas 03.02.37), a referência e o HL planejado."""
+    ano = str(ano)
+    a1, a2 = str(int(ano) - 1), str(int(ano) - 2)
+    h1, h2 = obz.hl_mensal(operacao_id, a1), obz.hl_mensal(operacao_id, a2)
+    pl = query_df("SELECT mes, hl, por, em FROM obz_volume_plan WHERE operacao_id = ? AND mes LIKE ?",
+                  (int(operacao_id), f"{ano}-%")).set_index("mes")
+    linhas = []
+    for m in range(1, 13):
+        v1, v2 = h1.get(f"{a1}-{m:02d}"), h2.get(f"{a2}-{m:02d}")
+        mes = f"{ano}-{m:02d}"
+        linhas.append({"mes": mes, "hl_ant2": float(v2) if v2 else None, "hl_ant": float(v1) if v1 else None,
+                       "hl": float(pl.at[mes, "hl"]) if mes in pl.index and pd.notna(pl.at[mes, "hl"]) else None,
+                       "por": pl.at[mes, "por"] if mes in pl.index else None,
+                       "em": pl.at[mes, "em"] if mes in pl.index else None})
+    df = pd.DataFrame(linhas)
+    # referência: ano anterior; mês ainda sem venda usa o mesmo mês de 2 anos atrás × crescimento entre os anos
+    pares = df.dropna(subset=["hl_ant", "hl_ant2"])
+    cres = float(pares["hl_ant"].sum() / pares["hl_ant2"].sum()) if len(pares) and pares["hl_ant2"].sum() else 1.0
+    med = df["hl_ant"].dropna().mean() if df["hl_ant"].notna().any() else None
+    df["ref"] = [a if pd.notna(a) else (b * cres if pd.notna(b) else med) for a, b in zip(df["hl_ant"], df["hl_ant2"])]
+    df["ref_estimada"] = df["hl_ant"].isna() & df["ref"].notna()
+    return df
+
+
+def tem_volume_diretor(operacao_id: int, ano: str) -> bool:
+    r = query_one("SELECT COUNT(*) AS n FROM obz_volume_plan WHERE operacao_id = ? AND mes LIKE ? AND hl IS NOT NULL",
+                  (int(operacao_id), f"{ano}-%"))
+    return bool(r and r["n"])
+
+
+def salvar_volume_diretor(operacao_id: int, ano: str, hl_por_mes: dict, usuario: dict) -> dict:
+    """Grava o HL planejado mês a mês e aplica nos simuladores da revenda/ano que estão em montagem (recalcula).
+    Devolve {"aplicado": [nomes], "pendente": [nomes de simuladores em outra etapa]}."""
+    if not pode_volume(usuario):
+        raise RegraNegocioError("Só o diretor (ou o Master / CEO / dono do financeiro) preenche o volume planejado.")
+    if operacoes_repo.e_consolidada(operacao_id):
+        raise RegraNegocioError("Escolha uma revenda — o volume é preenchido por operação.")
+    ano = str(ano)
+    vals = {m: (float(v) if v is not None and pd.notna(v) else None) for m, v in hl_por_mes.items()}
+    if any(v is not None and v < 0 for v in vals.values()):
+        raise RegraNegocioError("O volume não pode ser negativo.")
+    with get_conn() as conn:
+        for m in range(1, 13):
+            mes = f"{ano}-{m:02d}"
+            conn.execute("DELETE FROM obz_volume_plan WHERE operacao_id = ? AND mes = ?", (int(operacao_id), mes))
+            v = vals.get(mes)
+            if v is not None:
+                conn.execute("INSERT INTO obz_volume_plan (operacao_id, mes, hl, por, em) VALUES (?, ?, ?, ?, ?)",
+                             (int(operacao_id), mes, round(v, 2), usuario.get("nome"), agora()))
+    out = {"aplicado": [], "pendente": []}
+    sims = query_df("SELECT id, nome, status FROM obz_sim WHERE operacao_id = ? AND ano = ?", (int(operacao_id), ano))
+    for r in sims.itertuples(index=False):
+        if r.status == "rascunho":
+            _aplicar_volume_diretor(int(r.id))
+            calcular(int(r.id))
+            _log(int(r.id), "rascunho", "Volume planejado atualizado pelo diretor", usuario)
+            out["aplicado"].append(r.nome)
+        elif r.status != "publicado":
+            out["pendente"].append(f"{r.nome} ({ETAPAS.get(r.status, r.status)})")
+    return out
+
+
+def _aplicar_volume_diretor(sim_id: int) -> bool:
+    """Copia o HL do diretor para o HL planejado do simulador (meses preenchidos). True se havia volume."""
+    s = buscar(sim_id)
+    pl = query_df("SELECT mes, hl FROM obz_volume_plan WHERE operacao_id = ? AND mes LIKE ? AND hl IS NOT NULL",
+                  (int(s["operacao_id"]), f"{s['ano']}-%"))
+    if pl.empty:
+        return False
+    with get_conn() as conn:
+        conn.executemany("UPDATE obz_sim_volume SET hl_plan = ? WHERE sim_id = ? AND mes = ?",
+                         [(float(h), int(sim_id), m) for m, h in zip(pl["mes"], pl["hl"])])
+    return True
+
+
+def volume_revendas(ano: str, ids: list[int]) -> pd.DataFrame:
+    """Revenda × mês do HL planejado (para a visão de todas as revendas)."""
+    if not ids:
+        return pd.DataFrame()
+    q = ",".join("?" * len(ids))
+    return query_df(f"""SELECT v.operacao_id, o.nome AS revenda, v.mes, v.hl, v.por, v.em FROM obz_volume_plan v
+                        JOIN operacoes o ON o.id = v.operacao_id WHERE v.mes LIKE ? AND v.operacao_id IN ({q})""",
+                    (f"{ano}-%", *[int(i) for i in ids]))

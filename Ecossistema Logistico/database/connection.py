@@ -28,7 +28,7 @@ except Exception:  # noqa: BLE001 — pandas antigo não tem a opção
 from config.settings import DB_PATH
 
 # Tabelas que NÃO têm coluna "id" (o INSERT no Postgres não pode pedir RETURNING id)
-_SEM_ID = {"inv_conversao", "inv_config", "remun_fabrica_map", "remun_config", "obz_just_mes", "vendas_calendario", "grade_controle", "grade_config", "dre_manual", "dre_editado", "obz_sim_volume", "obz_sim_equipe", "obz_sim_valor", "obz_areas", "obz_mapa", "obz_resp", "obz_departamentos", "obz_contas", "obz_subdonos", "obz_papeis", "obz_plan", "depositos_nomes", "operacoes_fiscais", "setor_operacoes", "usuario_modulos", "usuario_operacoes", "produtos", "estoque", "linear_vendas", "metas_doi", "fluxo_caixa",
+_SEM_ID = {"obz_volume_plan", "inv_conversao", "inv_config", "remun_fabrica_map", "remun_config", "obz_just_mes", "vendas_calendario", "grade_controle", "grade_config", "dre_manual", "dre_editado", "obz_sim_volume", "obz_sim_equipe", "obz_sim_valor", "obz_areas", "obz_mapa", "obz_resp", "obz_departamentos", "obz_contas", "obz_subdonos", "obz_papeis", "obz_plan", "depositos_nomes", "operacoes_fiscais", "setor_operacoes", "usuario_modulos", "usuario_operacoes", "produtos", "estoque", "linear_vendas", "metas_doi", "fluxo_caixa",
            "_migracoes", "fabrica_deslocamento", "linear_config", "linear_ajustes", "usuario_distribui"}
 
 

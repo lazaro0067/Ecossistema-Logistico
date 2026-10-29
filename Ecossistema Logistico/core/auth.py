@@ -83,7 +83,7 @@ def _perms(usuario: dict) -> set[str]:
 _ABAS_IRMAS = {"armazem.pedidos": "armazem.patio",
                **{f"financeiro.{a}": "financeiro.painel" for a in ("obz_gestao", "obz_tend", "obz_aprov", "obz_reuniao",
                                                                    "obz_plan", "obz_real", "obz_cad", "obz_rshl",
-                                                                   "obz_sim", "obz_capex", "obz_just", "obz_le",
+                                                                   "obz_sim", "obz_capex", "obz_just", "obz_le", "obz_volume",
                                                                    "obz_donos")}, "vendas.acompanhamento": "vendas.metas",
                "vendas.metas_cestas": "vendas.metas", "vendas.foco_shelf": "vendas.comercial", "corporativo.remun_ambev": "corporativo.prod_entrega",
                "vendas.calendario": "vendas.metas", "armazem.grade": "armazem.saude", "armazem.recontagem": "armazem.acuracidade", "armazem.idade": "armazem.acuracidade", "frota.modelos": "frota.placas", "corporativo.agente": "corporativo.gestao", "puxada.produtividade": "puxada.farol", "distribuicao.produtividade": "distribuicao.book",
