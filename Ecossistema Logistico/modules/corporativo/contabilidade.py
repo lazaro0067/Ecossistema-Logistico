@@ -53,8 +53,12 @@ def card_upload(usuario: dict, op: int, mes: str, chave: str = "ctb") -> None:
                "D = valor (negativo = despesa). Subir de novo o mês substitui o mês inteiro.")
     if arq is not None and st.button(f"Gravar {ui.nome_mes(mes)}", type="primary", key=f"{chave}_gravar"):
         try:
-            a2 = arquivos.preparar(arq)
-            r = cs.importar(a2.getvalue(), a2.name, op, mes, usuario.get("nome", ""))
+            r = None
+            if str(arq.name).lower().endswith((".xlsx", ".xlsm", ".xls")):  # planilha com abas OBZ01…OBZ12
+                r = cs.importar_planilha_mes(arq.getvalue(), arq.name, op, mes, usuario.get("nome", ""))
+            if r is None:
+                a2 = arquivos.preparar(arq)
+                r = cs.importar(a2.getvalue(), a2.name, op, mes, usuario.get("nome", ""))
         except RegraNegocioError as e:
             st.error(str(e))
         else:
@@ -64,6 +68,52 @@ def card_upload(usuario: dict, op: int, mes: str, chave: str = "ctb") -> None:
                 ui.avisar("⚠️ Conferir total — " + a, "warning")
             st.session_state[f"{chave}_up_v"] = v + 1
             st.rerun()
+    _acoes(usuario, op, mes, chave)
+
+
+def _acoes(usuario: dict, op: int, mes: str, chave: str) -> None:
+    """🗑️ Apagar o mês que subiu errado · 📚 retroativo: zerar e subir a planilha consolidada (uma aba por mês)."""
+    if operacoes_repo.e_consolidada(op) or not ev.pode_editar_dre(usuario):
+        return
+    revenda = (operacoes_repo.buscar(op) or {}).get("nome", "revenda")
+    c1, c2 = st.columns(2)
+    with c1.popover(f"🗑️ Apagar {ui.nome_mes(mes)}", disabled=not cs.fechado(op, mes), **ui.LARGURA):
+        st.markdown(f"Apagar o Financeiro contabilidade de **{ui.nome_mes(mes)}** — {revenda}?")
+        st.caption("O DRE do mês volta a ser prévia pelo OBZ. As ✍️ Outras contas ficam.")
+        if st.button("Apagar o mês", key=f"{chave}_del_{mes}", type="primary"):
+            ui.acao(cs.excluir_mes, op, mes, sucesso=f"{ui.nome_mes(mes)} apagado — suba de novo o arquivo certo.")
+    with c2.popover("📚 Zerar e subir consolidado (retroativo)", **ui.LARGURA):
+        st.markdown(f"**Retroativo de uma vez — {revenda}**")
+        st.caption("Planilha com uma aba por mês (OBZ01 = jan … OBZ12 = dez). Zera o ano desta revenda e grava "
+                   "cada mês que tiver contas; abas vazias (meses que não fecharam) ficam de fora. Depois volte a "
+                   "subir mês a mês normalmente.")
+        anos = sorted({mes[:4], str(int(mes[:4]) - 1)}, reverse=True)
+        ano = st.selectbox("Ano", anos, key=f"{chave}_cons_ano")
+        vc = st.session_state.get(f"{chave}_cons_v", 0)
+        arq = st.file_uploader("Planilha consolidada", type=["xlsx", "xlsm", "xls"], key=f"{chave}_cons_up_{vc}")
+        zerar = st.checkbox(f"Zerar {ano} antes (recomendado)", value=True, key=f"{chave}_cons_zerar")
+        conf = st.text_input("Digite ZERAR para confirmar", key=f"{chave}_cons_conf") if zerar else "ZERAR"
+        if st.button("Subir consolidado", type="primary", key=f"{chave}_cons_go",
+                     disabled=arq is None or str(conf).strip().upper() != "ZERAR"):
+            try:
+                r = cs.importar_consolidado(arq.getvalue(), arq.name, op, ano, usuario.get("nome", ""), zerar)
+            except RegraNegocioError as e:
+                st.error(str(e))
+            else:
+                ms = r["meses"]
+                ui.avisar(f"📚 {revenda}: {len(ms)} mês(es) gravado(s) — "
+                          + ", ".join(f"{ui.nome_mes(m)} {ui.moeda(x['despesa'])}" for m, x in ms.items())
+                          + (f". Sem contas (ficaram de fora): {', '.join(ui.nome_mes(m) for m in r['vazios'])}"
+                             if r["vazios"] else "") + ".")
+                for m, x in ms.items():
+                    for a in x["avisos"]:
+                        ui.avisar(f"⚠️ {ui.nome_mes(m)} — conferir total: {a}", "warning")
+                st.session_state[f"{chave}_cons_v"] = vc + 1
+                st.rerun()
+        st.divider()
+        if st.button(f"🧹 Só zerar {ano} (sem subir)", key=f"{chave}_zerar_ano",
+                     disabled=str(conf).strip().upper() != "ZERAR"):
+            ui.acao(cs.zerar, op, ano, sucesso=f"Financeiro contabilidade de {ano} zerado — {revenda}.")
 
 
 def _relatorio(usuario: dict, op: int, mes: str) -> None:

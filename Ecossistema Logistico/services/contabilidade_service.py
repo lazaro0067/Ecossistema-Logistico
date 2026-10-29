@@ -72,12 +72,21 @@ def ler(conteudo: bytes) -> tuple[pd.DataFrame, list[str]]:
             continue
     df = pd.read_csv(io.StringIO(txt or ""), sep=";", header=None, dtype=str, keep_default_na=False,
                      on_bad_lines="skip")
+    return _ler_df(df)
+
+
+def _ler_df(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     if df.shape[1] < 4:
         raise RegraNegocioError("Este arquivo não parece o Financeiro contabilidade: esperava código (A), "
                                 "classificação (B), nome (C) e valor (D).")
+    df = df.fillna("")
     linhas, depto, sub, cab = [], None, None, {}
     for r in df.itertuples(index=False):
-        cod, cls, nome, val = (str(r[0]).strip(), str(r[1]).strip(), str(r[2]).strip(), _valor(r[3]))
+        cls = str(r[1]).strip()
+        cls = cls[:-2] if re.fullmatch(r"\d+\.0", cls) else cls  # célula numérica do Excel (1 → "1.0")
+        cod = str(r[0]).strip()
+        cod = cod[:-2] if cod.endswith(".0") else cod
+        cod, nome, val = cod, str(r[2]).strip(), _valor(r[3])
         nv = _nivel(cls)
         if not nv or val is None:
             continue
@@ -110,13 +119,108 @@ def importar(conteudo: bytes, nome: str, operacao_id: int, mes: str, usuario: st
         raise RegraNegocioError("Escolha o mês do fechamento.")
     df, avisos = ler(conteudo)
     with get_conn() as conn:
-        conn.execute("DELETE FROM fin_contab WHERE operacao_id = ? AND mes = ?", (int(operacao_id), mes))
-        conn.executemany("INSERT INTO fin_contab (operacao_id, mes, codigo, classificacao, nome, departamento, "
-                         "subpacote, valor, arquivo, criado_por, criado_em) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                         [(int(operacao_id), mes, r.codigo, r.classificacao, r.nome, r.departamento, r.subpacote,
-                           float(r.valor), str(nome)[:200], usuario, agora()) for r in df.itertuples(index=False)])
+        _gravar(conn, operacao_id, mes, df, nome, usuario)
     return {"contas": len(df), "departamentos": df["departamento"].nunique(), "despesa": float(-df["valor"].sum()),
             "avisos": avisos}
+
+
+_ABA_MES = re.compile(r"^OBZ[ _]?(\d{1,2})$", re.I)
+_MESES_TXT = {"jan": 1, "fev": 2, "mar": 3, "abr": 4, "mai": 5, "jun": 6, "jul": 7, "ago": 8, "set": 9, "out": 10,
+              "nov": 11, "dez": 12}
+
+
+def abas_mensais(conteudo: bytes) -> dict[int, pd.DataFrame]:
+    """Planilha com uma aba por mês (OBZ01 … OBZ12, 'Período: jan'…): {mês 1–12: linhas da aba}.
+    Abas de outros anos/empresas (ex.: OBZ_Por05_23) ficam de fora."""
+    try:
+        xl = pd.ExcelFile(io.BytesIO(conteudo))
+    except Exception as e:  # noqa: BLE001
+        raise RegraNegocioError(f"Não consegui abrir a planilha: {e}") from e
+    out = {}
+    for aba in xl.sheet_names:
+        m = _ABA_MES.match(str(aba).strip())
+        if not m or not 1 <= int(m.group(1)) <= 12:
+            continue
+        df = xl.parse(aba, header=None, dtype=object)
+        # confere o mês pelo cabeçalho "Período: jan" quando houver
+        per = next((str(c) for r in df.head(6).itertuples(index=False) for c in r
+                    if isinstance(c, str) and "per" in c.lower() and ":" in c), "")
+        mt = _MESES_TXT.get(per.split(":", 1)[1].strip()[:3].lower()) if per else None
+        out[mt or int(m.group(1))] = df
+    return out
+
+
+def ler_planilha_mes(conteudo: bytes, mes: str) -> tuple[pd.DataFrame, list[str]] | None:
+    """Se a planilha tem abas mensais (OBZ09…), lê só a aba do mês escolhido. None = não é desse formato."""
+    abas = abas_mensais(conteudo)
+    if not abas:
+        return None
+    m = int(mes[5:])
+    if m not in abas:
+        raise RegraNegocioError(f"A planilha tem abas mensais, mas não a de {mes[5:]}/{mes[:4]} (OBZ{m:02d}).")
+    return _ler_df(abas[m].iloc[:, :4])
+
+
+def _gravar(conn, operacao_id: int, mes: str, df: pd.DataFrame, nome: str, usuario: str) -> None:
+    conn.execute("DELETE FROM fin_contab WHERE operacao_id = ? AND mes = ?", (int(operacao_id), mes))
+    conn.executemany("INSERT INTO fin_contab (operacao_id, mes, codigo, classificacao, nome, departamento, "
+                     "subpacote, valor, arquivo, criado_por, criado_em) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                     [(int(operacao_id), mes, r.codigo, r.classificacao, r.nome, r.departamento, r.subpacote,
+                       float(r.valor), str(nome)[:200], usuario, agora()) for r in df.itertuples(index=False)])
+
+
+def importar_planilha_mes(conteudo: bytes, nome: str, operacao_id: int, mes: str, usuario: str = "") -> dict | None:
+    """Upload do mês com a planilha de abas mensais: grava só a aba do mês. None = não é esse formato."""
+    if operacoes_repo.e_consolidada(operacao_id):
+        raise RegraNegocioError("Escolha uma revenda (não a visão consolidada) para subir o Financeiro contabilidade.")
+    r = ler_planilha_mes(conteudo, mes)
+    if r is None:
+        return None
+    df, avisos = r
+    with get_conn() as conn:
+        _gravar(conn, operacao_id, mes, df, nome, usuario)
+    return {"contas": len(df), "departamentos": df["departamento"].nunique(), "despesa": float(-df["valor"].sum()),
+            "avisos": avisos}
+
+
+def importar_consolidado(conteudo: bytes, nome: str, operacao_id: int, ano: str, usuario: str = "",
+                         zerar_ano: bool = True) -> dict:
+    """Retroativo de uma vez: planilha com uma aba por mês (OBZ01…OBZ12). Zera o ano da revenda (se pedido) e grava
+    cada mês que tiver contas. Abas vazias (meses futuros) ficam de fora."""
+    if operacoes_repo.e_consolidada(operacao_id):
+        raise RegraNegocioError("Escolha uma revenda (não a visão consolidada) para subir o retroativo.")
+    if not re.fullmatch(r"\d{4}", str(ano or "")):
+        raise RegraNegocioError("Escolha o ano.")
+    abas = abas_mensais(conteudo)
+    if not abas:
+        raise RegraNegocioError("Não achei abas mensais (OBZ01 … OBZ12) nesta planilha.")
+    lidos, vazios = {}, []
+    for m in sorted(abas):
+        try:
+            lidos[m] = _ler_df(abas[m].iloc[:, :4])
+        except RegraNegocioError:
+            vazios.append(m)
+    if not lidos:
+        raise RegraNegocioError("Nenhuma aba mensal tem contas lançadas.")
+    with get_conn() as conn:
+        if zerar_ano:
+            conn.execute("DELETE FROM fin_contab WHERE operacao_id = ? AND mes LIKE ?", (int(operacao_id), f"{ano}-%"))
+        for m, (df, _) in lidos.items():
+            _gravar(conn, operacao_id, f"{ano}-{m:02d}", df, nome, usuario)
+    return {"meses": {f"{ano}-{m:02d}": {"contas": len(df), "despesa": float(-df["valor"].sum()), "avisos": av}
+                      for m, (df, av) in lidos.items()},
+            "vazios": [f"{ano}-{m:02d}" for m in vazios], "zerado": zerar_ano}
+
+
+def zerar(operacao_id: int, ano: str | None = None) -> int:
+    """Apaga o Financeiro contabilidade da revenda (do ano, ou tudo). As ✍️ Outras contas ficam."""
+    if operacoes_repo.e_consolidada(operacao_id):
+        raise RegraNegocioError("Escolha uma revenda (não a visão consolidada).")
+    filtro, p = ("AND mes LIKE ?", [f"{ano}-%"]) if ano else ("", [])
+    r = query_one(f"SELECT COUNT(DISTINCT mes) AS n FROM fin_contab WHERE operacao_id = ? {filtro}",
+                  (int(operacao_id), *p))
+    execute(f"DELETE FROM fin_contab WHERE operacao_id = ? {filtro}", (int(operacao_id), *p))
+    return int(r["n"]) if r else 0
 
 
 def excluir_mes(operacao_id: int, mes: str) -> None:
