@@ -53,6 +53,11 @@ _CSS = """
     color:#7a3a07; border:1px solid #f3cfae; }
 .pt-card .cg { font-size:.78rem; margin-top:.3rem; padding:.3rem .45rem; border-radius:8px; background:#f1ebfb;
     color:#4a2a8a; border:1px solid #dccbf5; }
+.pt-card .its { margin:.25rem 0 0; padding:0; list-style:none; font-size:.74rem; color:#3b2a5c; }
+.pt-card .its li { display:flex; justify-content:space-between; gap:.4rem; padding:.08rem 0;
+  border-bottom:1px dashed #e4dcf3; }
+.pt-card .its li span:first-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pt-card .its li span:last-child { white-space:nowrap; font-weight:700; }
 .pt-card.prio { box-shadow:0 0 0 2px #f0c75e; }
 .pt-star { font-size:.66rem; font-weight:800; padding:.05rem .4rem; border-radius:999px; background:#fff4d6;
     color:#8a5a00; border:1px solid #f0c75e; margin-left:.3rem; }
@@ -158,7 +163,8 @@ def _card(r: dict) -> str:
     apagado = ";opacity:.55" if inativo else ""
     extra = ""
     if not inativo and r.get("status") != "Descarregado" and patio_service.carga_txt(r.get("_itens")):
-        extra += f'<div class="cg">📦 <b>Carga:</b> {_e(patio_service.carga_txt(r.get("_itens")))}</div>'
+        extra += (f'<div class="cg">📦 <b>Carga{" (pedido achado pela placa)" if r.get("_ped_pela_placa") else ""}:'
+                  f'</b> {_e(patio_service.carga_txt(r.get("_itens")))}{_lista_itens(r.get("_itens"))}</div>')
     if not inativo:
         if r.get("_depois"):
             extra += f'<div class="nx">📦 <b>Depois carrega:</b> {_e(patio_service.depois_txt(r["_depois"]))}</div>'
@@ -170,6 +176,58 @@ def _card(r: dict) -> str:
             f'<b>{app}{_e(r.get("placa"))}{estrela}</b>'
             f'<span class="st">{ICONE_STATUS.get(r.get("status"), "")} {_e(r.get("status"))}</span></div>'
             f'{f"<div class=l2>{_e(l2)}</div>" if l2 else ""}{f"<div class=l3>{_e(l3)}</div>" if l3 else ""}{extra}</div>')
+
+
+def _lista_itens(itens, n: int = 8) -> str:
+    """Produtos da carga (maiores primeiro): código · produto — paletes / caixas."""
+    if itens is None or len(itens) == 0:
+        return ""
+    it = itens.sort_values("paletes", ascending=False)
+    li = []
+    for i in it.head(n).to_dict("records"):
+        pal = ui.numero(float(i["paletes"] or 0), 1).rstrip("0").rstrip(",")
+        cod = f"{int(i['cod'])} · " if i["cod"] == i["cod"] and i["cod"] is not None else ""
+        li.append(f'<li><span>{_e(cod)}{_e(i["descricao"])}</span><span>{pal} pal · '
+                  f'{ui.numero(float(i["cx_marcadas"] or 0))} cx</span></li>')
+    mais = f'<li><span>+ {len(it) - n} item(ns)</span><span></span></li>' if len(it) > n else ""
+    return f'<ul class="its">{"".join(li)}{mais}</ul>'
+
+
+def _para_descarregar(regs: list[dict]) -> None:
+    """Carretas que ainda vão descarregar: produtos de cada uma (Puxada Marcada pelo pedido)."""
+    fila = [r for r in regs if r.get("status") not in ("Cancelado", "No-show", "Descarregado")]
+    if not fila:
+        return
+    fila.sort(key=lambda r: (r.get("status") not in ("Chegou", "Descarregando"), _txt(r.get("hora"))))
+    com = [r for r in fila if r.get("_itens") is not None and len(r["_itens"])]
+    tema.secao(f"📦 Para descarregar · {len(fila)} carreta(s)",
+               "Produtos que vieram em cada carreta — Puxada Marcada pelo número do pedido. As que já estão no pátio "
+               "aparecem primeiro.")
+    for r in fila:
+        it = r.get("_itens")
+        tem = it is not None and len(it) > 0
+        ped = ", ".join(r.get("_pedidos") or []) or "sem pedido"
+        cab = (f"{ICONE_STATUS.get(r.get('status'), '')} **{_txt(r.get('placa'))}** · {_txt(r.get('hora')) or '—'} · "
+               f"{_txt(r.get('status'))} · Ped. {ped}"
+               + (f" · {patio_service.carga_txt(it)}" if tem else " · ⚠️ sem itens"))
+        with st.expander(cab, expanded=tem and r.get("status") in ("Chegou", "Descarregando")):
+            if not tem:
+                st.caption("Sem itens: " + ("informe o número do pedido na descarga" if ped == "sem pedido" else
+                                            "pedido ainda não está na Puxada Marcada — atualize o relatório")
+                           + ".")
+                continue
+            if r.get("_ped_pela_placa"):
+                st.caption("ℹ️ Descarga sem pedido — usei o pedido da Puxada desta placa (carregado até 3 dias antes).")
+            t = it.sort_values("paletes", ascending=False)
+            ui.tabela(pd.DataFrame({"Código": [int(c) if c == c and c is not None else None for c in t["cod"]],
+                                    "Produto": t["descricao"], "Paletes": t["paletes"].astype(float),
+                                    "Caixas": t["cx_marcadas"].astype(float), "HL": t["hl_marcado"].astype(float).round(2)}),
+                      column_config={"Código": st.column_config.NumberColumn(format="%d"),
+                                     "Paletes": st.column_config.NumberColumn(format="%.1f"),
+                                     "Caixas": st.column_config.NumberColumn(format="%.0f")},
+                      baixar=f"carga_{_txt(r.get('placa'))}")
+    if len(com) < len(fila):
+        st.caption(f"⚠️ {len(fila) - len(com)} carreta(s) sem itens — confira o pedido ou atualize a Puxada Marcada.")
 
 
 def _chips_livres(hs: list[dict]) -> str:
@@ -249,6 +307,7 @@ def quadro_dia(operacao_id: int, dia: dt.date, df: pd.DataFrame) -> None:
     for r in regs:
         r["_faixa"] = jsvc.janela_de_agendamento(js_todas, r.get("data"), r.get("hora"), r.get("janela_id"),
                                                  _txt(r.get("tipo_carga")) or None)
+    _para_descarregar(regs)
     _depois_descarga(regs)
     _itens_cargas(regs)
     tema.secao(f"🗓️ Agenda de {dia:%d/%m/%Y} ({jsvc.DIAS[dia.weekday()]})",

@@ -41,7 +41,26 @@ def enriquecer(operacao_id: int, regs: list[dict]) -> list[dict]:
     # itens que a carreta traz: Puxada Marcada (coluna Q = pedido) do(s) pedido(s) da viagem
     from repositories import ressuprimento_repo
 
-    todos = [n for r in regs for n in ped_repo.numeros(r.get("pedido_app"))]
+    # descarga lançada sem pedido: acha o pedido da Puxada pela placa (carregou na fábrica até 3 dias antes)
+    try:
+        ini_b = (dt.date.fromisoformat(de) - dt.timedelta(days=3)).isoformat() if de else None
+        todos_peds = ped_repo.pedidos_df(operacao_id, ini_b, datas[-1] if datas else None)
+    except Exception:
+        todos_peds = pd.DataFrame()
+    for r in regs:
+        r["_pedidos"] = list(ped_repo.numeros(r.get("pedido_app")))
+        r["_ped_pela_placa"] = False
+        if r["_pedidos"] or todos_peds.empty or not _txt(r.get("data")):
+            continue
+        d = _txt(r.get("data"))[:10]
+        lim = (dt.date.fromisoformat(d) - dt.timedelta(days=3)).isoformat()
+        c = todos_peds[(todos_peds["placa"].astype(str).str.upper() == _txt(r.get("placa")).upper())
+                       & (todos_peds["data"].astype(str).str[:10] <= d)
+                       & (todos_peds["data"].astype(str).str[:10] >= lim)]
+        if not c.empty:
+            r["_pedidos"] = list(ped_repo.numeros(c.sort_values(["data", "id"]).iloc[-1]["numero_pedido"]))
+            r["_ped_pela_placa"] = bool(r["_pedidos"])
+    todos = [n for r in regs for n in r["_pedidos"]]
     try:
         itens = ressuprimento_repo.itens_dos_pedidos(operacao_id, todos)
     except Exception:
@@ -74,7 +93,7 @@ def enriquecer(operacao_id: int, regs: list[dict]) -> list[dict]:
             ms = [m for m in manutencao_repo.ativas_da_placa(op, placa, data) if m["data"] <= fim] if data else []
             manuts[chave] = ms[0] if ms else None
         r["_manut"] = manuts[chave]
-        meus = {ressuprimento_repo._num(n) for n in ped_repo.numeros(r.get("pedido_app"))}
+        meus = {ressuprimento_repo._num(n) for n in r.get("_pedidos") or []}
         r["_itens"] = itens[itens["_n"].isin(meus)].drop(columns="_n") if not itens.empty and meus else None
         r["_prio"] = bool((r["_depois"] and ped_svc.e_prioritario(r["_depois"]))
                           or (r["_manut"] and ped_svc._v(r["_manut"].get("prioridade"))))
