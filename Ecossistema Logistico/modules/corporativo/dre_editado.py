@@ -198,6 +198,9 @@ operações de venda · CMV = estoque inicial + compras − estoque final · Des
 
 def render_email(usuario: dict, op: int, lista: list[str], rotulo: str) -> None:
     from services import email_service
+    from services import estoque_valor_service as ev_
+
+    st.session_state["_dre_fora"] = ev_.fora_visivel_todos()  # e-mail vai para todos: só se o Master liberou
 
     revenda = (operacoes_repo.buscar(op) or {}).get("nome", "")
     c1, c2 = st.columns([1.3, 2])

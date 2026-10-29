@@ -251,9 +251,9 @@ def _padronizar(df: pd.DataFrame) -> pd.DataFrame:
     """Tira Jataí e junta departamentos com o mesmo nome (maiúsculas/acentos) — cada um aparece uma vez no DRE."""
     from services import contabilidade_service as cs
 
-    df = df[~df["pacote"].map(cs.fora_dre)].copy()
+    df = df.copy()
     nomes = cs.nomes_obz()
-    df["pacote"] = df["pacote"].map(lambda p_: cs.nome_depto(p_, nomes))
+    df["pacote"] = df["pacote"].map(lambda p_: cs.ADM_JATAI if cs.fora_dre(p_) else cs.nome_depto(p_, nomes))
     return (df.groupby("pacote", as_index=False, sort=False)[["orcado", "realizado"]].sum()
             .sort_values("realizado", ascending=False).reset_index(drop=True))
 
@@ -311,15 +311,43 @@ def dre_periodo(operacao_id: int, meses_: list[str]) -> dict:
     receita = receita_bruta - abs(man["icms"]) - abs(man["pis_cofins"])  # impostos sempre abatem, com ou sem sinal
     lucro = receita - c["cmv"] if c["cmv"] is not None else None
     resultado = lucro - desp + man["conta_corrente"] if lucro is not None and desp is not None else None
-    return {"mes": ms[-1], "meses": ms, "ops_venda": ops_venda, "receita_bruta": receita_bruta,
+    return _separar_pilares({
+            "mes": ms[-1], "meses": ms, "ops_venda": ops_venda, "receita_bruta": receita_bruta,
             "descontos": v["desconto"], "receita": receita, "hl": v["hl"], "bonif": b["valor"], "bonif_hl": b["hl"],
             **c, **man, "lucro_bruto": lucro, "despesas": desp, "obz_meses": len(tem), "obz": ob,
             "orcado": float(ob["orcado"].sum()) if tem else None, "resultado": resultado,
-            "fechado": len(fech) == len(ms), "meses_fechados": fech}
+            "fechado": len(fech) == len(ms), "meses_fechados": fech})
 
 
 def dre_mes(operacao_id: int, mes: str) -> dict:
     return dre_periodo(operacao_id, [mes])
+
+
+def _separar_pilares(r: dict) -> dict:
+    """Despesa operacional = só os pilares (Armazém, Entrega, Gente, Puxada, Manutenção, Vendas, Frota,
+    Administrativo). O resto (Investimento/Imobilizado, Despesas ADM Jataí…) vai para obz_fora, abaixo da margem
+    operacional, e entra só no resultado final."""
+    from services import contabilidade_service as cs
+
+    ob = r.get("obz")
+    vazio = pd.DataFrame(columns=["pacote", "orcado", "realizado"])
+    if ob is None or ob.empty:
+        r["obz_fora"] = r.get("obz_fora") if isinstance(r.get("obz_fora"), pd.DataFrame) else vazio
+    else:
+        pil = ob["pacote"].map(cs.e_pilar)
+        fora = ob[~pil].reset_index(drop=True)
+        if isinstance(r.get("obz_fora"), pd.DataFrame) and not r["obz_fora"].empty and fora.empty:
+            fora = r["obz_fora"]
+        r["obz_fora"] = fora
+        r["obz"] = ob[pil].reset_index(drop=True)
+        if r.get("despesas") is not None:
+            r["despesas"] = float(r["obz"]["realizado"].sum())
+            r["orcado"] = float(r["obz"]["orcado"].sum()) if r.get("orcado") is not None else None
+    r["despesas_fora"] = float(r["obz_fora"]["realizado"].sum()) if not r["obz_fora"].empty else 0.0
+    if r.get("lucro_bruto") is not None and r.get("despesas") is not None:
+        r["resultado"] = r["lucro_bruto"] - r["despesas"] + (r.get("conta_corrente") or 0.0)
+    r["resultado_final"] = r["resultado"] - r["despesas_fora"] if r.get("resultado") is not None else None
+    return r
 
 
 def ultimo_saldo(operacao_id: int) -> dict:
@@ -399,7 +427,7 @@ def _aplicar(r: dict, v: dict) -> dict:
     r["lucro_bruto"] = r["receita"] - r["cmv"] if r["cmv"] is not None else None
     r["resultado"] = (r["lucro_bruto"] - r["despesas"] + r["conta_corrente"]
                       if r["lucro_bruto"] is not None and r["despesas"] is not None else None)
-    return r
+    return _separar_pilares(r)
 
 
 def _chave_dep(k: str) -> str | None:
@@ -460,6 +488,9 @@ def dre_editado_periodo(operacao_id: int, meses_: list[str]) -> dict:
     ob = [r["obz"] for r in rs if not r["obz"].empty]
     tot["obz"] = (pd.concat(ob).groupby("pacote", as_index=False)[["orcado", "realizado"]].sum()
                   if ob else pd.DataFrame(columns=["pacote", "orcado", "realizado"]))
+    fo = [r["obz_fora"] for r in rs if isinstance(r.get("obz_fora"), pd.DataFrame) and not r["obz_fora"].empty]
+    tot["obz_fora"] = (pd.concat(fo).groupby("pacote", as_index=False)[["orcado", "realizado"]].sum()
+                       if fo else pd.DataFrame(columns=["pacote", "orcado", "realizado"]))
     tot["despesas"] = sum(r["despesas"] for r in rs if r["despesas"] is not None) if any(
         r["despesas"] is not None for r in rs) else None
     tot["orcado"] = sum(r["orcado"] or 0 for r in rs) if tot["despesas"] is not None else None
@@ -524,3 +555,28 @@ def log_edicoes(operacao_id: int, mes: str | None = None) -> pd.DataFrame:
         sql += " AND mes = ?"
         params.append(mes)
     return query_df(sql + " ORDER BY id DESC LIMIT 300", params)
+
+
+# --- Investimento/Imobilizado e Despesas ADM Jataí (abaixo da margem operacional) -----------------------------
+def fora_visivel_todos() -> bool:
+    """O Master marcou para os demais usuários verem as linhas abaixo da margem operacional."""
+    r = query_one("SELECT codigo FROM setor_operacoes WHERE setor = 'dre_fora_todos'")
+    return bool(r and str(r["codigo"]) == "1")
+
+
+def salvar_fora_visivel(todos: bool, usuario: dict) -> None:
+    from core.auth import e_master
+    from database.connection import get_conn
+
+    if not e_master(usuario):
+        raise RegraNegocioError("Só o Master libera essas linhas para os demais.")
+    with get_conn() as conn:
+        conn.execute("DELETE FROM setor_operacoes WHERE setor = 'dre_fora_todos'")
+        if todos:
+            conn.execute("INSERT INTO setor_operacoes (setor, codigo) VALUES ('dre_fora_todos', '1')")
+
+
+def ve_fora(usuario: dict) -> bool:
+    from core.auth import e_master
+
+    return e_master(usuario) or fora_visivel_todos()

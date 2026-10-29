@@ -277,8 +277,18 @@ def departamentos(operacao_id: int) -> list[str]:
 
 
 def fora_dre(nome) -> bool:
-    """Despesas que não entram no DRE (Jataí)."""
+    """Despesas de Jataí — ficam fora do operacional (linha "Despesas ADM Jataí", abaixo da margem operacional)."""
     return "JATAI" in _norm(nome)
+
+
+ADM_JATAI = "Despesas ADM Jataí"
+# pilares que formam a despesa operacional do DRE; o resto (investimento/imobilizado, Jataí…) vai abaixo
+PILARES = {"ARMAZEM", "ENTREGA", "GENTE", "PUXADA", "MANUTENCAO", "VENDAS", "FROTA", "ADMINISTRATIVO",
+           "ADMINISTRACAO", "ADM"}
+
+
+def e_pilar(nome) -> bool:
+    return _norm(nome) in PILARES
 
 
 def nomes_obz() -> dict:
@@ -309,9 +319,9 @@ def despesas_dre(operacao_id: int, mes: str) -> pd.DataFrame | None:
     c = contas(operacao_id, mes)
     if c.empty:
         return None
-    c = c[~c["departamento"].map(fora_dre) & ~c["subpacote"].fillna("").map(fora_dre)]
+    jat = c["departamento"].map(fora_dre) | c["subpacote"].fillna("").map(fora_dre)
     nomes = nomes_obz()
-    c = c.assign(departamento=c["departamento"].map(lambda d: nome_depto(d, nomes)))
+    c = c.assign(departamento=[ADM_JATAI if j else nome_depto(d, nomes) for d, j in zip(c["departamento"], jat)])
     g = c.groupby("departamento", sort=False)["despesa"].sum()
     orc = {}
     try:

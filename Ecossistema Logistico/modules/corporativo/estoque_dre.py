@@ -221,7 +221,40 @@ def _linhas_dre(r: dict) -> list[tuple[str, object, str]]:
         ("Margem operacional %", _div(r["resultado"], bruta) * 100 if r["resultado"] is not None and bruta else None,
          "p"),
     ]
+    if st.session_state.get("_dre_fora") and r.get("resultado") is not None:
+        fo = r.get("obz_fora")
+        linhas.append((ROT_FORA, -(r.get("despesas_fora") or 0.0), "m"))
+        if isinstance(fo, pd.DataFrame) and not fo.empty:
+            linhas += [(f"      {p}", -v, "m") for p, v in zip(fo["pacote"], fo["realizado"])]
+        linhas += [(ROT_FINAL, r.get("resultado_final"), "m"),
+                   ("Margem final %", _div(r.get("resultado_final"), bruta) * 100
+                    if r.get("resultado_final") is not None and bruta else None, "p")]
     return linhas
+
+
+ROT_FORA = "(−) Investimento/Imobilizado e Despesas ADM Jataí"
+ROT_FINAL = "(=) RESULTADO FINAL (com investimento e ADM Jataí)"
+
+
+def definir_visibilidade(usuario: dict) -> bool:
+    """Linhas abaixo da margem operacional: Master sempre vê; os demais só se o Master marcar."""
+    v = ev.ve_fora(usuario)
+    st.session_state["_dre_fora"] = v
+    return v
+
+
+def _controle_fora(usuario: dict) -> None:
+    from core.auth import e_master
+
+    if not e_master(usuario):
+        return
+    atual = ev.fora_visivel_todos()
+    novo = st.toggle("👁️ Mostrar Investimento/Imobilizado e Despesas ADM Jataí para todos (abaixo da margem "
+                     "operacional)", value=atual, key="dre_fora_todos",
+                     help="Desmarcado: só o Master vê essas linhas e o resultado final.")
+    if novo != atual:
+        ui.acao(ev.salvar_fora_visivel, novo, usuario,
+                sucesso="Linhas liberadas para todos." if novo else "Linhas visíveis só para o Master.")
 
 
 def _fmt(v, tipo) -> str:
@@ -295,6 +328,7 @@ def _manuais(usuario: dict, op: int, lista: list[str]) -> None:
 def render_dre(usuario: dict, operacao_id: int) -> None:
     st.markdown("##### 💰 Financeiro › **📑 DRE**")
     op = ui.visao_acompanhamento(usuario, operacao_id, "dre")
+    definir_visibilidade(usuario)
     meses = sorted(set(fs.meses(op, "venda")) | set(ev.meses(op)), reverse=True)
     if not meses:
         st.info("Para o DRE, suba a 03.02.37 vendas, a 03.02.37 compra e o 02.05.02 (saldo inicial e final).")
@@ -350,6 +384,7 @@ def render_dre(usuario: dict, operacao_id: int) -> None:
     _faltas(res)
     _kpis_dre(tot, rotulo)
     _manuais(usuario, op, lista)
+    _controle_fora(usuario)
     tabela_dre(lista, res, tot, rotulo, "DRE")
 
 
@@ -394,9 +429,12 @@ def _faltas(res: list[dict]) -> None:
 def montar_tabela(lista: list[str], res: list[dict], tot: dict, rotulo: str) -> pd.DataFrame:
     rotulos = [l_[0] for l_ in _linhas_dre(tot)]
     for r in res:  # departamento que só existe num mês e não no total (não deve acontecer, mas não some)
+        fora = {f"      {p}" for p in (r.get("obz_fora")["pacote"] if isinstance(r.get("obz_fora"), pd.DataFrame)
+                                       else [])}
         for l_ in _linhas_dre(r):
             if l_[0] not in rotulos:
-                rotulos.insert(rotulos.index("(=) RESULTADO OPERACIONAL"), l_[0])
+                alvo = ROT_FINAL if l_[0] in fora and ROT_FINAL in rotulos else "(=) RESULTADO OPERACIONAL"
+                rotulos.insert(rotulos.index(alvo), l_[0])
     tabela = {"Conta": rotulos}
     if len(lista) > 1:
         for m, r in zip(lista, res):
@@ -424,7 +462,10 @@ def tabela_dre(lista: list[str], res: list[dict], tot: dict, rotulo: str, prefix
                   "Resultado operacional (R$ mil)": [(r["resultado"] or 0) / 1000 for r in res]}
         graficos.mostrar(graficos.barras(x, series, titulo="Faturamento, CMV, lucro bruto, OBZ e resultado por mês"),
                          key=f"g_{prefixo}")
-    st.caption("Receita bruta = total das notas (coluna Z) só das operações de R$ de venda (⚙️ Cadastros) · "
+    st.caption("Despesas operacionais = só os pilares (Armazém, Entrega, Gente, Puxada, Manutenção, Vendas, Frota e "
+               "Administrativo). Investimento/Imobilizado e Despesas ADM Jataí ficam abaixo da margem operacional "
+               "(Master vê sempre; os demais quando o Master liberar). "
+               "Receita bruta = total das notas (coluna Z) só das operações de R$ de venda (⚙️ Cadastros) · "
                "CMV = estoque inicial + compras − estoque final (02.05.02, depósitos "
                "marcados em 🏬 Estoque) — o mesmo do 📊 Resumo & Lucro Bruto · Despesas = OBZ realizado por "
                "departamento (sem bonificação) — no mês fechado, pelo 🧾 Financeiro contabilidade · ✏️ = valores "

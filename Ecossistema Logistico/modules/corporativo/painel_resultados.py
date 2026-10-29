@@ -35,6 +35,9 @@ def _g(d: dict, k: str):
 
 
 def render(usuario: dict, operacao_id: int) -> None:
+    from modules.corporativo import estoque_dre as _ed
+
+    _ed.definir_visibilidade(usuario)
     st.markdown("##### 📊 Gestão › **🏆 Painel de Resultados**")
     op = ui.visao_acompanhamento(usuario, operacao_id, "painel_res")
     c1, c2 = st.columns([1, 2.5])
