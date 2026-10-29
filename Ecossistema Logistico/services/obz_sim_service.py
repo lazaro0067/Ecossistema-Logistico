@@ -35,6 +35,7 @@ ETAPAS = {
 DRIVERS = {
     "pessoal": "👥 Pessoal (dissídio + equipe pelo HL)",
     "frete": "🚚 Fretes (HL × inflação de fretes)",
+    "diesel": "🛢️ Diesel (HL × reajustes mensais do diesel)",
     "insumos": "⛽ Insumos / variáveis (HL × inflação de insumos)",
     "aluguel": "🏠 Aluguel (reajuste do aluguel)",
     "ipca": "📈 Fixo corrigido pelo IPCA",
@@ -43,7 +44,19 @@ DRIVERS = {
 }
 TIPOS_INIC = {"despesa": "➕ Despesa nova", "economia": "➖ Economia / corte"}
 PREMISSAS_PADRAO = {"ipca": 4.5, "aluguel": 4.5, "fretes": 6.0, "insumos": 5.0, "dissidio_mes": 5,
-                    "dissidio_pct": 5.0, "crescimento_volume": 0.0, "base": "media", "distribuicao": "hl"}
+                    "dissidio_pct": 5.0, "crescimento_volume": 0.0, "base": "media", "distribuicao": "hl",
+                    "diesel_mensal": [0.0] * 12}
+
+
+def fator_diesel(pm: dict) -> dict:
+    """{mês: preço do diesel no mês ÷ preço médio do ano base} — os reajustes mensais acumulam (Jan +2% e Mai +3%
+    → de Mai em diante 1,02 × 1,03)."""
+    aj = list(pm.get("diesel_mensal") or [])[:12] + [0.0] * 12
+    f, out = 1.0, {}
+    for m in range(1, 13):
+        f *= 1 + float(aj[m - 1] or 0) / 100
+        out[m] = f
+    return out
 DISTRIBUICAO = {"hl": "🍺 Pelo HL planejado de cada mês (mês que vende mais, custa mais)",
                 "linear": "➖ Linear (1/12 por mês)"}
 _CHAVES = [
@@ -52,6 +65,7 @@ _CHAVES = [
                  "ajuda de custo", "funcionario", "comiss", "gratific", "hora extra", "horas extras", "premio",
                  "plr", "encargo", "folha", "pro labore", "pro-labore", "adicional", "aviso previo", "sindic")),
     ("frete", ("frete", "carreto", "pedagio", "transporte de", "freteiro")),
+    ("diesel", ("diesel", "arla")),
     ("aluguel", ("aluguel", "alugueis", "locacao", "arrendamento", "leasing")),
     ("insumos", ("combust", "lubrific", "pneu", "peca", "material", "embalag", "palete", "pallet", "lona", "consumo",
                  "energia", " gas", "oleo", "manutencao", "reparo")),
@@ -66,6 +80,8 @@ def driver_padrao(nome: str, natureza: str | None) -> str:
     if natureza == "receita":
         return "receita"
     n = " " + obz._n(nome)
+    if "combust" in n and "glp" not in n and "empilhad" not in n:  # combustível da frota = diesel
+        return "diesel"
     for drv, chaves in _CHAVES:
         if any(k in n for k in chaves):
             return drv
@@ -158,7 +174,8 @@ def criar(operacao_id: int, ano: str, nome: str, usuario: dict, premissas: dict 
     sim_id = execute("""INSERT INTO obz_sim (operacao_id, ano, nome, status, premissas, criado_por, criado_em,
                                              atualizado_em) VALUES (?, ?, ?, 'rascunho', ?, ?, ?, ?)""",
                      (operacao_id, ano, (nome or f"Orçamento {ano}").strip(),
-                      json.dumps({**PREMISSAS_PADRAO, **(premissas or {})}), usuario.get("nome"), agora(), agora()))
+                      json.dumps({**PREMISSAS_PADRAO, **(premissas or {}), "calc_v": CALC_VERSAO}), usuario.get("nome"),
+                      agora(), agora()))
     ct = obz.contas()
     ok = set(ct.loc[ct["no_obz"].fillna(1).astype(int) == 1, "codigo"])
     nome_c, nat = dict(zip(ct["codigo"], ct["nome"])), dict(zip(ct["codigo"], ct["natureza"]))
@@ -187,10 +204,8 @@ def excluir(sim_id: int, usuario: dict) -> None:
     s = buscar(sim_id)
     if not s:
         return
-    if s["status"] == "publicado" and not _master(usuario):
-        raise RegraNegocioError("Simulador já publicado no Plan — só o Master exclui.")
-    if not pode_montar(usuario):
-        raise RegraNegocioError("Sem permissão para excluir o simulador.")
+    if not _master(usuario):
+        raise RegraNegocioError("Só o Master exclui um orçamento criado.")
     with get_conn() as conn:
         for t in ("obz_sim_linha", "obz_sim_valor", "obz_sim_volume", "obz_sim_equipe", "obz_sim_inic", "obz_sim_log",
                   "obz_sim_reuniao"):
@@ -261,7 +276,13 @@ def salvar_equipe(sim_id: int, df: pd.DataFrame, usuario: dict) -> None:
 def _razao_volume(sim_id: int) -> tuple[dict, float]:
     """{mês 1–12: HL planejado ÷ HL médio do ano atual} e o HL médio."""
     vol = volume(sim_id)
-    hb = vol["hl_base"].dropna()
+    # HL médio dos MESMOS meses que formam a base de custo (meses com real) — custo/HL coerente
+    s = buscar(sim_id)
+    meses_custo = {int(m[5:]) for m in obz.meses_real(s["operacao_id"]) if m[:4] == s["ano_base"]} if s else set()
+    hb = pd.Series([b for m, b in zip(vol["mes"], vol["hl_base"]) if pd.notna(b)
+                    and (not meses_custo or int(m[5:]) in meses_custo)], dtype=float)
+    if hb.empty:
+        hb = vol["hl_base"].dropna()
     hl_med = float(hb.mean()) if len(hb) else 0.0
     plan = {int(m[5:]): (float(h) if pd.notna(h) else (float(b) if pd.notna(b) else hl_med))
             for m, b, h in zip(vol["mes"], vol["hl_base"], vol["hl_plan"])}
@@ -271,8 +292,11 @@ def _razao_volume(sim_id: int) -> tuple[dict, float]:
 def pesos_hl(sim_id: int) -> dict:
     """{mês 1–12: participação do mês no HL planejado do ano} — soma 1. Sem HL, 1/12 cada."""
     vol = volume(sim_id)
-    hp = {int(m[5:]): (float(h) if pd.notna(h) else float(b) if pd.notna(b) else 0.0)
+    hp = {int(m[5:]): (float(h) if pd.notna(h) else float(b) if pd.notna(b) else None)
           for m, b, h in zip(vol["mes"], vol["hl_base"], vol["hl_plan"])}
+    conhecidos = [v for v in hp.values() if v is not None]
+    med = sum(conhecidos) / len(conhecidos) if conhecidos else 0.0
+    hp = {m: (hp.get(m) if hp.get(m) is not None else med) for m in range(1, 13)}  # mês sem HL = média
     tot = sum(max(v, 0.0) for v in hp.values())
     return {m: (max(hp.get(m, 0.0), 0.0) / tot) if tot else 1 / 12 for m in range(1, 13)}
 
@@ -380,6 +404,7 @@ def calcular(sim_id: int) -> None:
     pct = {k: float(pm.get(k) or 0) / 100 for k in ("ipca", "aluguel", "fretes", "insumos", "dissidio_pct")}
     mes_dis = int(pm.get("dissidio_mes") or 1)
     pelo_hl = (pm.get("distribuicao") or "hl") == "hl"
+    diesel = fator_diesel(pm)
     peso = pesos_hl(sim_id) if pelo_hl else {m: 1 / 12 for m in range(1, 13)}
     linhas = query_df("SELECT id, conta, depto, area, driver FROM obz_sim_linha WHERE sim_id = ?", (int(sim_id),))
     ano = s["ano"]
@@ -394,6 +419,8 @@ def calcular(sim_id: int) -> None:
                 v = b * razao[m] * (1 + pct["fretes"])
             elif r.driver == "insumos":
                 v = b * razao[m] * (1 + pct["insumos"])
+            elif r.driver == "diesel":
+                v = b * razao[m] * diesel[m]
             elif r.driver == "aluguel":  # o total do ano se reparte pelos meses conforme o HL planejado
                 v = b * 12 * peso[m] * (1 + pct["aluguel"])
             elif r.driver in ("ipca", "receita"):
@@ -479,10 +506,54 @@ def linhas(sim_id: int) -> pd.DataFrame:
     for c in ("base_ano", "calc_ano", "final_ano", "prop_conta", "prop_depto"):
         li[c] = pd.to_numeric(li[c], errors="coerce")
     li["proposta"] = [_proposta(r) for r in li.itertuples(index=False)]
+    # sub-departamento (VBZ da Base OBZ: Pessoal = as linhas de gente, Gerais, Instalações, Transporte…)
+    mp = obz._mapas()[2]
+    pac = ct["pacote"] if "pacote" in ct.columns else pd.Series(dtype=object)
+    li["sub"] = [_sub(mp.get((c, d)) or (pac.get(c) if c in pac.index else None), dr)
+                 for c, d, dr in zip(li["conta"], li["depto"], li["driver"])]
     li["var_pct"] = (li["final_ano"] / li["base_ano"].where(li["base_ano"] != 0) - 1) * 100
     # sinal líquido (receita reduz a despesa)
     li["sinal"] = li["natureza"].map(lambda n: -1.0 if n == "receita" else 1.0)
     return li
+
+
+CALC_VERSAO = 3  # 2 = custo fixo desdobrado pelo HL planejado do mês · 3 = driver diesel (reajuste mensal)
+
+
+def _sub(vbz, driver: str) -> str:
+    v = str(vbz or "").strip()
+    if v.lower() in ("pessoal", "gente") or (not v and driver == "pessoal"):
+        return "👥 Gente"
+    return v or "Outros"
+
+
+def parametro_pct(driver: str, pm: dict) -> float:
+    """% do parâmetro que corrige a base da conta (dissídio, fretes, insumos, aluguel ou IPCA)."""
+    if driver == "diesel":
+        return (fator_diesel(pm)[12] - 1) * 100  # reajuste acumulado até dezembro
+    chave = {"pessoal": "dissidio_pct", "frete": "fretes", "insumos": "insumos", "aluguel": "aluguel", "ipca": "ipca",
+             "receita": "ipca"}.get(driver)
+    return float(pm.get(chave) or 0) if chave else 0.0
+
+
+def garantir_calculo_atual(sim_id: int) -> bool:
+    """Simulador calculado na regra antiga (meta igual todo mês) é recalculado uma vez. O total do ano de cada conta
+    não muda — só o desdobramento pelos meses. Publicado fica como está."""
+    s = buscar(sim_id)
+    if not s or s["status"] == "publicado" or int(s["premissas"].get("calc_v") or 1) >= CALC_VERSAO:
+        return False
+    _aplicar_volume_diretor(sim_id)
+    if int(s["premissas"].get("calc_v") or 1) < 3:  # contas de combustível da frota passam para o driver diesel
+        li = query_df("SELECT l.id, l.driver, c.nome, c.natureza FROM obz_sim_linha l LEFT JOIN obz_contas c "
+                      "ON c.codigo = l.conta WHERE l.sim_id = ?", (int(sim_id),))
+        ids = [int(i) for i, d, n, nat in zip(li["id"], li["driver"], li["nome"], li["natureza"])
+               if d == "insumos" and driver_padrao(n or "", nat) == "diesel"]
+        with get_conn() as conn:
+            conn.executemany("UPDATE obz_sim_linha SET driver = 'diesel' WHERE id = ?", [(i,) for i in ids])
+    execute("UPDATE obz_sim SET premissas = ? WHERE id = ?",
+            (json.dumps({**s["premissas"], "calc_v": CALC_VERSAO}), int(sim_id)))
+    calcular(sim_id)
+    return True
 
 
 def valores_mensais(sim_id: int, final: bool = True) -> pd.DataFrame:
@@ -547,7 +618,7 @@ def mensal_area(sim_id: int) -> pd.DataFrame:
     li = linhas(sim_id)
     if v.empty or li.empty:
         return pd.DataFrame()
-    v = v.merge(li[["conta", "depto", "area", "nome_conta", "sinal"]], on=["conta", "depto"], how="left")
+    v = v.merge(li[["conta", "depto", "area", "sub", "nome_conta", "sinal"]], on=["conta", "depto"], how="left")
     v["liq"] = v["valor"] * v["sinal"].fillna(1.0)
     return v
 
@@ -645,8 +716,28 @@ def pendencias_revisao(sim_id: int) -> int:
     return int((tem & li["decisao"].isna()).sum())
 
 
+def meses_sem_volume(sim_id: int) -> dict:
+    """Meses que precisam ser preenchidos à mão (média fica errada — fim de ano vende mais):
+    {"plan": meses sem HL planejado, "base": meses do ano base com custo real mas sem HL vendido}."""
+    s = buscar(sim_id)
+    vol = volume(sim_id)
+    meses_custo = {int(m[5:]) for m in obz.meses_real(s["operacao_id"]) if m[:4] == s["ano_base"]}
+    return {"plan": [int(m[5:]) for m, h in zip(vol["mes"], vol["hl_plan"]) if pd.isna(h)],
+            "base": [int(m[5:]) for m, b in zip(vol["mes"], vol["hl_base"]) if pd.isna(b) and int(m[5:]) in meses_custo]}
+
+
 def avancar(sim_id: int, acao: str, usuario: dict, comentario: str = "") -> str:
     s = buscar(sim_id)
+    if s and s["status"] == "rascunho" and _TRANSICOES.get(acao, ("",))[0] == "rascunho":
+        falta = meses_sem_volume(sim_id)
+        if falta["plan"] or falta["base"]:
+            nomes = lambda ms: ", ".join(["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov",  # noqa: E731
+                                          "Dez"][m - 1] for m in ms)
+            raise RegraNegocioError(
+                "Preencha o volume à mão antes de enviar (a média deixaria o orçamento errado): "
+                + (f"HL planejado de {s['ano']} em {nomes(falta['plan'])}" if falta["plan"] else "")
+                + (" · " if falta["plan"] and falta["base"] else "")
+                + (f"HL vendido de {s['ano_base']} em {nomes(falta['base'])}" if falta["base"] else "") + ".")
     if acao not in _TRANSICOES:
         raise RegraNegocioError("Ação desconhecida.")
     de, para, pode, exige = _TRANSICOES[acao]
@@ -839,12 +930,9 @@ def volume_diretor(operacao_id: int, ano: str) -> pd.DataFrame:
                        "por": pl.at[mes, "por"] if mes in pl.index else None,
                        "em": pl.at[mes, "em"] if mes in pl.index else None})
     df = pd.DataFrame(linhas)
-    # referência: ano anterior; mês ainda sem venda usa o mesmo mês de 2 anos atrás × crescimento entre os anos
-    pares = df.dropna(subset=["hl_ant", "hl_ant2"])
-    cres = float(pares["hl_ant"].sum() / pares["hl_ant2"].sum()) if len(pares) and pares["hl_ant2"].sum() else 1.0
-    med = df["hl_ant"].dropna().mean() if df["hl_ant"].notna().any() else None
-    df["ref"] = [a if pd.notna(a) else (b * cres if pd.notna(b) else med) for a, b in zip(df["hl_ant"], df["hl_ant2"])]
-    df["ref_estimada"] = df["hl_ant"].isna() & df["ref"].notna()
+    # referência = só o vendido do ano anterior; mês sem venda fica em branco para o diretor preencher à mão
+    df["ref"] = pd.to_numeric(df["hl_ant"], errors="coerce")
+    df["ref_estimada"] = False
     return df
 
 

@@ -73,11 +73,39 @@ def render(usuario: dict, operacao_id: int) -> None:
                     "em ⚙️ Cadastros OBZ › 🔑 Papéis).")
         _explicacao()
         return
+    if sim.garantir_calculo_atual(sim_id):
+        st.toast("Orçamento recalculado: o custo de cada conta agora é desdobrado pelo volume de cada mês.")
     s = sim.buscar(sim_id)
+    _excluir(s, usuario)
     _cabecalho(s, usuario)
     aba = ui._escolha("sim_aba", list(_ABAS), "resumo", pills=True, formatar=_ABAS.get)
     {"resumo": _resumo, "premissas": _premissas, "volume": _volume, "contas": _contas, "inic": _iniciativas,
      "criticas": _criticas, "reunioes": _reunioes, "historico": _historico}[aba](s, usuario)
+
+
+def _excluir(s: dict, usuario: dict) -> None:
+    """🗑️ Excluir o orçamento criado — só o Master, com confirmação digitada."""
+    from core.auth import e_master
+
+    if not e_master(usuario):
+        return
+    _, c = st.columns([4, 1.1])
+    with c.popover("🗑️ Excluir orçamento", **ui.LARGURA):
+        st.markdown(f"**Excluir “{s['nome']}”** ({sim.ETAPAS.get(s['status'], s['status'])})")
+        st.caption("Apaga o simulador inteiro: contas, volume, QLP, iniciativas, críticas, reuniões e histórico. "
+                   "Não tem volta." + (" O Plan que ele já publicou continua no OBZ (troque subindo outro Plan)."
+                                       if s["status"] == "publicado" else ""))
+        conf = st.text_input("Digite EXCLUIR para confirmar", key=f"sim_del_conf_{s['id']}")
+        if st.button("Excluir definitivamente", key=f"sim_del_{s['id']}", type="primary",
+                     disabled=conf.strip().upper() != "EXCLUIR"):
+            try:
+                sim.excluir(s["id"], usuario)
+            except RegraNegocioError as e:
+                st.error(str(e))
+            else:
+                st.session_state.pop("sim_sel", None)
+                ui.avisar(f"Orçamento “{s['nome']}” excluído.")
+                st.rerun()
 
 
 def _explicacao() -> None:
@@ -227,12 +255,32 @@ def _resumo(s: dict, usuario: dict) -> None:
                         key="sim_area_box")
     st.session_state["sim_area_sel"] = area
     va = v[v["area"] == area].assign(rot=lambda x: x["conta"] + " · " + x["nome_conta"].fillna("").str[:34])
-    pc = va.pivot_table(index="rot", columns="mes", values="liq", aggfunc="sum").reindex(columns=meses_).fillna(0.0)
-    pc = pc.loc[pc.sum(axis=1).abs().sort_values(ascending=False).index]
     la = li[li["area"] == area].assign(rot=lambda x: x["conta"] + " · " + x["nome_conta"].fillna("").str[:34],
                                        b=lambda x: x["base_ano"] * x["sinal"])
-    tema.secao(f"🧾 {area} — contas mês a mês")
-    ui.tabela(_tabela_mensal(pc, "Conta", la.groupby("rot")["b"].sum()), baixar=f"orcamento_{s['ano']}_{area}_contas")
+    pm = s["premissas"]
+    st.markdown(_CSS_ED + '<div class="sp-chips" style="margin:.4rem 0 .2rem">'
+                f'<span class="sp-chip">📚 Base: real {s["ano_base"]} da conta</span><span class="sp-chip">➜</span>'
+                '<span class="sp-chip">📈 + parâmetros (dissídio, IPCA, fretes, insumos, aluguel)</span>'
+                '<span class="sp-chip">➜</span>'
+                f'<span class="sp-chip ok">🍺 desdobrado pelo volume de {s["ano"]} mês a mês</span>'
+                '<span class="sp-chip">➜</span><span class="sp-chip">🧾 custo conta a conta</span></div>',
+                unsafe_allow_html=True)
+    tema.secao(f"🧩 {area} — sub-departamentos mês a mês", "As linhas de gente (Pessoal) e os demais grupos de contas "
+                                                           "(VBZ) dentro do departamento.")
+    ps = va.pivot_table(index="sub", columns="mes", values="liq", aggfunc="sum").reindex(columns=meses_).fillna(0.0)
+    ps = ps.loc[ps.sum(axis=1).abs().sort_values(ascending=False).index]
+    ui.tabela(_tabela_mensal(ps, "Sub-departamento", la.groupby("sub")["b"].sum()),
+              baixar=f"orcamento_{s['ano']}_{area}_subdepartamentos")
+    subs = ["Todos"] + list(ps.index)
+    sub = st.pills("Sub-departamento", subs, key=f"sim_sub_{area}", selection_mode="single", default="Todos")
+    sub = sub if sub in subs else "Todos"
+    if sub != "Todos":
+        va, la = va[va["sub"] == sub], la[la["sub"] == sub]
+    pc = va.pivot_table(index="rot", columns="mes", values="liq", aggfunc="sum").reindex(columns=meses_).fillna(0.0)
+    tema.secao(f"🧾 {area}{' › ' + sub if sub != 'Todos' else ''} — conta a conta",
+               f"Real {s['ano_base']} da conta → + parâmetro do driver → desdobrado pelo HL de cada mês de {s['ano']}.")
+    info = la.groupby("rot").agg(sub=("sub", "first"), b=("b", "sum"), driver=("driver", "first"))
+    ui.tabela(_tabela_contas(pc, info, pm, s), baixar=f"orcamento_{s['ano']}_{area}_contas")
     contas_ = list(pc.index)
     if contas_:
         ct = st.selectbox("🔎 Ver a conta por centro de custo (depto)", contas_, key="sim_ct_box")
@@ -241,6 +289,37 @@ def _resumo(s: dict, usuario: dict) -> None:
         vc = vc.assign(dep=vc["depto"].map(lambda d: obz.rotulo_depto(d, nd)))
         pd_ = vc.pivot_table(index="dep", columns="mes", values="liq", aggfunc="sum").reindex(columns=meses_).fillna(0.0)
         ui.tabela(_tabela_mensal(pd_, "Depto", None), baixar=f"orcamento_{s['ano']}_{ct[:10]}")
+
+
+def _tabela_contas(pc: pd.DataFrame, info: pd.DataFrame, pm: dict, s: dict) -> pd.DataFrame:
+    """Sub-departamento › conta: real do ano base, parâmetro aplicado, 12 meses, orçamento e variação; subtotal por
+    sub-departamento e TOTAL."""
+    if pc.empty:
+        return pd.DataFrame()
+    tot = pc.sum(axis=1)
+    ordem = sorted(pc.index, key=lambda r: (str(info["sub"].get(r, "")), -abs(float(tot[r]))))
+    var_cols = {"pessoal": " + QLP/HL", "frete": " × HL", "insumos": " × HL", "diesel": " × HL"}
+    linhas = []
+
+    def _linha(rot, sub, base, param, serie):
+        t = float(serie.sum())
+        return {"Sub-departamento": sub, "Conta": rot, f"Real {s['ano_base']}": _m(base), "Parâmetro": param,
+                **{_MESES[int(m[5:]) - 1]: _mk(serie[m]) for m in pc.columns}, f"Orçamento {s['ano']}": _m(t),
+                "Var. %": _p((t / base - 1) * 100) if base else "—"}
+
+    for sub in dict.fromkeys(info["sub"].get(r, "Outros") for r in ordem):
+        rs = [r for r in ordem if info["sub"].get(r, "Outros") == sub]
+        for r in rs:
+            dr = info["driver"].get(r, "manual")
+            pct = sim.parametro_pct(dr, pm)
+            param = (f"{sim.DRIVERS.get(dr, dr).split(' (')[0]} {pct:+.1f}%".replace(".", ",") if pct
+                     else sim.DRIVERS.get(dr, dr).split(" (")[0]) + var_cols.get(dr, "")
+            linhas.append(_linha(r, sub, float(info["b"].get(r, 0.0)), param, pc.loc[r]))
+        if len(rs) > 1:
+            linhas.append(_linha(f"Σ subtotal {sub}", sub, float(info["b"].reindex(rs).sum()), "",
+                                 pc.loc[rs].sum()))
+    linhas.append(_linha("TOTAL", "", float(info["b"].sum()), "", pc.sum()))
+    return pd.DataFrame(linhas)
 
 
 def _tabela_mensal(piv: pd.DataFrame, nome: str, base) -> pd.DataFrame:
@@ -300,7 +379,8 @@ def _premissas(s: dict, usuario: dict) -> None:
                                     "todas as contas.",
            [_trava(ed), (f"IPCA {pm['ipca']}%", ""), (f"Dissídio {pm['dissidio_pct']}% em "
                                                       f"{_MESES[int(pm['dissidio_mes']) - 1]}", ""),
-            ("🍺 mês a mês pelo HL" if dist == "hl" else "➖ mês a mês linear", "ok" if dist == "hl" else "at")])
+            ("🍺 mês a mês pelo HL" if dist == "hl" else "➖ mês a mês linear", "ok" if dist == "hl" else "at"),
+            (f"🛢️ diesel {(sim.fator_diesel(pm)[12] - 1) * 100:+.1f}% no ano".replace(".", ","), "")])
     with st.form(f"sim_prem_{s['id']}", border=False):
         k1, k2 = st.columns([1.6, 1])
         with k1.container(border=True):
@@ -333,11 +413,27 @@ def _premissas(s: dict, usuario: dict) -> None:
                             disabled=not ed, label_visibility="collapsed",
                             format_func={"media": f"Média mensal do realizado de {s['ano_base']} × 12",
                                          "ytd_plan": f"Realizado de {s['ano_base']} + plan dos meses que faltam"}.get)
+        with st.container(border=True):
+            st.markdown('<p class="sp-tit">🛢️ Diesel — reajustes mês a mês (a maior conta da frota)</p>',
+                        unsafe_allow_html=True)
+            st.caption("Informe o % de reajuste do diesel no mês em que ele acontece (pode ser negativo). Os reajustes "
+                       "acumulam: o custo de diesel de cada mês = real do ano base × HL do mês × preço acumulado.")
+            dm = (list(pm.get("diesel_mensal") or []) + [0.0] * 12)[:12]
+            fat = sim.fator_diesel({"diesel_mensal": dm})
+            tab_d = pd.DataFrame([dm], columns=_MESES)
+            novo_d = st.data_editor(tab_d, hide_index=True, key=f"sim_diesel_{s['id']}", **ui.LARGURA,
+                                    disabled=not ed,
+                                    column_config={m: st.column_config.NumberColumn(f"{m} %", format="%.2f", step=0.1)
+                                                   for m in _MESES})
+            st.caption("Preço acumulado: " + " · ".join(f"{m} {(fat[i + 1] - 1) * 100:+.1f}%".replace(".", ",")
+                                                         for i, m in enumerate(_MESES)))
         if ed:
             if st.form_submit_button("💾 Salvar premissas e recalcular", type="primary"):
                 ui.acao(sim.salvar_premissas, s["id"], {"ipca": ipca, "aluguel": alug, "fretes": fret, "insumos": ins,
                                                         "dissidio_mes": dmes, "dissidio_pct": dpct, "base": base,
-                                                        "distribuicao": distribuicao}, usuario,
+                                                        "distribuicao": distribuicao,
+                                                        "diesel_mensal": [float(x) if pd.notna(x) else 0.0
+                                                                          for x in novo_d.iloc[0].tolist()]}, usuario,
                         sucesso="Premissas salvas e contas recalculadas.")
         else:
             st.form_submit_button("🔒 Somente leitura", disabled=True)
@@ -345,6 +441,7 @@ def _premissas(s: dict, usuario: dict) -> None:
     regra = {"pessoal": "base × (1 + dissídio a partir do mês negociado) × (QLP do mês ÷ QLP de hoje)",
              "frete": "base × (HL do mês ÷ HL médio do ano atual) × (1 + fretes)",
              "insumos": "base × (HL do mês ÷ HL médio do ano atual) × (1 + insumos)",
+             "diesel": "base × (HL do mês ÷ HL médio do ano atual) × preço acumulado do diesel no mês",
              "aluguel": "base anual × (1 + aluguel) × peso do mês", "ipca": "base anual × (1 + IPCA) × peso do mês",
              "receita": "base anual × (1 + IPCA) × peso do mês", "manual": "base anual × peso do mês"}
     peso_txt = "peso do mês = HL do mês ÷ HL do ano" if dist == "hl" else "peso do mês = 1/12"
@@ -368,9 +465,20 @@ def _volume(s: dict, usuario: dict) -> None:
             *([(f"⚠️ {len(faltam)} mês(es) sem HL", "at")] if len(faltam) else []),
             ("🎩 HL planejado definido pelo diretor" if do_diretor else "⚠️ diretor ainda não preencheu o volume",
              "ok" if do_diretor else "at")])
-    if len(faltam):
-        st.warning(f"Meses de {s['ano_base']} sem volume: " + ", ".join(_MESES[int(m[5:]) - 1] for m in faltam["mes"])
-                   + ". Preencha o HL na tabela (fica marcado como ✏️ manual).")
+    falta = sim.meses_sem_volume(s["id"])
+    if falta["plan"] or falta["base"]:
+        txt = []
+        if falta["plan"]:
+            txt.append(f"**HL planejado de {s['ano']}** em {', '.join(_MESES[m - 1] for m in falta['plan'])}"
+                       + (" — o diretor preenche na aba 🍺 Volume planejado" if do_diretor else ""))
+        if falta["base"]:
+            txt.append(f"**HL vendido de {s['ano_base']}** em {', '.join(_MESES[m - 1] for m in falta['base'])} "
+                       "(mês com custo real mas sem a 03.02.37 carregada)")
+        st.error("✏️ Preencha à mão — não usamos média porque cada mês vende diferente (fim de ano vende mais): "
+                 + " · ".join(txt) + ". Enquanto faltar, o orçamento é provisório e não pode ser enviado.")
+    elif len(faltam):
+        st.caption(f"Meses de {s['ano_base']} ainda sem venda ({', '.join(_MESES[int(m[5:]) - 1] for m in faltam['mes'])}) "
+                   "não entram na base de custo — o custo/HL vem só dos meses com real.")
     peso = sim.pesos_hl(s["id"])
     x = [_MESES[int(m[5:]) - 1] for m in vol["mes"]]
     g1, g2 = st.columns([1.35, 1])
@@ -398,8 +506,9 @@ def _volume(s: dict, usuario: dict) -> None:
                 st.caption("Ou ajuste mês a mês na tabela abaixo (sazonalidade, promoções, feriados).")
     fonte = {"vendas": "📥 03.02.37", "manual": "✏️ manual"}
     tab = vol.assign(Mês=[_MESES[int(m[5:]) - 1] + "/" + m[:4] for m in vol["mes"]],
-                     Origem=[fonte.get(f) or ("≈ média — confira" if pd.notna(b) else "⚠️ preencha")
-                             for f, b in zip(vol["fonte"], vol["hl_base"])],
+                     Origem=[fonte.get(f) or ("✏️ confira" if pd.notna(b) else
+                                              "⚠️ preencha à mão" if int(m[5:]) in falta["base"] else "— sem venda ainda")
+                             for f, b, m in zip(vol["fonte"], vol["hl_base"], vol["mes"])],
                      Var=[(p / b - 1) * 100 if pd.notna(p) and pd.notna(b) and b else None
                           for b, p in zip(vol["hl_base"], vol["hl_plan"])],
                      Peso=[peso[int(m[5:])] * 100 for m in vol["mes"]])
@@ -744,7 +853,4 @@ def _historico(s: dict, usuario: dict) -> None:
                                 "Quem": h["usuario"], "Comentário": h["comentario"].fillna("")}),
                   baixar=f"historico_simulador_{s['ano']}")
     st.caption(f"Criado por {s['criado_por']} em {s['criado_em']} · base {s['ano_base']}.")
-    if sim.pode_montar(usuario) and s["status"] != "publicado":
-        with st.expander("🗑️ Excluir este simulador"):
-            if st.button("Excluir definitivamente", key=f"sim_del_{s['id']}"):
-                ui.acao(sim.excluir, s["id"], usuario, sucesso="Simulador excluído.")
+

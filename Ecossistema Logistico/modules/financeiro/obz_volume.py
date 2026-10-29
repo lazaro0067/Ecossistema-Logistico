@@ -68,17 +68,23 @@ def render(usuario: dict, operacao_id: int) -> None:
     fig.update_layout(barmode="group", yaxis2=dict(overlaying="y", side="right", showgrid=False, ticksuffix="%"))
     graficos.mostrar(graficos._layout(fig, f"HL mês a mês — {nomes[op]}", 340), key="vol_g")
 
-    if v["ref_estimada"].any():
-        st.caption(f"≈ Meses de {a1} ainda sem venda usam o mesmo mês de {a2} corrigido pelo crescimento entre os "
-                   "anos (só como referência).")
+    sem_ref = [m for m, r in zip(_MESES, v["ref"]) if pd.isna(r)]
+    sem_plan = [m for m, h in zip(_MESES, v["hl"]) if pd.isna(h)]
+    if sem_plan:
+        st.warning(f"✏️ Faltam {len(sem_plan)} mês(es) de {ano}: {', '.join(sem_plan)}. Preencha à mão — não usamos "
+                   "média, cada mês vende diferente (fim de ano vende mais)."
+                   + (f" {', '.join(sem_ref)} de {a1} ainda não têm venda: use o HL de {a2} da tabela como guia."
+                      if sem_ref else ""))
     if pode:
         with st.container(border=True):
-            st.markdown("**⚡ Preencher rápido** — crescimento sobre a referência (mantém a sazonalidade dos meses)")
+            st.markdown(f"**⚡ Preencher rápido** — crescimento sobre o vendido de {a1} (mantém a sazonalidade). Meses "
+                        f"sem venda em {a1} ficam em branco para preencher à mão.")
             k1, k2, _ = st.columns([1, 1.2, 2])
             cr = k1.number_input("Crescimento (%)", value=0.0, step=0.5, key=f"vol_cr_{op}_{ano}")
             if k2.button("Aplicar nos 12 meses", key=f"vol_cr_ap_{op}_{ano}", **ui.LARGURA):
-                st.session_state[f"vol_sug_{op}_{ano}"] = [round(r * (1 + cr / 100), 0) if pd.notna(r) else None
-                                                          for r in v["ref"]]
+                st.session_state[f"vol_sug_{op}_{ano}"] = [round(r * (1 + cr / 100), 0) if pd.notna(r) else
+                                                          (h if pd.notna(h) else None)
+                                                          for r, h in zip(v["ref"], v["hl"])]
                 st.session_state.pop(f"vol_ed_{op}_{ano}", None)
                 st.rerun()
     sug = st.session_state.get(f"vol_sug_{op}_{ano}")
@@ -94,7 +100,7 @@ def render(usuario: dict, operacao_id: int) -> None:
                               column_config={"hl_ant2": din(f"HL {a2}", format="%.0f"),
                                              "hl_ant": din(f"HL {a1} (real)", format="%.0f"),
                                              "ref": din("Referência", format="%.0f",
-                                                        help=f"{a1}; mês sem venda ≈ {a2} × crescimento"),
+                                                        help=f"Vendido em {a1}; mês sem venda fica em branco"),
                                              "hl": din(f"HL {ano} planejado ✏️", format="%.0f", min_value=0)})
         tn, tr = float(pd.to_numeric(novo["hl"], errors="coerce").sum()), float(v["ref"].sum())
         tot_n = pd.to_numeric(novo["hl"], errors="coerce")
