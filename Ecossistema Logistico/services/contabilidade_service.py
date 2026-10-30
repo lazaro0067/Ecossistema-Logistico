@@ -291,6 +291,20 @@ def e_pilar(nome) -> bool:
     return _norm(nome) in PILARES
 
 
+_PILAR_NOME = {"ARMAZEM": "Armazém", "ENTREGA": "Entrega", "GENTE": "Gente", "PUXADA": "Puxada",
+               "MANUTENCAO": "Manutenção", "VENDAS": "Vendas", "FROTA": "Frota", "ADMINISTRATIVO": "Administrativo"}
+
+
+def pilar_do_subpacote(sub) -> str | None:
+    """Subpacote que é um pilar vira o departamento no DRE: 1.3.02 GENTE → Gente, 1.5.02 FROTA → Frota,
+    1.3.03 MANUTENÇÃO PREDIAL → Manutenção, 1.3.01 ADMINISTRATIVO GERAL → Administrativo."""
+    n = _norm(sub)
+    for k, nome in _PILAR_NOME.items():
+        if n == k or n.startswith(k + " "):
+            return nome
+    return None
+
+
 def nomes_obz() -> dict:
     try:
         from services import obz_service
@@ -321,7 +335,8 @@ def despesas_dre(operacao_id: int, mes: str) -> pd.DataFrame | None:
         return None
     jat = c["departamento"].map(fora_dre) | c["subpacote"].fillna("").map(fora_dre)
     nomes = nomes_obz()
-    c = c.assign(departamento=[ADM_JATAI if j else nome_depto(d, nomes) for d, j in zip(c["departamento"], jat)])
+    c = c.assign(departamento=[ADM_JATAI if j else nome_depto(pilar_do_subpacote(s) or d, nomes)
+                               for d, s, j in zip(c["departamento"], c["subpacote"].fillna(""), jat)])
     g = c.groupby("departamento", sort=False)["despesa"].sum()
     orc = {}
     try:
