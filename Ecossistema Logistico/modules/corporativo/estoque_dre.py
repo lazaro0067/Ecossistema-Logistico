@@ -204,11 +204,11 @@ def _linhas_dre(r: dict) -> list[tuple[str, object, str]]:
         ("(−) ICMS ✏️", -abs(r["icms"]) if r["icms"] else 0.0, "m"),
         ("(−) PIS/COFINS ✏️", -abs(r["pis_cofins"]) if r["pis_cofins"] else 0.0, "m"),
         ("(=) RECEITA LÍQUIDA", rec, "m"),
-        ("(±) Conta corrente ✏️", r["conta_corrente"], "m"),
-        ("(−) CMV — custo da mercadoria vendida", -r["cmv"] if r["cmv"] is not None else None, "m"),
         ("      Estoque inicial", r["ei"] if r["ok"] else None, "m"),
         ("      (+) Compras", r["compras"], "m"),
         ("      (−) Estoque final", -r["ef"] if r["ok"] else None, "m"),
+        ("      (−) Conta corrente ✏️", -r["conta_corrente"] if r["conta_corrente"] else 0.0, "m"),
+        ("(−) CMV — custo da mercadoria vendida", -r["cmv"] if r["cmv"] is not None else None, "m"),
         ("(=) LUCRO BRUTO", lb, "m"),
         ("Margem bruta %", _div(lb, bruta) * 100 if lb is not None and bruta else None, "p"),
         ("(−) Despesas operacionais (por departamento)", -r["despesas"] if r["despesas"] is not None else None,
@@ -270,7 +270,7 @@ def _kpis_dre(r: dict, rotulo: str, key: str = "kp_dre") -> None:
         {"titulo": "Faturamento", "valor": _m(bruta), "icone": "💵", "status": "info",
          "detalhe": f"{rotulo} · líquida {_m(r['receita'])}"},
         {"titulo": "CMV", "valor": _m(r["cmv"]), "icone": "📦", "status": "info" if r["ok"] else "atencao",
-         "detalhe": "estoque inicial + compras − estoque final" if r["ok"]
+         "detalhe": "estoque inicial + compras − estoque final − conta corrente" if r["ok"]
          else "falta saldo de estoque"},
         {"titulo": "Lucro bruto", "valor": _m(lb), "icone": "💰",
          "status": "neutro" if mb is None else "bom" if mb >= .2 else "atencao" if mb >= .1 else "critico",
@@ -303,7 +303,7 @@ def _manuais(usuario: dict, op: int, lista: list[str]) -> None:
         elif not pode:
             st.caption("Só o Master, quem lança o Plan ou os aprovadores do financeiro alteram estes valores.")
         st.caption("ICMS e PIS/COFINS são sempre abatidos da receita (pode digitar com ou sem sinal). Conta corrente: "
-                   "positivo = crédito (soma no resultado), negativo = débito (diminui).")
+                   "positivo = crédito (abate o CMV), negativo = débito (aumenta o CMV).")
         ed = pd.DataFrame([{"mes": m, "Mês": _nome_mes(m), **{k: v for k, v in ev.manual(op, [m]).items()
                                                                if k in ev.CAMPOS_MANUAIS}} for m in lista])
         din = st.column_config.NumberColumn
@@ -466,7 +466,7 @@ def tabela_dre(lista: list[str], res: list[dict], tot: dict, rotulo: str, prefix
                "Administrativo). Investimento/Imobilizado e Despesas ADM Jataí ficam abaixo da margem operacional "
                "(Master vê sempre; os demais quando o Master liberar). "
                "Receita bruta = total das notas (coluna Z) só das operações de R$ de venda (⚙️ Cadastros) · "
-               "CMV = estoque inicial + compras − estoque final (02.05.02, depósitos "
+               "CMV = estoque inicial + compras − estoque final − conta corrente (02.05.02, depósitos "
                "marcados em 🏬 Estoque) — o mesmo do 📊 Resumo & Lucro Bruto · Despesas = OBZ realizado por "
                "departamento (sem bonificação) — no mês fechado, pelo 🧾 Financeiro contabilidade · ✏️ = valores "
                "manuais. No total do ano, o CMV usa o estoque inicial "

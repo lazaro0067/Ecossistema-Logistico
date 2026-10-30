@@ -192,7 +192,7 @@ def html_dre(revenda: str, rotulo: str, tot: dict, res: list[dict], lista: list[
 <table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #e3e6ec;border-radius:10px;overflow:hidden">
 {cab}{''.join(linhas_html)}</table>{obs}
 <div style="font-size:11px;color:#898781;margin-top:14px">Gerado pelo Ecossistema Logístico em {agora}. Receita bruta = notas das
-operações de venda · CMV = estoque inicial + compras − estoque final · Despesas = OBZ realizado por departamento.</div>
+operações de venda · CMV = estoque inicial + compras − estoque final − conta corrente · Despesas = OBZ realizado por departamento.</div>
 </div></body></html>"""
 
 

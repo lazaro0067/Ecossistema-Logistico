@@ -309,8 +309,11 @@ def dre_periodo(operacao_id: int, meses_: list[str]) -> dict:
     fech = [m for m in ms if contabilidade_service.fechado(operacao_id, m)]
     receita_bruta = v["valor"]  # total das notas (coluna Z) das operações de venda filtradas
     receita = receita_bruta - abs(man["icms"]) - abs(man["pis_cofins"])  # impostos sempre abatem, com ou sem sinal
+    # conta corrente (crédito/débito com a Ambev) entra no CMV: CMV = EI + compras − EF − conta corrente
+    c = {**c, "cmv_estoque": c["cmv"],
+         "cmv": c["cmv"] - (man["conta_corrente"] or 0.0) if c["cmv"] is not None else None}
     lucro = receita - c["cmv"] if c["cmv"] is not None else None
-    resultado = lucro - desp + man["conta_corrente"] if lucro is not None and desp is not None else None
+    resultado = lucro - desp if lucro is not None and desp is not None else None
     return _separar_pilares({
             "mes": ms[-1], "meses": ms, "ops_venda": ops_venda, "receita_bruta": receita_bruta,
             "descontos": v["desconto"], "receita": receita, "hl": v["hl"], "bonif": b["valor"], "bonif_hl": b["hl"],
@@ -345,7 +348,7 @@ def _separar_pilares(r: dict) -> dict:
             r["orcado"] = float(r["obz"]["orcado"].sum()) if r.get("orcado") is not None else None
     r["despesas_fora"] = float(r["obz_fora"]["realizado"].sum()) if not r["obz_fora"].empty else 0.0
     if r.get("lucro_bruto") is not None and r.get("despesas") is not None:
-        r["resultado"] = r["lucro_bruto"] - r["despesas"] + (r.get("conta_corrente") or 0.0)
+        r["resultado"] = r["lucro_bruto"] - r["despesas"]
     r["resultado_final"] = r["resultado"] - r["despesas_fora"] if r.get("resultado") is not None else None
     return r
 
@@ -416,7 +419,8 @@ def _aplicar(r: dict, v: dict) -> dict:
     r["compras"] = v.get("compras") or 0.0
     ok = v.get("ei") is not None and v.get("ef") is not None
     r["ok"], r["ei"], r["ef"] = ok, v.get("ei") or 0.0, v.get("ef") or 0.0
-    r["cmv"] = r["ei"] + r["compras"] - r["ef"] if ok else None
+    r["cmv_estoque"] = r["ei"] + r["compras"] - r["ef"] if ok else None
+    r["cmv"] = r["cmv_estoque"] - r["conta_corrente"] if ok else None  # conta corrente abate o CMV
     deps = {k[4:]: x for k, x in v.items() if k.startswith("dep:")}
     orc = dict(zip(r["obz"]["pacote"], r["obz"]["orcado"])) if not r["obz"].empty else {}
     if deps:
@@ -425,7 +429,7 @@ def _aplicar(r: dict, v: dict) -> dict:
         r["obz"] = ob.sort_values("realizado", ascending=False).reset_index(drop=True)
         r["despesas"] = float(r["obz"]["realizado"].sum())
     r["lucro_bruto"] = r["receita"] - r["cmv"] if r["cmv"] is not None else None
-    r["resultado"] = (r["lucro_bruto"] - r["despesas"] + r["conta_corrente"]
+    r["resultado"] = (r["lucro_bruto"] - r["despesas"]
                       if r["lucro_bruto"] is not None and r["despesas"] is not None else None)
     return _separar_pilares(r)
 
